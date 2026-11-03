@@ -20,6 +20,7 @@ pub fn show(
     actions: &mut Vec<Action>,
 ) {
     let settings = explorer.settings().clone();
+    let can_paste = explorer.can_paste();
     let tab = explorer.active();
     let view = match tab.state() {
         LoadState::Loading => {
@@ -102,7 +103,9 @@ pub fn show(
                         r.bottom(),
                         egui::Stroke::new(1.5, theme::accent().gamma_multiply(0.5)),
                     );
-                    let resp = ui.add(egui::Label::new(text).sense(Sense::click()));
+                    // The whole cell is the click target, not just the label.
+                    let resp = ui.interact(r, ui.scope_id().with("sort"), Sense::click());
+                    ui.add(egui::Label::new(text).selectable(false));
                     if let Some(column) = column
                         && resp.clicked()
                     {
@@ -160,12 +163,24 @@ pub fn show(
                     1
                 };
                 resp.context_menu(|ui| {
-                    row_menu(ui, i, entry.kind == EntryKind::Dir, selected_count, actions);
+                    row_menu(
+                        ui,
+                        i,
+                        entry.kind == EntryKind::Dir,
+                        selected_count,
+                        can_paste,
+                        actions,
+                    );
                 });
                 if resp.clicked() {
                     select = Some(i);
                 }
-                if resp.double_clicked() {
+                let is_dir = entry.kind == EntryKind::Dir;
+                if if is_dir && settings.list_single_click {
+                    resp.clicked()
+                } else {
+                    resp.double_clicked()
+                } {
                     activate = Some(i);
                 }
             });
@@ -187,7 +202,7 @@ pub fn show(
             ui.scope_id().with("table-background"),
             Sense::click(),
         );
-        background.context_menu(|ui| background_menu(ui, settings.show_hidden, actions));
+        background.context_menu(|ui| background_menu(ui, settings.show_hidden, can_paste, actions));
     }
 
     let tab = explorer.active_mut();
@@ -216,12 +231,29 @@ fn age_badge(ui: &mut Ui, text: &str, color: egui::Color32) {
         });
 }
 
-fn row_menu(ui: &mut Ui, row: usize, is_dir: bool, selected: usize, actions: &mut Vec<Action>) {
+fn row_menu(
+    ui: &mut Ui,
+    row: usize,
+    is_dir: bool,
+    selected: usize,
+    can_paste: bool,
+    actions: &mut Vec<Action>,
+) {
     if menu_item(ui, "Open", "Enter", true) {
         actions.push(Action::Open(row));
     }
     if is_dir && menu_item(ui, "Open in new tab", "", true) {
         actions.push(Action::OpenInNewTab(row));
+    }
+    ui.separator();
+    if menu_item(ui, "Cut", "Ctrl+X", true) {
+        actions.push(Action::Cut);
+    }
+    if menu_item(ui, "Copy", "Ctrl+C", true) {
+        actions.push(Action::Copy);
+    }
+    if is_dir && menu_item(ui, "Paste into folder", "", can_paste) {
+        actions.push(Action::PasteInto(row));
     }
     ui.separator();
     if menu_item(ui, "Rename", "F2", selected == 1) {
@@ -239,9 +271,12 @@ fn row_menu(ui: &mut Ui, row: usize, is_dir: bool, selected: usize, actions: &mu
     }
 }
 
-fn background_menu(ui: &mut Ui, show_hidden: bool, actions: &mut Vec<Action>) {
+fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mut Vec<Action>) {
     if menu_item(ui, "New folder", "Ctrl+Shift+N", true) {
         actions.push(Action::NewFolder);
+    }
+    if menu_item(ui, "Paste", "Ctrl+V", can_paste) {
+        actions.push(Action::Paste);
     }
     if menu_item(ui, "Refresh", "F5", true) {
         actions.push(Action::Refresh);

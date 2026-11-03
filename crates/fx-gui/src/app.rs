@@ -91,6 +91,13 @@ impl App {
                     ctx.copy_text(paths.join("\n"));
                 }
             }
+            Action::Copy => ex.copy_to_clipboard(&ex.active().selection(), false),
+            Action::Cut => ex.copy_to_clipboard(&ex.active().selection(), true),
+            Action::Paste => ex.paste(None),
+            Action::PasteInto(row) => {
+                let folder = ex.entry_path(row);
+                ex.paste(folder);
+            }
             Action::SetSort(sort) => ex.active_mut().set_sort(sort),
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
@@ -155,6 +162,9 @@ impl App {
                     Action::Delete { permanent: false },
                 ),
                 (Modifiers::CTRL, Key::A, Action::SelectAll),
+                (Modifiers::CTRL, Key::C, Action::Copy),
+                (Modifiers::CTRL, Key::X, Action::Cut),
+                (Modifiers::CTRL, Key::V, Action::Paste),
                 (
                     Modifiers::CTRL | Modifiers::SHIFT,
                     Key::N,
@@ -203,6 +213,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let scroll_to_selection = self.scroll_to_selection;
         let mut actions = Vec::new();
+        egui::Panel::top("menubar").show(ui, |ui| {
+            views::menubar::show(ui, &self.explorer, &mut actions);
+        });
         egui::Panel::top("tabs").show(ui, |ui| {
             views::tabs::show(ui, &mut self.explorer);
         });

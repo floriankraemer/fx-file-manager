@@ -3,7 +3,7 @@
 use super::icons::{self, Glyph};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, Popup, Response, Sense, TextStyle, Ui, vec2};
-use fx_app::{Density, Explorer, SortColumn, SortSpec};
+use fx_app::{Explorer, SortColumn, SortSpec};
 
 const HEIGHT: f32 = 28.0;
 
@@ -37,17 +37,11 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         let resp = command(ui, Glyph::Sort, "Sort", true, true);
         Popup::menu(&resp).show(|ui| sort_menu(ui, explorer.active().sort(), actions));
 
-        let resp = command(ui, Glyph::View, "View", true, true);
-        Popup::menu(&resp).show(|ui| view_menu(ui, explorer, actions));
-
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let resp = command(ui, Glyph::More, "", true, false);
             Popup::menu(&resp).show(|ui| {
                 if menu_item(ui, "Select all", "Ctrl+A", true) {
                     actions.push(Action::SelectAll);
-                }
-                if menu_item(ui, "Settings", "Ctrl+,", true) {
-                    actions.push(Action::OpenSettings);
                 }
             });
         });
@@ -70,23 +64,6 @@ fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {
     for (ascending, label) in [(true, "Ascending"), (false, "Descending")] {
         if ui.radio(sort.ascending == ascending, label).clicked() {
             actions.push(Action::SetSort(SortSpec { ascending, ..sort }));
-        }
-    }
-}
-
-fn view_menu(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
-    let settings = explorer.settings();
-    let mut hidden = settings.show_hidden;
-    if ui.checkbox(&mut hidden, "Show hidden items").changed() {
-        actions.push(Action::SetShowHidden(hidden));
-    }
-    ui.separator();
-    for (density, label) in [
-        (Density::Compact, "Compact"),
-        (Density::Comfortable, "Comfortable"),
-    ] {
-        if ui.radio(settings.density == density, label).clicked() {
-            actions.push(Action::SetDensity(density));
         }
     }
 }

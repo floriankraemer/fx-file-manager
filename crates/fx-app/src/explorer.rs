@@ -58,6 +58,9 @@ pub struct Explorer {
     /// Where `set_settings` persists. `None` when the platform has no config directory.
     settings_path: Option<PathBuf>,
     notices: VecDeque<Notice>,
+    /// Internal clipboard set by copy/cut: absolute paths and whether paste should move them.
+    // ponytail: app-internal only, not the OS file clipboard; add per-platform clipboard integration if cross-app paste is needed
+    clipboard: Option<(Vec<PathBuf>, bool)>,
 }
 
 impl Explorer {
@@ -91,6 +94,7 @@ impl Explorer {
             settings,
             settings_path: Settings::path(),
             notices: VecDeque::new(),
+            clipboard: None,
         };
         explorer.new_tab(start);
         explorer
@@ -282,6 +286,34 @@ impl Explorer {
             return self.notify(NoticeKind::Error, "Nothing selected to delete");
         }
         self.submit(Job::Delete { paths, permanent });
+    }
+
+    /// Remembers the entries at `rows` for a later `paste`. `cut = true` moves them on paste.
+    pub fn copy_to_clipboard(&mut self, rows: &[usize], cut: bool) {
+        let paths: Vec<PathBuf> = rows
+            .iter()
+            .filter_map(|&row| self.entry_path(row))
+            .collect();
+        if paths.is_empty() {
+            return self.notify(NoticeKind::Error, "Nothing selected");
+        }
+        self.clipboard = Some((paths, cut));
+    }
+
+    pub fn can_paste(&self) -> bool {
+        self.clipboard.is_some()
+    }
+
+    /// Pastes the clipboard into `folder` (default: the active tab's folder). A cut clipboard is spent afterwards.
+    pub fn paste(&mut self, folder: Option<PathBuf>) {
+        let Some((sources, cut)) = self.clipboard.clone() else {
+            return;
+        };
+        let dest = folder.unwrap_or_else(|| self.active().path().to_path_buf());
+        self.submit(Job::Paste { sources, dest, cut });
+        if cut && self.job_in_flight {
+            self.clipboard = None;
+        }
     }
 
     /// Renames the entry at `row` in place. The name must be a single valid component and must not exist yet.

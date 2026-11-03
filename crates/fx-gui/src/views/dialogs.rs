@@ -341,6 +341,16 @@ fn settings(
         });
         ui.checkbox(&mut draft.show_hidden, "Show hidden items");
 
+        section(ui, "Opening folders");
+        ui.checkbox(
+            &mut draft.tree_single_click,
+            "Single click in the folder tree",
+        );
+        ui.checkbox(
+            &mut draft.list_single_click,
+            "Single click in the file list",
+        );
+
         section(ui, "Deleting");
         ui.checkbox(&mut draft.use_trash, "Move deleted items to Trash");
         ui.checkbox(&mut draft.confirm_delete, "Confirm before deleting");

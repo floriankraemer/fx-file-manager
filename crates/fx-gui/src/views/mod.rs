@@ -3,6 +3,7 @@
 pub mod commandbar;
 pub mod dialogs;
 pub mod icons;
+pub mod menubar;
 pub mod sidebar;
 pub mod status;
 pub mod table;

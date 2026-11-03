@@ -95,6 +95,12 @@ pub(crate) enum Job {
     CreateFolder {
         path: PathBuf,
     },
+    /// Copies (`cut = false`) or moves (`cut = true`) `sources` into the folder `dest`.
+    Paste {
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+        cut: bool,
+    },
 }
 
 /// Result of a finished job, applied by `Explorer::poll`.
@@ -112,7 +118,112 @@ impl Job {
             Self::Delete { paths, permanent } => delete(&paths, permanent),
             Self::Rename { from, to } => rename(&from, &to),
             Self::CreateFolder { path } => create_folder(path),
+            Self::Paste { sources, dest, cut } => paste(&sources, &dest, cut),
         }
+    }
+}
+
+/// Continues past per-item failures. Name clashes get a `name (2)` suffix; cutting into the item's own folder is a no-op.
+fn paste(sources: &[PathBuf], dest: &Path, cut: bool) -> Outcome {
+    let (mut done, mut first_failure) = (0, None::<String>);
+    for src in sources {
+        let name = display_name(src);
+        let result = if cut && src.parent() == Some(dest) {
+            Ok(())
+        } else {
+            paste_one(src, dest, cut)
+        };
+        match result {
+            Ok(()) => done += 1,
+            Err(message) => {
+                first_failure.get_or_insert(format!("Could not paste {name}: {message}"));
+            }
+        }
+    }
+    let verb = if cut { "Moved" } else { "Copied" };
+    let notice = match first_failure {
+        None => Notice::info(format!("{verb} {}", items(done))),
+        Some(first) if done == 0 => Notice::error(first),
+        Some(first) => Notice::error(format!("{verb} {done} of {} items. {first}", sources.len())),
+    };
+    let mut touched = parents(sources.iter().map(PathBuf::as_path));
+    touched.push(dest.to_path_buf());
+    Outcome {
+        notice,
+        touched,
+        created: None,
+    }
+}
+
+fn paste_one(src: &Path, dest: &Path, cut: bool) -> Result<(), String> {
+    if dest.starts_with(src) {
+        return Err("a folder cannot be pasted into itself".into());
+    }
+    let name = src.file_name().ok_or("invalid name")?;
+    let target = dest.join(unique_file_name(name, |n| {
+        fs::symlink_metadata(dest.join(n)).is_err()
+    }));
+    if cut {
+        match fs::rename(src, &target) {
+            Ok(()) => return Ok(()),
+            // Different filesystem: fall back to copy + delete.
+            Err(err) if err.kind() != io::ErrorKind::CrossesDevices => return Err(plain(&err)),
+            Err(_) => {}
+        }
+    }
+    copy_tree(src, &target).map_err(|err| plain(&err))?;
+    if cut { remove(src, true) } else { Ok(()) }
+}
+
+/// `stem (2).ext` style variant of `name` for the first free candidate.
+fn unique_file_name(name: &std::ffi::OsStr, is_free: impl Fn(&str) -> bool) -> String {
+    let full = name.to_string_lossy();
+    if is_free(&full) {
+        return full.into_owned();
+    }
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .map_or(full.clone(), |s| s.to_string_lossy());
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (2..)
+        .map(|n| format!("{stem} ({n}){ext}"))
+        .find(|candidate| is_free(candidate))
+        .expect("unbounded range")
+}
+
+/// Recursive copy that never follows symlinks (links are recreated as links where the platform allows).
+fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(src)?;
+    if meta.is_dir() {
+        fs::create_dir(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else if meta.file_type().is_symlink() {
+        copy_symlink(src, dst)
+    } else {
+        fs::copy(src, dst).map(|_| ())
+    }
+}
+
+#[cfg(unix)]
+fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(fs::read_link(src)?, dst)
+}
+
+#[cfg(windows)]
+fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    let target = fs::read_link(src)?;
+    if fs::metadata(src).is_ok_and(|m| m.is_dir()) {
+        std::os::windows::fs::symlink_dir(target, dst)
+    } else {
+        std::os::windows::fs::symlink_file(target, dst)
     }
 }
 
