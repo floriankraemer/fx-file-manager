@@ -1,3 +1,4 @@
+use super::commandbar::menu_item;
 use super::icons::{self, Glyph};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
@@ -13,6 +14,9 @@ const CHEVRON_W: f32 = 12.0;
 enum Action {
     Navigate(PathBuf),
     Toggle(PathBuf),
+    OpenInNewTab(PathBuf),
+    PasteInto(PathBuf),
+    CopyPath(PathBuf),
 }
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
@@ -67,6 +71,9 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
     match action {
         Some(Action::Navigate(p)) => explorer.navigate(p),
         Some(Action::Toggle(p)) => explorer.tree_toggle(p),
+        Some(Action::OpenInNewTab(p)) => explorer.new_tab(p),
+        Some(Action::PasteInto(p)) => explorer.paste(Some(p)),
+        Some(Action::CopyPath(p)) => ui.ctx().copy_text(p.display().to_string()),
         None => {}
     }
 }
@@ -141,19 +148,41 @@ fn node(
         theme::text(),
     );
 
+    let single = explorer.settings().tree_single_click;
     if resp.double_clicked() {
-        *action = Some(Action::Toggle(path.to_path_buf()));
+        // Single-click mode already navigated on the first click, so the second one expands.
+        *action = Some(if single {
+            Action::Toggle(path.to_path_buf())
+        } else {
+            Action::Navigate(path.to_path_buf())
+        });
     } else if resp.clicked() {
         let on_chevron = has_chevron
             && resp
                 .interact_pointer_pos()
                 .is_some_and(|p| p.x < chevron.right() + 1.0);
-        *action = Some(if on_chevron {
-            Action::Toggle(path.to_path_buf())
-        } else {
-            Action::Navigate(path.to_path_buf())
-        });
+        if on_chevron {
+            *action = Some(Action::Toggle(path.to_path_buf()));
+        } else if single {
+            *action = Some(Action::Navigate(path.to_path_buf()));
+        }
     }
+
+    resp.context_menu(|ui| {
+        if menu_item(ui, "Open", "", true) {
+            *action = Some(Action::Navigate(path.to_path_buf()));
+        }
+        if menu_item(ui, "Open in new tab", "", true) {
+            *action = Some(Action::OpenInNewTab(path.to_path_buf()));
+        }
+        ui.separator();
+        if menu_item(ui, "Paste", "Ctrl+V", explorer.can_paste()) {
+            *action = Some(Action::PasteInto(path.to_path_buf()));
+        }
+        if menu_item(ui, "Copy path", "", true) {
+            *action = Some(Action::CopyPath(path.to_path_buf()));
+        }
+    });
 
     if expanded && let Some(Children::Loaded(kids)) = children {
         for k in kids {

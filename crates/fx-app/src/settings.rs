@@ -19,6 +19,10 @@ pub struct Settings {
     pub density: Density,
     pub show_age_column: bool,
     pub show_ext_column: bool,
+    /// Open folders in the tree with a single click instead of a double click.
+    pub tree_single_click: bool,
+    /// Open folders in the list with a single click instead of a double click.
+    pub list_single_click: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +36,8 @@ impl Default for Settings {
             density: Density::default(),
             show_age_column: true,
             show_ext_column: true,
+            tree_single_click: true,
+            list_single_click: false,
         }
     }
 }
@@ -152,6 +158,8 @@ mod tests {
             density: Density::Comfortable,
             show_age_column: false,
             show_ext_column: false,
+            tree_single_click: false,
+            list_single_click: true,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

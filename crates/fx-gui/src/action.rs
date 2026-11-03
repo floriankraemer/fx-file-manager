@@ -16,6 +16,12 @@ pub enum Action {
     Open(usize),
     OpenInNewTab(usize),
     CopyPath,
+    Copy,
+    Cut,
+    /// Paste into the active folder.
+    Paste,
+    /// Paste into the folder at this row of the active tab.
+    PasteInto(usize),
     SetSort(SortSpec),
     SetShowHidden(bool),
     SetDensity(Density),

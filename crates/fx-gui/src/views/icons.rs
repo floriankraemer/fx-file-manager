@@ -129,7 +129,6 @@ pub enum Glyph {
     Rename,
     Delete,
     Sort,
-    View,
     More,
     Chevron,
     ChevronRight,
@@ -181,12 +180,6 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
             p.line_segment([at(x, -6.0), at(x, 5.0)], s);
             p.line_segment([at(x - 2.5, 2.5), at(x, 5.5)], s);
             p.line_segment([at(x + 2.5, 2.5), at(x, 5.5)], s);
-        }
-        Glyph::View => {
-            let frame = Rect::from_min_max(at(-7.5, -6.0), at(7.5, 6.0));
-            p.rect_stroke(frame, 2.0, s, egui::StrokeKind::Inside);
-            p.line_segment([at(-7.5, -2.5), at(7.5, -2.5)], s);
-            p.line_segment([at(-3.0, -2.5), at(-3.0, 6.0)], s);
         }
         Glyph::More => {
             for dx in [-5.0, 0.0, 5.0] {
