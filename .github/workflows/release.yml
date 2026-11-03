@@ -1,0 +1,231 @@
+name: Release
+
+# A `v*` tag cuts a permanent GitHub release. The tag must equal the version in
+# the workspace Cargo.toml, so the version bump is committed before tagging.
+# `workflow_dispatch` builds every artifact without publishing, for dry runs.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: Release identity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.id.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches Cargo.toml
+        id: id
+        run: |
+          set -eu
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+  linux:
+    name: Linux bundle
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries
+        run: |
+          docker buildx build \
+            --target linux-artifact \
+            -f docker/Dockerfile \
+            --output type=local,dest=dist/ \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            .
+
+      - name: Package tarball
+        run: |
+          set -eux
+          name="fx-v$VERSION-linux-x86_64"
+          mkdir "$name"
+          cp dist/linux/fx dist/linux/fx-gui "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - name: Package .deb
+        run: |
+          set -eux
+          name="fx-v$VERSION-linux-x86_64"
+          pkgroot="$(mktemp -d)"
+          mkdir -p "$pkgroot/opt/fx" "$pkgroot/usr/bin" \
+            "$pkgroot/usr/share/applications" \
+            "$pkgroot/usr/share/icons/hicolor/256x256/apps" \
+            "$pkgroot/DEBIAN"
+          cp dist/linux/fx dist/linux/fx-gui "$pkgroot/opt/fx/"
+          ln -s /opt/fx/fx-gui "$pkgroot/usr/bin/fx-gui"
+          ln -s /opt/fx/fx "$pkgroot/usr/bin/fx"
+          cp assets/linux/fx.desktop "$pkgroot/usr/share/applications/fx.desktop"
+          cp assets/icon.png "$pkgroot/usr/share/icons/hicolor/256x256/apps/fx.png"
+          sed "s/@VERSION@/$VERSION/g" assets/linux/control > "$pkgroot/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "$pkgroot" "$name.deb"
+          sha256sum "$name.deb" > "$name.deb.sha256"
+
+      # appimagetool has no maintained numbered release, so pin the
+      # `continuous` build by content hash: a supply-chain change fails loudly.
+      - name: Package AppImage
+        run: |
+          set -eux
+          name="fx-v$VERSION-linux-x86_64"
+          appdir="$(mktemp -d)/AppDir"
+          mkdir -p "$appdir/bin"
+          cp dist/linux/fx dist/linux/fx-gui "$appdir/bin/"
+          install -m 755 assets/linux/AppRun "$appdir/AppRun"
+          cp assets/linux/fx.desktop "$appdir/fx.desktop"
+          cp assets/icon.png "$appdir/fx.png"
+
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          echo "b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2  appimagetool" | sha256sum -c -
+          chmod +x appimagetool
+          ./appimagetool --appimage-extract-and-run "$appdir" "$name.AppImage"
+          sha256sum "$name.AppImage" > "$name.AppImage.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.deb
+            *.deb.sha256
+            *.AppImage
+            *.AppImage.sha256
+
+  # Non-blocking: a failed Windows leg must not hold back the Linux artifacts.
+  windows:
+    name: Windows bundle
+    needs: meta
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries
+        run: |
+          docker buildx build \
+            --target windows-artifact \
+            -f docker/Dockerfile \
+            --output type=local,dest=dist/ \
+            --cache-from type=gha,scope=windows \
+            --cache-to type=gha,scope=windows,mode=max \
+            .
+
+      - name: Package zip
+        run: |
+          set -eux
+          name="fx-v$VERSION-windows-x86_64"
+          mkdir "$name"
+          cp dist/windows/fx.exe dist/windows/fx-gui.exe "$name/"
+          zip -r "$name.zip" "$name"
+          sha256sum "$name.zip" > "$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            *.zip
+            *.zip.sha256
+
+  # Non-blocking, and native: Apple's SDK cannot be used in a Linux container,
+  # so this leg builds on a macOS runner (Apple Silicon).
+  macos:
+    name: macOS bundle
+    needs: meta
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Assemble app bundle and dmg
+        run: |
+          set -eux
+          app=fx.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/fx-gui "$app/Contents/MacOS/fx-gui"
+          sed "s/@VERSION@/$VERSION/g" assets/macos/Info.plist > "$app/Contents/Info.plist"
+
+          iconset="$(mktemp -d)/icon.iconset"
+          mkdir -p "$iconset"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz assets/icon.png --out "$iconset/icon_${sz}x${sz}.png"
+            sips -z $((sz*2)) $((sz*2)) assets/icon.png --out "$iconset/icon_${sz}x${sz}@2x.png"
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/icon.icns"
+
+          name="fx-v$VERSION-macos-arm64"
+          stage="$(mktemp -d)"
+          cp -R "$app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname fx -srcfolder "$stage" -ov -format UDZO "$name.dmg"
+          shasum -a 256 "$name.dmg" > "$name.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            *.dmg
+            *.dmg.sha256
+
+  publish:
+    name: Publish release
+    needs: [meta, linux, windows, macos]
+    # `always()` so a red Windows/macOS leg still publishes the Linux artifacts;
+    # a failed Linux build publishes nothing. Dry runs (no tag) never publish.
+    if: always() && needs.linux.result == 'success' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish
+        run: |
+          set -eux
+          cd artifacts
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            ./*
+          if ls ./*.dmg >/dev/null 2>&1; then
+            body=$(gh release view "$TAG" --json body -q .body)
+            note=$(printf '%s\n%s\n' \
+              "macOS build is unsigned (no Apple Developer account yet) — Gatekeeper will refuse to open it." \
+              "Run \`xattr -cr /Applications/fx.app\` after copying it, or right-click → Open instead of double-clicking.")
+            gh release edit "$TAG" --notes "$(printf '%s\n\n%s' "$body" "$note")"
+          fi

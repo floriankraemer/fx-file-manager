@@ -1,0 +1,10 @@
+Package: fx
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Florian Kraemer
+Homepage: https://github.com/floriankraemer/fx-explorer
+Description: fx file explorer
+ Fast folder-listing core for a tabbed file explorer, with an egui GUI (fx-gui)
+ and a console lister (fx).

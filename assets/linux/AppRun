@@ -1,0 +1,3 @@
+#!/bin/sh
+# AppImage entry point. The AppImage runtime exports $APPDIR before this runs.
+exec "$APPDIR/bin/fx-gui" "$@"

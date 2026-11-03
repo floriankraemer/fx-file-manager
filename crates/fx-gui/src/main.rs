@@ -1,4 +1,5 @@
 //! fx-gui: egui presentation layer over `fx-app`. Renders state and forwards input; holds no logic.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod action;
 mod app;

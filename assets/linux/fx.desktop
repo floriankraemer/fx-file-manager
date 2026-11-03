@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=fx
+GenericName=File Explorer
+Comment=Fast file explorer
+Exec=fx-gui %F
+Icon=fx
+Categories=Utility;FileTools;FileManager;
+Terminal=false
