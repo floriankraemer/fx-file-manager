@@ -1,0 +1,13 @@
+[package]
+name = "fx-gui"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+eframe = "0.37.0"
+egui = "0.37.0"
+egui_extras = "0.37.0"
+fx-app = { path = "../fx-app" }
+fx-core = { path = "../fx-core" }

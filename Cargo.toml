@@ -1,12 +1,12 @@
 [workspace]
-members = ["crates/fx-core", "crates/fx-cli"]
+members = ["crates/fx-core", "crates/fx-app", "crates/fx-cli", "crates/fx-gui"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
 publish = false
-rust-version = "1.88"
+rust-version = "1.95"
 
 [profile.release]
 lto = "fat"
