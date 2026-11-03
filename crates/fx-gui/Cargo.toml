@@ -11,3 +11,4 @@ egui = "0.37.0"
 egui_extras = "0.37.0"
 fx-app = { path = "../fx-app" }
 fx-core = { path = "../fx-core" }
+icon-theme = { path = "../icon-theme" }

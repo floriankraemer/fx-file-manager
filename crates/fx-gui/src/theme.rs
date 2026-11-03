@@ -59,6 +59,10 @@ const LIGHT: Palette = Palette {
 
 static LIGHT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+pub fn is_light() -> bool {
+    LIGHT_ACTIVE.load(Ordering::Relaxed)
+}
+
 fn palette() -> &'static Palette {
     if LIGHT_ACTIVE.load(Ordering::Relaxed) {
         &LIGHT

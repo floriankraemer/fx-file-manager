@@ -216,7 +216,7 @@ impl eframe::App for App {
             views::status::show(ui, &self.explorer);
         });
         egui::Panel::left("places")
-            .default_size(160.0)
+            .default_size(240.0)
             .show(ui, |ui| {
                 views::sidebar::show(ui, &mut self.explorer, &self.places);
             });

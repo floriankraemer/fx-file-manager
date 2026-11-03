@@ -118,12 +118,14 @@ pub fn show(
                 let name = view.listing.name(entry).to_string_lossy();
                 row.set_selected(selection.binary_search(&i).is_ok());
                 row.col(|ui| {
-                    super::icons::entry(ui, entry.kind);
+                    super::icons::entry(ui, entry.kind, &name);
                     ui.add(egui::Label::new(name.as_ref()).truncate());
                 });
                 if settings.show_ext_column {
                     row.col(|ui| {
-                        ui.colored_label(theme::dim(), extension(&name));
+                        if entry.kind != EntryKind::Dir {
+                            ui.colored_label(theme::dim(), extension(&name));
+                        }
                     });
                 }
                 row.col(|ui| {

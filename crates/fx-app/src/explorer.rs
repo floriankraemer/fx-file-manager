@@ -5,6 +5,7 @@ use crate::ops::{
 };
 use crate::settings::Settings;
 use crate::tab::{LoadState, Tab};
+use crate::tree::{Children, FolderTree, TreeNode, list_children};
 use crate::view::DirView;
 use fx_core::{ListError, ListOptions, list_dir};
 use std::collections::VecDeque;
@@ -30,6 +31,12 @@ struct Completed {
     result: Result<DirView, ListError>,
 }
 
+struct TreeLoaded {
+    generation: u64,
+    path: PathBuf,
+    result: Result<Vec<TreeNode>, String>,
+}
+
 pub struct Explorer {
     tabs: Vec<Tab>,
     active: usize,
@@ -41,6 +48,11 @@ pub struct Explorer {
     /// One file operation at a time: a second request is refused while this is set.
     // ponytail: serial jobs; add a queue if users need to chain operations while one runs
     job_in_flight: bool,
+    tree: FolderTree,
+    tree_tx: Sender<TreeLoaded>,
+    tree_rx: Receiver<TreeLoaded>,
+    /// Bumped when cached children become invalid wholesale; older tree results are dropped.
+    tree_generation: u64,
     wake: Arc<dyn Fn() + Send + Sync>,
     settings: Settings,
     /// Where `set_settings` persists. `None` when the platform has no config directory.
@@ -61,6 +73,7 @@ impl Explorer {
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let (job_tx, job_rx) = mpsc::channel();
+        let (tree_tx, tree_rx) = mpsc::channel();
         let mut explorer = Self {
             tabs: Vec::new(),
             active: 0,
@@ -70,6 +83,10 @@ impl Explorer {
             job_tx,
             job_rx,
             job_in_flight: false,
+            tree: FolderTree::default(),
+            tree_tx,
+            tree_rx,
+            tree_generation: 0,
             wake: Arc::new(wake),
             settings,
             settings_path: Settings::path(),
@@ -86,10 +103,18 @@ impl Explorer {
     /// Applies `show_hidden` to every tab (selections survive by name) and persists the settings.
     /// A save failure becomes an error notice; the new settings stay in effect for this session.
     pub fn set_settings(&mut self, settings: Settings) {
+        let hidden_changed = settings.show_hidden != self.settings.show_hidden;
         for tab in &mut self.tabs {
             tab.set_show_hidden(settings.show_hidden);
         }
         self.settings = settings;
+        if hidden_changed {
+            self.tree_generation += 1;
+            let cached: Vec<PathBuf> = self.tree.children.keys().cloned().collect();
+            for path in cached {
+                self.load_tree(path);
+            }
+        }
         let saved = match &self.settings_path {
             Some(path) => self.settings.save_to(path),
             None => Err(io::Error::new(
@@ -99,6 +124,47 @@ impl Explorer {
         };
         if let Err(err) = saved {
             self.notify(NoticeKind::Error, format!("Could not save settings: {err}"));
+        }
+    }
+
+    pub fn tree(&self) -> &FolderTree {
+        &self.tree
+    }
+
+    /// Expands a collapsed folder (loading its subfolders if needed) or collapses an expanded one. The cache is kept.
+    pub fn tree_toggle(&mut self, path: PathBuf) {
+        if !self.tree.expanded.remove(&path) {
+            self.tree_expand(path);
+        }
+    }
+
+    /// Expands `path`, loading its subfolders unless they are cached. A failed load is retried.
+    pub fn tree_expand(&mut self, path: PathBuf) {
+        if !matches!(
+            self.tree.children.get(&path),
+            Some(Children::Loading | Children::Loaded(_))
+        ) {
+            self.tree.children.insert(path.clone(), Children::Loading);
+            self.load_tree(path.clone());
+        }
+        self.tree.expanded.insert(path);
+    }
+
+    /// Expands `root` and every folder between it and `path` (not `path` itself), where `root` is the deepest of `roots` containing `path`.
+    /// The GUI calls this when the active tab's path changes.
+    pub fn tree_reveal(&mut self, path: &Path, roots: &[PathBuf]) {
+        let Some(root) = roots
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+        else {
+            return;
+        };
+        for dir in path.ancestors().skip(1) {
+            if !dir.starts_with(root) {
+                break;
+            }
+            self.tree_expand(dir.to_path_buf());
         }
     }
 
@@ -290,6 +356,18 @@ impl Explorer {
             };
             changed |= tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
         }
+        while let Ok(done) = self.tree_rx.try_recv() {
+            if done.generation != self.tree_generation {
+                continue;
+            }
+            if let Some(slot) = self.tree.children.get_mut(&done.path) {
+                *slot = match done.result {
+                    Ok(nodes) => Children::Loaded(nodes),
+                    Err(err) => Children::Failed(err),
+                };
+                changed = true;
+            }
+        }
         while let Ok(outcome) = self.job_rx.try_recv() {
             self.finish_job(outcome);
             changed = true;
@@ -300,6 +378,11 @@ impl Explorer {
     fn finish_job(&mut self, outcome: Outcome) {
         self.job_in_flight = false;
         self.notices.push_back(outcome.notice);
+        for path in &outcome.touched {
+            if self.tree.children.contains_key(path) {
+                self.load_tree(path.clone());
+            }
+        }
         for index in 0..self.tabs.len() {
             let path = self.tabs[index].path().to_path_buf();
             if !outcome.touched.contains(&path) {
@@ -334,6 +417,22 @@ impl Explorer {
         self.notices.push_back(Notice {
             kind,
             text: text.into(),
+        });
+    }
+
+    fn load_tree(&self, path: PathBuf) {
+        let generation = self.tree_generation;
+        let show_hidden = self.settings.show_hidden;
+        let tx = self.tree_tx.clone();
+        let wake = Arc::clone(&self.wake);
+        thread::spawn(move || {
+            let result = list_children(&path, show_hidden);
+            let _ = tx.send(TreeLoaded {
+                generation,
+                path,
+                result,
+            });
+            wake();
         });
     }
 
@@ -398,6 +497,11 @@ mod tests {
     fn settle(explorer: &mut Explorer) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while explorer.busy()
+            || explorer
+                .tree
+                .children
+                .values()
+                .any(|c| matches!(c, Children::Loading))
             || explorer
                 .tabs()
                 .iter()
@@ -854,5 +958,136 @@ mod tests {
             "{}",
             notice.text
         );
+    }
+
+    fn child_names(explorer: &Explorer, dir: &Path) -> Vec<String> {
+        match explorer.tree().children(dir) {
+            Some(Children::Loaded(nodes)) => nodes.iter().map(|n| n.name.clone()).collect(),
+            other => panic!("not loaded: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tree_toggle_loads_sorted_folders_only_and_keeps_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for name in ["d10", "d2", "Alpha", ".hid"] {
+            fs::create_dir(root.join(name)).unwrap();
+        }
+        fs::write(root.join("file.txt"), b"").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("d2"), root.join("linkdir")).unwrap();
+            std::os::unix::fs::symlink(root.join("file.txt"), root.join("linkfile")).unwrap();
+        }
+        let mut explorer = explorer_in(root);
+
+        assert!(explorer.tree().children(root).is_none());
+        explorer.tree_toggle(root.to_path_buf());
+        assert!(explorer.tree().is_expanded(root));
+        assert_eq!(explorer.tree().children(root), Some(&Children::Loading));
+        settle(&mut explorer);
+        #[cfg(unix)]
+        assert_eq!(
+            child_names(&explorer, root),
+            ["Alpha", "d2", "d10", "linkdir"]
+        );
+        #[cfg(not(unix))]
+        assert_eq!(child_names(&explorer, root), ["Alpha", "d2", "d10"]);
+
+        explorer.tree_toggle(root.to_path_buf());
+        assert!(!explorer.tree().is_expanded(root));
+        assert!(matches!(
+            explorer.tree().children(root),
+            Some(Children::Loaded(_))
+        ));
+
+        explorer.tree_toggle(root.join("missing"));
+        settle(&mut explorer);
+        assert!(matches!(
+            explorer.tree().children(&root.join("missing")),
+            Some(Children::Failed(_))
+        ));
+    }
+
+    #[test]
+    fn tree_show_hidden_reloads_cached_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join(".hid")).unwrap();
+        fs::create_dir(root.join("vis")).unwrap();
+        let mut explorer = explorer_in(root);
+        let cfg = tempfile::tempdir().unwrap();
+        explorer.settings_path = Some(cfg.path().join("settings.toml"));
+        explorer.tree_expand(root.to_path_buf());
+        settle(&mut explorer);
+        assert_eq!(child_names(&explorer, root), ["vis"]);
+
+        explorer.set_settings(Settings {
+            show_hidden: true,
+            ..Settings::default()
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while child_names(&explorer, root) != [".hid", "vis"] {
+            assert!(
+                Instant::now() < deadline,
+                "reload did not finish in time: {:?}",
+                explorer.tree().children(root)
+            );
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(explorer.tree().is_expanded(root));
+    }
+
+    #[test]
+    fn tree_reveal_expands_ancestors_below_the_deepest_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let deep = root.join("a").join("b").join("c");
+        fs::create_dir_all(&deep).unwrap();
+        fs::create_dir_all(root.join("a").join("sibling")).unwrap();
+        let mut explorer = explorer_in(root);
+
+        let roots = [root.to_path_buf(), root.join("a")];
+        explorer.tree_reveal(&deep, &roots);
+        settle(&mut explorer);
+        assert!(explorer.tree().is_expanded(&root.join("a")));
+        assert!(explorer.tree().is_expanded(&root.join("a").join("b")));
+        assert!(!explorer.tree().is_expanded(&deep));
+        assert!(!explorer.tree().is_expanded(root), "above the deepest root");
+        assert!(
+            !explorer.tree().is_expanded(&root.join("a").join("sibling")),
+            "siblings of the path stay collapsed"
+        );
+        assert_eq!(child_names(&explorer, &root.join("a").join("b")), ["c"]);
+
+        explorer.tree_reveal(root, &[]);
+        assert!(!explorer.tree().is_expanded(root), "no root, no change");
+    }
+
+    #[test]
+    fn tree_reloads_after_a_folder_is_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("one")).unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.tree_expand(root.to_path_buf());
+        settle(&mut explorer);
+        assert_eq!(child_names(&explorer, root), ["one"]);
+
+        explorer.create_folder("two");
+        settle(&mut explorer);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while child_names(&explorer, root) != ["one", "two"] {
+            assert!(
+                Instant::now() < deadline,
+                "reload did not finish in time: {:?}",
+                explorer.tree().children(root)
+            );
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(explorer.tree().is_expanded(root));
     }
 }

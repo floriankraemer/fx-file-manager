@@ -1,68 +1,125 @@
-//! Crisp vector entry icons, painted so no icon font is needed.
+//! Entry icons (Material icon theme, embedded and rasterised on demand) and
+//! stroke-drawn command-bar glyphs.
 
 use crate::theme;
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
+use eframe::egui::{
+    self, Color32, ColorImage, Context, Rect, Shape, Stroke, TextureHandle, TextureOptions, Ui,
+    pos2, vec2,
+};
 use fx_core::EntryKind;
+use icon_theme::{Appearance, IconAssets, IconError, IconPack, IconRenderer};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-const SIZE: Vec2 = vec2(16.0, 14.0);
-const FOLDER: Color32 = Color32::from_rgb(0xEB, 0xCB, 0x8B);
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/icons_embedded.rs"));
+}
 
-pub fn entry(ui: &mut Ui, kind: EntryKind) {
-    let (rect, _) = ui.allocate_exact_size(SIZE, Sense::hover());
-    let rect = Rect::from_center_size(rect.center().round(), SIZE);
-    match kind {
-        EntryKind::Dir => folder(ui, rect),
-        EntryKind::Symlink => {
-            file(ui, rect, theme::accent());
-            arrow(ui, rect);
-        }
-        EntryKind::File | EntryKind::Other => file(ui, rect, theme::text()),
+const ICON_PT: f32 = 16.0;
+
+struct Embedded;
+
+impl IconAssets for Embedded {
+    fn read(&self, relative: &Path) -> Result<Vec<u8>, IconError> {
+        let rel = relative.to_string_lossy().replace('\\', "/");
+        embedded::asset(&rel)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| IconError::UnreadableAsset {
+                path: rel,
+                message: "not embedded".into(),
+            })
     }
 }
 
-fn folder(ui: &Ui, r: Rect) {
-    let p = ui.painter();
-    let tab = Rect::from_min_size(r.min + vec2(0.5, 1.0), vec2(6.0, 4.0));
-    p.rect_filled(tab, 1.5, FOLDER.gamma_multiply(0.8));
-    let body = Rect::from_min_max(r.min + vec2(0.5, 3.0), r.max - vec2(0.5, 1.0));
-    p.rect_filled(body, 2.0, FOLDER);
+struct Themed {
+    pack: IconPack,
+    renderer: IconRenderer,
+    textures: HashMap<(String, u32), TextureHandle>,
 }
 
-fn file(ui: &Ui, r: Rect, color: Color32) {
-    let (l, t, rt, b) = (
-        r.left() + 2.5,
-        r.top() + 0.5,
-        r.right() - 2.5,
-        r.bottom() - 0.5,
-    );
-    let fold = 4.0;
-    let outline: Vec<Pos2> = vec![
-        pos2(l, t),
-        pos2(rt - fold, t),
-        pos2(rt, t + fold),
-        pos2(rt, b),
-        pos2(l, b),
-    ];
-    let stroke = Stroke::new(1.2, color);
-    let p = ui.painter();
-    p.add(Shape::convex_polygon(
-        outline,
-        color.gamma_multiply(0.12),
-        stroke,
-    ));
-    p.line_segment([pos2(rt - fold, t), pos2(rt - fold, t + fold)], stroke);
-    p.line_segment([pos2(rt - fold, t + fold), pos2(rt, t + fold)], stroke);
+type Shared = Arc<Mutex<Themed>>;
+
+fn shared(ctx: &Context) -> Shared {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_insert_with(egui::Id::unique("fx-icon-theme"), || {
+            Arc::new(Mutex::new(Themed {
+                pack: IconPack::from_toml_str(embedded::PACK_TOML).expect("embedded pack.toml"),
+                renderer: IconRenderer::new(),
+                textures: HashMap::new(),
+            }))
+        })
+        .clone()
+    })
 }
 
-/// Small up-right arrow over the file's lower half.
+fn appearance() -> Appearance {
+    if theme::is_light() {
+        Appearance::Light
+    } else {
+        Appearance::Dark
+    }
+}
+
+/// Paints the icon chosen by `pick` into `rect`.
+fn paint_themed(ui: &Ui, rect: Rect, pick: impl FnOnce(&IconPack, Appearance) -> String) {
+    let px = (ICON_PT * ui.pixels_per_point()).round() as u32;
+    let shared = shared(ui.ctx());
+    let mut t = shared.lock().unwrap_or_else(|e| e.into_inner());
+    let t = &mut *t;
+    let id = pick(&t.pack, appearance());
+    let key = (id, px);
+    if !t.textures.contains_key(&key) {
+        let Ok(icon) = t.renderer.render(&t.pack, &Embedded, &key.0, px) else {
+            return;
+        };
+        let image = ColorImage::from_rgba_premultiplied(
+            [icon.width as usize, icon.height as usize],
+            &icon.pixels,
+        );
+        let tex = ui.ctx().load_texture(
+            format!("icon:{}:{px}", key.0),
+            image,
+            TextureOptions::LINEAR,
+        );
+        t.textures.insert(key.clone(), tex);
+    }
+    let r = Rect::from_center_size(rect.center(), vec2(ICON_PT, ICON_PT));
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    ui.painter()
+        .image(t.textures[&key].id(), r, uv, Color32::WHITE);
+}
+
+pub fn paint_file(ui: &Ui, rect: Rect, name: &str) {
+    paint_themed(ui, rect, |p, a| p.file_icon(name, None, a).to_owned());
+}
+
+pub fn paint_folder(ui: &Ui, rect: Rect, name: &str, expanded: bool) {
+    paint_themed(ui, rect, |p, a| p.folder_icon(name, expanded, a).to_owned());
+}
+
+pub fn entry(ui: &mut Ui, kind: EntryKind, name: &str) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ICON_PT, ICON_PT), egui::Sense::hover());
+    match kind {
+        EntryKind::Dir => paint_folder(ui, rect, name, false),
+        EntryKind::Symlink => {
+            paint_file(ui, rect, name);
+            arrow(ui, rect);
+        }
+        EntryKind::File | EntryKind::Other => paint_file(ui, rect, name),
+    }
+}
+
+/// Small up-right arrow in the icon's bottom-left corner.
 fn arrow(ui: &Ui, r: Rect) {
-    let stroke = Stroke::new(1.4, theme::accent());
-    let c = pos2(r.center().x, r.bottom() - 4.5);
-    let (a, b) = (c + vec2(-2.0, 2.0), c + vec2(2.0, -2.0));
+    let c = r.left_bottom() + vec2(3.5, -3.5);
+    let (a, b) = (c + vec2(-1.5, 1.5), c + vec2(1.5, -1.5));
     let p = ui.painter();
+    p.circle_filled(c, 4.0, theme::bg().gamma_multiply(0.85));
+    let stroke = Stroke::new(1.3, theme::accent());
     p.line_segment([a, b], stroke);
-    p.line_segment([b + vec2(-3.0, 0.0), b], stroke);
-    p.line_segment([b, b + vec2(0.0, 3.0)], stroke);
+    p.line_segment([b + vec2(-2.5, 0.0), b], stroke);
+    p.line_segment([b, b + vec2(0.0, 2.5)], stroke);
 }
 
 /// Command-bar glyphs, drawn from strokes so they render without any icon font.
@@ -75,6 +132,7 @@ pub enum Glyph {
     View,
     More,
     Chevron,
+    ChevronRight,
 }
 
 /// Paints `glyph` centered in `rect` (a 16x16 area).
@@ -135,9 +193,34 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
                 p.circle_filled(at(dx, 0.0), 1.5, color);
             }
         }
+        Glyph::ChevronRight => {
+            p.line_segment([at(-1.5, -3.0), at(1.5, 0.0)], s);
+            p.line_segment([at(-1.5, 3.0), at(1.5, 0.0)], s);
+        }
         Glyph::Chevron => {
             p.line_segment([at(-3.0, -1.5), at(0.0, 1.5)], s);
             p.line_segment([at(3.0, -1.5), at(0.0, 1.5)], s);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_pack_has_default_assets() {
+        let pack = IconPack::from_toml_str(embedded::PACK_TOML).unwrap();
+        for id in [
+            pack.default_file_icon(Appearance::Dark),
+            pack.folder_icon("", false, Appearance::Dark),
+        ] {
+            let rel = pack.asset_path(id);
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            assert!(
+                embedded::asset(&rel).is_some_and(|b| !b.is_empty()),
+                "{rel}"
+            );
         }
     }
 }
