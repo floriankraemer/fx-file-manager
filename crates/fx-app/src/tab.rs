@@ -1,6 +1,7 @@
-//! One explorer tab: location, history, load state, and the visible row order.
+//! One explorer tab: location, history, load state, the visible row order, and the selection.
 
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -21,9 +22,13 @@ pub struct Tab {
     /// Bumped per load; results carrying an older value are stale and dropped.
     generation: u64,
     order: Vec<u32>,
-    selected: Option<usize>,
-    /// Keeps the selection on the same file across re-sorts, filters and refreshes.
-    selected_name: Option<OsString>,
+    /// Selected rows (indices into `order`), sorted.
+    rows: BTreeSet<usize>,
+    /// Focus row; also the anchor for shift-click ranges.
+    focus: Option<usize>,
+    /// Names behind `rows`. Kept across loads so a refresh, resort or filter restores the selection by name.
+    selected_names: BTreeSet<OsString>,
+    focus_name: Option<OsString>,
     sort: SortSpec,
     show_hidden: bool,
     filter: String,
@@ -32,17 +37,19 @@ pub struct Tab {
 }
 
 impl Tab {
-    pub(crate) fn new(id: u64, path: PathBuf) -> Self {
+    pub(crate) fn new(id: u64, path: PathBuf, show_hidden: bool) -> Self {
         Self {
             id,
             path,
             state: LoadState::Loading,
             generation: 0,
             order: Vec::new(),
-            selected: None,
-            selected_name: None,
+            rows: BTreeSet::new(),
+            focus: None,
+            selected_names: BTreeSet::new(),
+            focus_name: None,
             sort: SortSpec::default(),
-            show_hidden: false,
+            show_hidden,
             filter: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
@@ -74,31 +81,79 @@ impl Tab {
         &self.order
     }
 
-    /// Index into `order()`.
+    /// The focus row (index into `order()`), which is also the shift-click anchor. It may be unselected.
     pub fn selected(&self) -> Option<usize> {
-        self.selected
+        self.focus
     }
 
-    /// Out-of-range rows clear the selection.
+    /// Selected rows (indices into `order()`), sorted.
+    pub fn selection(&self) -> Vec<usize> {
+        self.rows.iter().copied().collect()
+    }
+
+    pub fn is_selected(&self, row: usize) -> bool {
+        self.rows.contains(&row)
+    }
+
+    /// Replaces the selection with one row. Out-of-range rows clear the selection.
     pub fn select(&mut self, row: Option<usize>) {
         let row = row.filter(|&r| r < self.order.len());
-        self.selected_name = row.and_then(|r| self.name_at(r)).map(OsStr::to_os_string);
-        self.selected = row;
+        self.set_selection(row.into_iter().collect(), row);
     }
 
-    /// Moves the selection by `delta` rows, clamped to the visible rows.
+    /// Windows-style click: plain replaces the selection, ctrl toggles one row, shift selects the range from the anchor.
+    /// Shift with ctrl adds the range to the existing selection. Shift without an anchor acts as a plain click.
+    /// Out-of-range rows are ignored.
+    pub fn click(&mut self, row: usize, ctrl: bool, shift: bool) {
+        if row >= self.order.len() {
+            return;
+        }
+        match (shift, self.focus) {
+            (true, Some(anchor)) => {
+                let mut rows = if ctrl {
+                    self.rows.clone()
+                } else {
+                    BTreeSet::new()
+                };
+                rows.extend(anchor.min(row)..=anchor.max(row));
+                self.set_selection(rows, Some(anchor));
+            }
+            _ if ctrl => {
+                let mut rows = self.rows.clone();
+                if !rows.remove(&row) {
+                    rows.insert(row);
+                }
+                self.set_selection(rows, Some(row));
+            }
+            _ => self.set_selection(BTreeSet::from([row]), Some(row)),
+        }
+    }
+
+    /// Selects every visible row. The focus stays where it is, or moves to the top if there was none.
+    pub fn select_all(&mut self) {
+        let focus = self.focus.or_else(|| (!self.order.is_empty()).then_some(0));
+        self.set_selection((0..self.order.len()).collect(), focus);
+    }
+
+    /// Moves the focus by `delta` rows and selects only that row, clamped to the visible rows.
     /// With no selection, a positive delta starts at the top and a negative one at the bottom.
     pub fn move_selection(&mut self, delta: isize) {
         let Some(last) = self.order.len().checked_sub(1) else {
             return self.select(None);
         };
         let current = self
-            .selected
+            .focus
             .map_or(if delta < 0 { last as isize + 1 } else { -1 }, |row| {
                 row as isize
             });
         let row = (current + delta).clamp(0, last as isize) as usize;
         self.select(Some(row));
+    }
+
+    /// Selects the entry called `name` once the next load of this tab completes.
+    pub(crate) fn select_after_load(&mut self, name: OsString) {
+        self.selected_names = BTreeSet::from([name.clone()]);
+        self.focus_name = Some(name);
     }
 
     pub fn sort(&self) -> SortSpec {
@@ -118,6 +173,12 @@ impl Tab {
                 ascending: true,
             }
         };
+        self.rebuild_order();
+    }
+
+    /// Sets column and direction explicitly, e.g. from a sort menu.
+    pub fn set_sort(&mut self, sort: SortSpec) {
+        self.sort = sort;
         self.rebuild_order();
     }
 
@@ -184,12 +245,13 @@ impl Tab {
     }
 
     /// Marks the tab as loading and returns the generation the new result must carry.
-    /// The previous selection's name is kept, so a refresh can restore it.
+    /// The selected names are kept, so a refresh can restore the selection.
     pub(crate) fn begin_load(&mut self) -> u64 {
         self.generation += 1;
         self.state = LoadState::Loading;
         self.order.clear();
-        self.selected = None;
+        self.rows.clear();
+        self.focus = None;
         self.generation
     }
 
@@ -206,36 +268,59 @@ impl Tab {
         true
     }
 
-    fn clear_selection(&mut self) {
-        self.selected = None;
-        self.selected_name = None;
+    /// Entry name of a visible row, if the listing is loaded.
+    pub(crate) fn name_at(&self, row: usize) -> Option<&OsStr> {
+        self.name_of(*self.order.get(row)?)
     }
 
+    fn clear_selection(&mut self) {
+        self.rows.clear();
+        self.focus = None;
+        self.selected_names.clear();
+        self.focus_name = None;
+    }
+
+    /// Sets the selection and derives the remembered names from it.
+    fn set_selection(&mut self, rows: BTreeSet<usize>, focus: Option<usize>) {
+        self.selected_names = rows
+            .iter()
+            .filter_map(|&row| self.name_at(row))
+            .map(OsStr::to_os_string)
+            .collect();
+        self.focus_name = focus
+            .and_then(|row| self.name_at(row))
+            .map(OsStr::to_os_string);
+        self.rows = rows;
+        self.focus = focus;
+    }
+
+    /// Rebuilds the visible order and maps the remembered names onto it.
+    /// Names that are no longer visible (deleted, hidden by the filter) drop out of the selection.
     fn rebuild_order(&mut self) {
-        let previous = self.selected;
+        let previous_focus = self.focus;
         self.order = match &self.state {
             LoadState::Loaded(view) => {
                 build_order(&view.listing, self.show_hidden, &self.filter, self.sort)
             }
             LoadState::Loading | LoadState::Failed(_) => Vec::new(),
         };
-        // Prefer the same file; otherwise keep the old row position, clamped to the new list.
-        let row = self.row_of_selected_name().or_else(|| {
+        let rows = (0..self.order.len())
+            .filter(|&row| {
+                self.name_at(row)
+                    .is_some_and(|name| self.selected_names.contains(name))
+            })
+            .collect();
+        // Prefer the same file as focus; otherwise keep the old row position, clamped to the new list.
+        let focus = self.row_of_focus_name().or_else(|| {
             let last = self.order.len().checked_sub(1)?;
-            previous.map(|row| row.min(last))
+            previous_focus.map(|row| row.min(last))
         });
-        self.select(row);
+        self.set_selection(rows, focus);
     }
 
-    fn row_of_selected_name(&self) -> Option<usize> {
-        let name = self.selected_name.as_deref()?;
-        self.order
-            .iter()
-            .position(|&index| self.name_of(index) == Some(name))
-    }
-
-    fn name_at(&self, row: usize) -> Option<&OsStr> {
-        self.name_of(*self.order.get(row)?)
+    fn row_of_focus_name(&self) -> Option<usize> {
+        let name = self.focus_name.as_deref()?;
+        (0..self.order.len()).find(|&row| self.name_at(row) == Some(name))
     }
 
     fn name_of(&self, index: u32) -> Option<&OsStr> {

@@ -1,8 +1,14 @@
 //! Owns the tabs and the background loader. Navigation goes through here because only Explorer can start loads.
 
+use crate::ops::{
+    EntryDetails, Job, Notice, NoticeKind, Outcome, details, unique_name, validate_name,
+};
+use crate::settings::Settings;
 use crate::tab::{LoadState, Tab};
 use crate::view::DirView;
 use fx_core::{ListError, ListOptions, list_dir};
+use std::collections::VecDeque;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -30,23 +36,70 @@ pub struct Explorer {
     next_tab_id: u64,
     tx: Sender<Completed>,
     rx: Receiver<Completed>,
+    job_tx: Sender<Outcome>,
+    job_rx: Receiver<Outcome>,
+    /// One file operation at a time: a second request is refused while this is set.
+    // ponytail: serial jobs; add a queue if users need to chain operations while one runs
+    job_in_flight: bool,
     wake: Arc<dyn Fn() + Send + Sync>,
+    settings: Settings,
+    /// Where `set_settings` persists. `None` when the platform has no config directory.
+    settings_path: Option<PathBuf>,
+    notices: VecDeque<Notice>,
 }
 
 impl Explorer {
-    /// `wake` is called from loader threads when a result is ready; a UI passes `ctx.request_repaint`.
+    /// `wake` is called from worker threads when a result is ready; a UI passes `ctx.request_repaint`.
     pub fn new(start: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self::with_settings(start, Settings::default(), wake)
+    }
+
+    pub fn with_settings(
+        start: PathBuf,
+        settings: Settings,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (job_tx, job_rx) = mpsc::channel();
         let mut explorer = Self {
             tabs: Vec::new(),
             active: 0,
             next_tab_id: 0,
             tx,
             rx,
+            job_tx,
+            job_rx,
+            job_in_flight: false,
             wake: Arc::new(wake),
+            settings,
+            settings_path: Settings::path(),
+            notices: VecDeque::new(),
         };
         explorer.new_tab(start);
         explorer
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Applies `show_hidden` to every tab (selections survive by name) and persists the settings.
+    /// A save failure becomes an error notice; the new settings stay in effect for this session.
+    pub fn set_settings(&mut self, settings: Settings) {
+        for tab in &mut self.tabs {
+            tab.set_show_hidden(settings.show_hidden);
+        }
+        self.settings = settings;
+        let saved = match &self.settings_path {
+            Some(path) => self.settings.save_to(path),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no config directory available",
+            )),
+        };
+        if let Err(err) = saved {
+            self.notify(NoticeKind::Error, format!("Could not save settings: {err}"));
+        }
     }
 
     pub fn tabs(&self) -> &[Tab] {
@@ -76,7 +129,8 @@ impl Explorer {
     pub fn new_tab(&mut self, path: PathBuf) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        self.tabs.push(Tab::new(id, absolute(path)));
+        self.tabs
+            .push(Tab::new(id, absolute(path), self.settings.show_hidden));
         self.active = self.tabs.len() - 1;
         self.start_load(self.active);
     }
@@ -147,8 +201,87 @@ impl Explorer {
         }
     }
 
-    /// Applies finished loads. Results for closed tabs or superseded requests are dropped.
-    /// Returns true if any tab changed.
+    /// Deletes the entries at `rows` (indices into `active().order()`) in the background.
+    /// `permanent = false` moves them to the OS trash; `true` removes them for good, never following symlinks.
+    /// Out-of-range rows are ignored.
+    pub fn delete(&mut self, rows: &[usize], permanent: bool) {
+        let mut rows = rows.to_vec();
+        rows.sort_unstable();
+        rows.dedup();
+        let paths: Vec<PathBuf> = rows
+            .iter()
+            .filter_map(|&row| self.entry_path(row))
+            .collect();
+        if paths.is_empty() {
+            return self.notify(NoticeKind::Error, "Nothing selected to delete");
+        }
+        self.submit(Job::Delete { paths, permanent });
+    }
+
+    /// Renames the entry at `row` in place. The name must be a single valid component and must not exist yet.
+    pub fn rename(&mut self, row: usize, new_name: &str) {
+        if let Err(err) = validate_name(new_name) {
+            return self.notify(NoticeKind::Error, err.to_string());
+        }
+        let Some(from) = self.entry_path(row) else {
+            return self.notify(NoticeKind::Error, "No such item to rename");
+        };
+        let Some(to) = from.parent().map(|dir| dir.join(new_name)) else {
+            return self.notify(NoticeKind::Error, "This item cannot be renamed");
+        };
+        self.submit(Job::Rename { from, to });
+    }
+
+    /// Creates a folder in the active tab's directory and selects it once the listing reloads.
+    pub fn create_folder(&mut self, name: &str) {
+        if let Err(err) = validate_name(name) {
+            return self.notify(NoticeKind::Error, err.to_string());
+        }
+        let path = self.active().path().join(name);
+        self.submit(Job::CreateFolder { path });
+    }
+
+    /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's directory.
+    pub fn suggest_folder_name(&self) -> String {
+        let dir = self.active().path();
+        unique_name("New folder", |name| {
+            fs::symlink_metadata(dir.join(name)).is_err()
+        })
+    }
+
+    /// Opens the folder at `row` in a new tab. Non-folders are ignored.
+    pub fn open_in_new_tab(&mut self, row: usize) {
+        let Some(path) = self.entry_path(row) else {
+            return;
+        };
+        if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+            self.new_tab(path);
+        }
+    }
+
+    /// Full path of a visible row of the active tab.
+    pub fn entry_path(&self, row: usize) -> Option<PathBuf> {
+        let tab = self.active();
+        Some(tab.path().join(tab.name_at(row)?))
+    }
+
+    /// Properties for a visible row of the active tab. Reads metadata now, on the calling thread; `None` if the row or entry is gone.
+    pub fn entry_details(&self, row: usize) -> Option<EntryDetails> {
+        details(&self.entry_path(row)?)
+    }
+
+    /// True while a file operation is running.
+    pub fn busy(&self) -> bool {
+        self.job_in_flight
+    }
+
+    /// The oldest pending notice, if any.
+    pub fn take_notice(&mut self) -> Option<Notice> {
+        self.notices.pop_front()
+    }
+
+    /// Applies finished loads and file operations. Results for closed tabs or superseded requests are dropped.
+    /// Returns true if any tab or notice changed.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         while let Ok(done) = self.rx.try_recv() {
@@ -157,7 +290,51 @@ impl Explorer {
             };
             changed |= tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
         }
+        while let Ok(outcome) = self.job_rx.try_recv() {
+            self.finish_job(outcome);
+            changed = true;
+        }
         changed
+    }
+
+    fn finish_job(&mut self, outcome: Outcome) {
+        self.job_in_flight = false;
+        self.notices.push_back(outcome.notice);
+        for index in 0..self.tabs.len() {
+            let path = self.tabs[index].path().to_path_buf();
+            if !outcome.touched.contains(&path) {
+                continue;
+            }
+            if let Some(created) = &outcome.created
+                && created.parent() == Some(path.as_path())
+                && let Some(name) = created.file_name()
+            {
+                self.tabs[index].select_after_load(name.to_os_string());
+            }
+            self.start_load(index);
+        }
+    }
+
+    fn submit(&mut self, job: Job) {
+        if self.job_in_flight {
+            return self.notify(NoticeKind::Error, "Another file operation is still running");
+        }
+        self.job_in_flight = true;
+        let tx = self.job_tx.clone();
+        let wake = Arc::clone(&self.wake);
+        thread::spawn(move || {
+            let outcome = job.run();
+            // As with loads: a failed send means the Explorer is gone and nobody needs the result.
+            let _ = tx.send(outcome);
+            wake();
+        });
+    }
+
+    fn notify(&mut self, kind: NoticeKind, text: impl Into<String>) {
+        self.notices.push_back(Notice {
+            kind,
+            text: text.into(),
+        });
     }
 
     fn start_load(&mut self, index: usize) {
@@ -214,13 +391,19 @@ fn open_with_system(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::view::SortColumn;
-    use std::fs;
+    use fx_core::EntryKind;
     use std::time::Duration;
 
+    /// Waits until no file operation runs and no tab is loading.
     fn settle(explorer: &mut Explorer) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while matches!(explorer.active().state(), LoadState::Loading) {
-            assert!(Instant::now() < deadline, "listing did not finish in time");
+        while explorer.busy()
+            || explorer
+                .tabs()
+                .iter()
+                .any(|tab| matches!(tab.state(), LoadState::Loading))
+        {
+            assert!(Instant::now() < deadline, "work did not finish in time");
             explorer.poll();
             thread::sleep(Duration::from_millis(1));
         }
@@ -242,6 +425,37 @@ mod tests {
             .collect()
     }
 
+    fn row_of(explorer: &Explorer, name: &str) -> usize {
+        names(explorer)
+            .iter()
+            .position(|n| n == name)
+            .unwrap_or_else(|| panic!("no row named {name}"))
+    }
+
+    fn selected_names(explorer: &Explorer) -> Vec<String> {
+        let all = names(explorer);
+        explorer
+            .active()
+            .selection()
+            .into_iter()
+            .map(|row| all[row].clone())
+            .collect()
+    }
+
+    fn last_notice(explorer: &mut Explorer) -> Notice {
+        let mut last = None;
+        while let Some(notice) = explorer.take_notice() {
+            last = Some(notice);
+        }
+        last.expect("expected a notice")
+    }
+
+    fn explorer_in(root: &Path) -> Explorer {
+        let mut explorer = Explorer::new(root.to_path_buf(), || {});
+        settle(&mut explorer);
+        explorer
+    }
+
     #[test]
     fn navigates_sorts_filters_and_manages_tabs() {
         let dir = tempfile::tempdir().unwrap();
@@ -261,6 +475,11 @@ mod tests {
         assert_eq!(names(&explorer)[2..], ["small.txt", "big.bin"]);
         explorer.active_mut().set_sort_column(SortColumn::Size);
         assert_eq!(names(&explorer)[2..], ["big.bin", "small.txt"]);
+        explorer.active_mut().set_sort(crate::SortSpec {
+            column: SortColumn::Size,
+            ascending: true,
+        });
+        assert_eq!(names(&explorer)[2..], ["small.txt", "big.bin"]);
 
         explorer.navigate(root.join("alpha"));
         settle(&mut explorer);
@@ -291,5 +510,349 @@ mod tests {
         assert_eq!(explorer.tabs().len(), 1);
         explorer.close_tab(0);
         assert_eq!(explorer.tabs().len(), 1, "the last tab is never closed");
+    }
+
+    #[test]
+    fn rename_validates_and_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.txt"), b"a").unwrap();
+        fs::write(root.join("b.txt"), b"b").unwrap();
+        let mut explorer = explorer_in(root);
+        let a = row_of(&explorer, "a.txt");
+
+        for bad in ["", "   ", "x/y", ".", ".."] {
+            explorer.rename(a, bad);
+            let notice = last_notice(&mut explorer);
+            assert_eq!(notice.kind, NoticeKind::Error, "name {bad:?}");
+        }
+        assert!(root.join("a.txt").exists());
+
+        explorer.rename(a, "b.txt");
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Error);
+        assert_eq!(fs::read(root.join("a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(root.join("b.txt")).unwrap(), b"b");
+
+        explorer.rename(a, "c.txt");
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Info);
+        assert!(!root.join("a.txt").exists());
+        assert_eq!(fs::read(root.join("c.txt")).unwrap(), b"a");
+        assert!(names(&explorer).contains(&"c.txt".to_owned()));
+    }
+
+    #[test]
+    fn suggests_a_free_folder_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut explorer = explorer_in(dir.path());
+        assert_eq!(explorer.suggest_folder_name(), "New folder");
+        explorer.create_folder("New folder");
+        settle(&mut explorer);
+        assert_eq!(explorer.suggest_folder_name(), "New folder (2)");
+    }
+
+    #[test]
+    fn create_folder_selects_the_new_folder_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("file.txt"), b"").unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.create_folder("a/b");
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Error);
+
+        explorer.create_folder("New");
+        settle(&mut explorer);
+        assert!(root.join("New").is_dir());
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Info);
+        assert_eq!(selected_names(&explorer), ["New"]);
+
+        explorer.create_folder("New");
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Error);
+    }
+
+    #[test]
+    fn permanent_delete_removes_files_and_trees() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("file.txt"), b"x").unwrap();
+        fs::create_dir_all(root.join("tree").join("deep")).unwrap();
+        fs::write(root.join("tree").join("deep").join("leaf"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.delete(&[row_of(&explorer, "file.txt")], true);
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).text, "Deleted 1 item");
+        assert!(!root.join("file.txt").exists());
+
+        explorer.delete(&[row_of(&explorer, "tree")], true);
+        settle(&mut explorer);
+        assert!(!root.join("tree").exists());
+        assert!(names(&explorer).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanent_delete_of_a_symlink_keeps_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("target")).unwrap();
+        fs::write(root.join("target").join("precious.txt"), b"keep").unwrap();
+        std::os::unix::fs::symlink(root.join("target"), root.join("link")).unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.delete(&[row_of(&explorer, "link")], true);
+        settle(&mut explorer);
+        assert!(
+            fs::symlink_metadata(root.join("link")).is_err(),
+            "link is gone"
+        );
+        assert_eq!(
+            fs::read(root.join("target").join("precious.txt")).unwrap(),
+            b"keep",
+            "target survives"
+        );
+    }
+
+    #[test]
+    fn multi_delete_continues_past_a_failing_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for name in ["one", "gone", "two"] {
+            fs::write(root.join(name), b"x").unwrap();
+        }
+        let mut explorer = explorer_in(root);
+        let rows = [
+            row_of(&explorer, "one"),
+            row_of(&explorer, "gone"),
+            row_of(&explorer, "two"),
+        ];
+        // Vanishes after the listing, so its delete fails.
+        fs::remove_file(root.join("gone")).unwrap();
+
+        explorer.delete(&rows, true);
+        settle(&mut explorer);
+        let notice = last_notice(&mut explorer);
+        assert_eq!(notice.kind, NoticeKind::Error);
+        assert!(
+            notice.text.starts_with("Deleted 2 of 3 items."),
+            "{}",
+            notice.text
+        );
+        assert!(
+            notice.text.contains("Could not delete gone"),
+            "{}",
+            notice.text
+        );
+        assert!(!root.join("one").exists());
+        assert!(!root.join("two").exists());
+    }
+
+    #[test]
+    fn delete_ignores_out_of_range_rows_and_refuses_while_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("keep"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.delete(&[99], true);
+        assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Error);
+        assert!(root.join("keep").exists());
+
+        explorer.delete(&[0], true);
+        explorer.create_folder("second");
+        assert!(explorer.busy());
+        assert_eq!(
+            last_notice(&mut explorer).text,
+            "Another file operation is still running"
+        );
+        settle(&mut explorer);
+        assert!(!root.join("keep").exists());
+        assert!(!root.join("second").exists(), "refused create is not run");
+    }
+
+    /// Uses the real OS trash, so it leaves the file in the user's trash on purpose.
+    #[test]
+    #[ignore = "writes into the real OS trash; run with --ignored"]
+    fn trash_delete_moves_the_file_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("bin.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.delete(&[row_of(&explorer, "bin.txt")], false);
+        settle(&mut explorer);
+        let notice = last_notice(&mut explorer);
+        assert_eq!(notice.text, "Moved 1 item to trash");
+        assert!(!root.join("bin.txt").exists());
+    }
+
+    #[test]
+    fn click_builds_windows_style_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for name in ["a", "b", "c", "d", "e"] {
+            fs::write(root.join(name), b"").unwrap();
+        }
+        let mut explorer = explorer_in(root);
+        let tab = explorer.active_mut();
+
+        tab.click(1, false, false);
+        assert_eq!(tab.selection(), [1]);
+        tab.click(3, true, false);
+        assert_eq!(tab.selection(), [1, 3]);
+        assert_eq!(tab.selected(), Some(3), "ctrl-click moves the focus");
+        tab.click(3, true, false);
+        assert_eq!(tab.selection(), [1], "ctrl-click toggles off");
+        tab.click(4, false, true);
+        assert_eq!(
+            tab.selection(),
+            [3, 4],
+            "shift range from the anchor (row 3)"
+        );
+        assert_eq!(tab.selected(), Some(3), "shift keeps the anchor");
+        tab.click(1, true, true);
+        assert_eq!(tab.selection(), [1, 2, 3, 4], "ctrl+shift adds the range");
+        tab.click(0, false, false);
+        assert_eq!(tab.selection(), [0]);
+        assert!(tab.is_selected(0) && !tab.is_selected(1));
+
+        tab.select_all();
+        assert_eq!(tab.selection(), [0, 1, 2, 3, 4]);
+        tab.click(99, false, false);
+        assert_eq!(tab.selection().len(), 5, "out-of-range clicks are ignored");
+        tab.select(Some(2));
+        assert_eq!(tab.selection(), [2]);
+        tab.move_selection(1);
+        assert_eq!(tab.selection(), [3], "keyboard moves are single-select");
+    }
+
+    #[test]
+    fn selection_survives_resort_and_refresh_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.txt"), b"1").unwrap();
+        fs::write(root.join("b.txt"), b"22").unwrap();
+        fs::write(root.join("c.txt"), b"333").unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.active_mut().click(0, false, false);
+        explorer.active_mut().click(2, true, false);
+        assert_eq!(selected_names(&explorer), ["a.txt", "c.txt"]);
+
+        explorer.active_mut().set_sort_column(SortColumn::Size);
+        assert_eq!(selected_names(&explorer), ["a.txt", "c.txt"]);
+
+        explorer.refresh();
+        settle(&mut explorer);
+        assert_eq!(selected_names(&explorer), ["a.txt", "c.txt"]);
+    }
+
+    #[test]
+    fn entry_details_describe_files_dirs_and_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("file.txt"), b"12345").unwrap();
+        fs::create_dir(root.join("folder")).unwrap();
+        let explorer = explorer_in(root);
+
+        let file = explorer
+            .entry_details(row_of(&explorer, "file.txt"))
+            .unwrap();
+        assert_eq!(file.name, "file.txt");
+        assert_eq!(file.path, root.join("file.txt"));
+        assert_eq!(file.kind, EntryKind::File);
+        assert_eq!(file.size, Some(5));
+        assert!(file.modified.is_some());
+
+        let folder = explorer.entry_details(row_of(&explorer, "folder")).unwrap();
+        assert_eq!(folder.kind, EntryKind::Dir);
+        assert_eq!(folder.size, None, "directories are not walked");
+        assert!(explorer.entry_details(99).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_details_show_unix_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let file = root.join("locked.txt");
+        fs::write(&file, b"").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        let explorer = explorer_in(root);
+
+        let details = explorer
+            .entry_details(row_of(&explorer, "locked.txt"))
+            .unwrap();
+        assert_eq!(details.permissions, "rw-r-----");
+    }
+
+    #[test]
+    fn open_in_new_tab_only_for_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("file.txt"), b"").unwrap();
+        fs::create_dir(root.join("folder")).unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.open_in_new_tab(row_of(&explorer, "file.txt"));
+        assert_eq!(explorer.tabs().len(), 1);
+        explorer.open_in_new_tab(row_of(&explorer, "folder"));
+        assert_eq!(explorer.tabs().len(), 2);
+        assert_eq!(explorer.active().path(), root.join("folder"));
+    }
+
+    #[test]
+    fn settings_apply_to_tabs_and_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join(".hidden"), b"").unwrap();
+        let mut explorer = Explorer::with_settings(root.to_path_buf(), Settings::default(), || {});
+        explorer.settings_path = Some(root.join("cfg").join("settings.toml"));
+        settle(&mut explorer);
+        assert!(!names(&explorer).contains(&".hidden".to_owned()));
+
+        let updated = Settings {
+            show_hidden: true,
+            ..Settings::default()
+        };
+        explorer.set_settings(updated.clone());
+        assert!(names(&explorer).contains(&".hidden".to_owned()));
+        assert_eq!(explorer.settings(), &updated);
+        assert_eq!(
+            Settings::load_from(&root.join("cfg").join("settings.toml")),
+            updated
+        );
+
+        explorer.new_tab(root.to_path_buf());
+        settle(&mut explorer);
+        assert!(
+            names(&explorer).contains(&".hidden".to_owned()),
+            "new tabs inherit it"
+        );
+    }
+
+    #[test]
+    fn settings_save_failure_becomes_an_error_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let blocker = root.join("not-a-dir");
+        fs::write(&blocker, b"").unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.settings_path = Some(blocker.join("settings.toml"));
+
+        explorer.set_settings(Settings {
+            show_hidden: true,
+            ..Settings::default()
+        });
+        let notice = last_notice(&mut explorer);
+        assert_eq!(notice.kind, NoticeKind::Error);
+        assert!(
+            notice.text.starts_with("Could not save settings"),
+            "{}",
+            notice.text
+        );
     }
 }

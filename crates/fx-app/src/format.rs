@@ -107,10 +107,25 @@ pub fn extension(name: &str) -> &str {
     }
 }
 
+/// Number of characters before the extension dot (the whole name if there is none); what a rename dialog pre-selects.
+pub fn stem_chars(name: &str) -> usize {
+    let stem = &name[..name.len() - extension(name).len()];
+    let stem = stem.strip_suffix('.').unwrap_or(stem);
+    stem.chars().count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn stem_excludes_the_extension() {
+        assert_eq!(stem_chars("report.final.txt"), 12);
+        assert_eq!(stem_chars("äb.rs"), 2);
+        assert_eq!(stem_chars(".bashrc"), 7);
+        assert_eq!(stem_chars("Makefile"), 8);
+    }
 
     #[test]
     fn millis_one_decimal_below_ten() {

@@ -11,9 +11,13 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
         for (i, tab) in explorer.tabs().iter().enumerate() {
             let selected = i == active;
             let frame = egui::Frame::new()
-                .fill(if selected { theme::BG } else { theme::PANEL_HI })
+                .fill(if selected {
+                    theme::bg()
+                } else {
+                    theme::panel_hi()
+                })
                 .stroke(if selected {
-                    egui::Stroke::new(1.0, theme::ACCENT)
+                    egui::Stroke::new(1.0, theme::accent())
                 } else {
                     egui::Stroke::NONE
                 })
@@ -29,9 +33,9 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.label(egui::RichText::new(tab.title()).color(if selected {
-                            theme::ACCENT
+                            theme::accent()
                         } else {
-                            theme::TEXT
+                            theme::text()
                         }));
                         if ui
                             .small_button("×")

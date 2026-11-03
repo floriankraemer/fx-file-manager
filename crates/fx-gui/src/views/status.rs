@@ -6,7 +6,12 @@ use fx_core::EntryKind;
 pub fn show(ui: &mut Ui, explorer: &Explorer) {
     let tab = explorer.active();
     let LoadState::Loaded(view) = tab.state() else {
-        ui.label(" ");
+        ui.horizontal(|ui| {
+            ui.label(" ");
+            if explorer.busy() {
+                ui.spinner();
+            }
+        });
         return;
     };
     ui.horizontal(|ui| {
@@ -22,7 +27,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer) {
         .collect::<Vec<_>>()
         .join(" · ");
         ui.colored_label(
-            theme::DIM,
+            theme::dim(),
             format!(
                 "{} items · {counts} · {} · storage: {} · listed in {}",
                 tab.order().len(),
@@ -32,6 +37,9 @@ pub fn show(ui: &mut Ui, explorer: &Explorer) {
             ),
         );
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+            if explorer.busy() {
+                ui.spinner();
+            }
             let selected = tab
                 .selected()
                 .and_then(|row| tab.order().get(row))
@@ -42,7 +50,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer) {
                     (EntryKind::File, Some(size)) => format!("{name} · {}", format_size(size)),
                     _ => name.into_owned(),
                 };
-                ui.colored_label(theme::ACCENT, text);
+                ui.colored_label(theme::accent(), text);
             }
         });
     });

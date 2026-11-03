@@ -1,6 +1,7 @@
 //! Sidebar locations and breadcrumb segments. Pure path logic plus filesystem existence checks.
 
 use std::env;
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -85,7 +86,7 @@ pub fn breadcrumbs(path: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -165,7 +166,7 @@ fn child_dirs(dir: &Path) -> Vec<Place> {
     places
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

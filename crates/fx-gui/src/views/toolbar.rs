@@ -37,10 +37,6 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
             let tab = explorer.active_mut();
-            let mut hidden = tab.show_hidden();
-            if ui.checkbox(&mut hidden, "Hidden").changed() {
-                tab.set_show_hidden(hidden);
-            }
             let mut filter = tab.filter().to_owned();
             let edit = egui::TextEdit::singleline(&mut filter)
                 .hint_text("Filter…")
@@ -57,7 +53,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                         goto = Some(path);
                     }
                     if i != last {
-                        ui.label(RichText::new("›").color(theme::DIM));
+                        ui.label(RichText::new("›").color(theme::dim()));
                     }
                 }
             });
@@ -73,18 +69,18 @@ fn crumb(ui: &mut Ui, label: &str, current: bool) -> bool {
     let font = TextStyle::Body.resolve(ui.style());
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font, theme::TEXT);
+        .layout_no_wrap(label.to_owned(), font, theme::text());
     let size = vec2((galley.size().x + 12.0).max(22.0), 22.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let color = match (current, hovered) {
-        (true, _) => theme::ACCENT,
-        (false, true) => theme::HEADER_TEXT,
-        (false, false) => theme::TEXT,
+        (true, _) => theme::accent(),
+        (false, true) => theme::header_text(),
+        (false, false) => theme::text(),
     };
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(rect, 3.0, theme::PANEL_HI);
+        painter.rect_filled(rect, 3.0, theme::panel_hi());
     }
     let text_pos = rect.center() - galley.size() / 2.0;
     painter.galley(text_pos, galley.clone(), color);

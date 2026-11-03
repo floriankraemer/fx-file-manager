@@ -18,7 +18,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
             RichText::new(group.title().to_uppercase())
                 .small()
                 .strong()
-                .color(theme::DIM),
+                .color(theme::dim()),
         );
         ui.add_space(2.0);
         for place in places.iter().filter(|p| p.group == group) {
@@ -36,15 +36,19 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
 fn row(ui: &mut Ui, label: &str, selected: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
     let fill = if selected {
-        theme::SELECTED
+        theme::selected()
     } else if resp.hovered() {
-        theme::PANEL_HI
+        theme::panel_hi()
     } else {
         Color32::TRANSPARENT
     };
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 3.0, fill);
-    let color = if selected { theme::ACCENT } else { theme::TEXT };
+    let color = if selected {
+        theme::accent()
+    } else {
+        theme::text()
+    };
     painter.text(
         rect.left_center() + vec2(8.0, 0.0),
         Align2::LEFT_CENTER,
