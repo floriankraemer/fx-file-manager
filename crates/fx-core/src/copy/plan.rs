@@ -230,6 +230,10 @@ impl CopyPlan {
         }
         if let Some(schedule) = o.schedule {
             self.schedule = schedule;
+            // TwoPhase copies with one data worker by design.
+            if matches!(schedule, Schedule::TwoPhase { .. }) && o.workers.is_none() {
+                self.workers = 1;
+            }
         }
         self
     }
