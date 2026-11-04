@@ -5,9 +5,10 @@
 use crate::command::{self, COMMANDS, Command, Def, Shortcut};
 use crate::theme;
 use eframe::egui::{
-    self, Align, Context, Event, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense,
-    TextEdit, Ui,
+    self, Align, Context, Event, Key, Layout, Modifiers, RichText, ScrollArea, Sense, TextEdit, Ui,
+    ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
 };
+use egui_extras::{Column, TableBuilder};
 use fx_app::{
     ConflictChoice, DateFormat, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE,
     MIN_FONT_SIZE, Settings, open_with_system, t,
@@ -26,10 +27,14 @@ pub enum Category {
 }
 
 /// Layout metrics, matching the IDE's settings dialog (4/8/12/16 px spacing, 26 px controls).
-const DIALOG_SIZE: egui::Vec2 = egui::vec2(880.0, 600.0);
 const SIDEBAR_WIDTH: f32 = 200.0;
-const SIDEBAR_ROW: f32 = 27.0;
+const SIDEBAR_ROW: f32 = 26.0;
 const CONTROL_HEIGHT: f32 = 26.0;
+const GROUP_GAP: f32 = 12.0;
+const ROW_GAP: f32 = 8.0;
+const TABLE_ROW: f32 = 24.0;
+/// Indent of a note under a checkbox: the box plus its gap.
+const CHECK_INDENT: f32 = 24.0;
 const COLUMN_GAP: f32 = 16.0;
 const FIELD_WIDTH: f32 = 320.0;
 const COMBO_WIDTH: f32 = 240.0;
@@ -89,9 +94,16 @@ struct Row {
     show: fn(&mut Ui, &mut Form, &'static str),
 }
 
-/// A dim help text under a control.
-fn note(ui: &mut Ui, text: &str) {
-    ui.add(egui::Label::new(RichText::new(text).small().color(theme::dim())).wrap());
+/// A dim help text under a control, `indent` px in.
+fn note(ui: &mut Ui, text: &str, indent: f32) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: indent as i8,
+            ..egui::Margin::ZERO
+        })
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(text).small().color(theme::dim())).wrap());
+        });
 }
 
 const ROWS: &[Row] = &[
@@ -304,7 +316,7 @@ const ROWS: &[Row] = &[
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.confirm_delete, l);
             if !f.draft.use_trash {
-                note(ui, t("settings.confirm_delete_note"));
+                note(ui, t("settings.confirm_delete_note"), CHECK_INDENT);
             }
         },
     },
@@ -342,7 +354,7 @@ const ROWS: &[Row] = &[
                         }
                     }),
             );
-            note(ui, t("settings.copy_workers_note"));
+            note(ui, t("settings.copy_workers_note"), 0.0);
         },
     },
     Row {
@@ -352,7 +364,7 @@ const ROWS: &[Row] = &[
         kind: Kind::Check,
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.verify_copies, l);
-            note(ui, t("settings.verify_copies_note"));
+            note(ui, t("settings.verify_copies_note"), CHECK_INDENT);
         },
     },
 ];
@@ -373,28 +385,58 @@ fn language_combo(ui: &mut Ui, language: &mut Language) {
         });
 }
 
-/// Combo box of all themes, each with a strip of swatches.
+/// Five swatches of a theme palette.
+fn swatches(ui: &mut Ui, p: &theme::Palette) {
+    for c in [p.bg, p.panel_hi, p.text, p.accent, p.error] {
+        let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
+        ui.painter().rect_filled(r, 2.0, c);
+    }
+}
+
+/// Combo box of all themes, each with a strip of swatches (also on the selected entry).
 fn theme_picker(ui: &mut Ui, id: &mut String) {
     let themes = theme::themes();
-    let selected = themes
-        .iter()
-        .find(|t| t.id == *id)
-        .map_or_else(|| id.clone(), |th| theme::display_name(th));
-    egui::ComboBox::from_id_salt("theme")
+    let selected = themes.iter().find(|t| t.id == *id);
+    let name = selected.map_or_else(|| id.clone(), |th| theme::display_name(th));
+    // The selected text leaves room for the swatch strip, painted over the button afterwards.
+    let strip = if selected.is_some() {
+        5.0 * 12.0 + 4.0
+    } else {
+        0.0
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &name,
+        strip,
+        egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), theme::text()),
+    );
+    let combo = egui::ComboBox::from_id_salt("theme")
         .width(COMBO_WIDTH)
-        .selected_text(selected)
+        .selected_text(job)
         .show_ui(ui, |ui| {
             for t in &themes {
                 ui.horizontal(|ui| {
-                    let p = &t.palette;
-                    for c in [p.bg, p.panel_hi, p.text, p.accent, p.error] {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
-                        ui.painter().rect_filled(r, 2.0, c);
-                    }
+                    swatches(ui, &t.palette);
                     ui.selectable_value(id, t.id.clone(), theme::display_name(t));
                 });
             }
         });
+    if let Some(th) = selected {
+        let r = combo.response.rect;
+        let p = &th.palette;
+        let x = r.left() + ui.spacing().button_padding.x;
+        for (i, c) in [p.bg, p.panel_hi, p.text, p.accent, p.error]
+            .into_iter()
+            .enumerate()
+        {
+            let min = egui::pos2(x + i as f32 * 12.0, r.center().y - 7.0);
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(min, egui::vec2(10.0, 14.0)),
+                2.0,
+                c,
+            );
+        }
+    }
 }
 
 fn font_size(ui: &mut Ui, size: &mut f32) {
@@ -452,8 +494,35 @@ fn capture(ctx: &Context) -> Option<Option<Shortcut>> {
     })
 }
 
-/// One grid row per command: title, current shortcuts (and a conflict warning), Record, Unbind and Reset.
-fn keyboard_section(ui: &mut Ui, st: &mut State, commands: &[&Def]) {
+/// A table line on the Keyboard page.
+enum Line {
+    Group(&'static str),
+    Command(&'static Def),
+}
+
+/// Commands as lines, with a group header before each group (COMMANDS is ordered by group).
+fn lines(commands: &[&'static Def]) -> Vec<Line> {
+    let mut out = Vec::new();
+    for d in commands {
+        if !matches!(out.last(), Some(Line::Command(p)) if p.group == d.group) {
+            out.push(Line::Group(d.group));
+        }
+        out.push(Line::Command(d));
+    }
+    out
+}
+
+/// Whether the draft's shortcuts of `d` differ from its defaults.
+fn changed(d: &Def, st: &State) -> bool {
+    st.draft
+        .keymap
+        .get(d.id)
+        .is_some_and(|keys| keys.as_slice() != d.defaults)
+}
+
+/// The Keyboard list (Action | Shortcut, grouped) with the edit strip under it.
+/// `table_height` is the height of the scrolling list.
+fn keyboard_section(ui: &mut Ui, st: &mut State, commands: &[&'static Def], table_height: f32) {
     if let Some(command) = st.recording
         && let Some(captured) = capture(ui.ctx())
     {
@@ -464,65 +533,166 @@ fn keyboard_section(ui: &mut Ui, st: &mut State, commands: &[&Def]) {
         }
         st.recording = None;
     }
-    egui::Grid::new("settings-keyboard")
-        .num_columns(3)
-        .striped(true)
-        .spacing([COLUMN_GAP, 4.0])
-        .min_row_height(CONTROL_HEIGHT)
+    let lines = lines(commands);
+    let mut clicked = None;
+    let mut double_clicked = None;
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme::panel_hi()))
+        .corner_radius(4)
         .show(ui, |ui| {
-            for d in commands {
-                let shortcuts = command::shortcuts(d.command, &st.draft.keymap);
-                ui.label(t(d.title));
-                ui.vertical(|ui| {
-                    if st.recording == Some(d.command) {
-                        ui.colored_label(theme::accent(), t("settings.keyboard_press"));
-                    } else if shortcuts.is_empty() {
-                        ui.label(RichText::new(t("settings.keyboard_none")).color(theme::dim()));
-                    } else {
-                        let text: Vec<String> = shortcuts.iter().map(Shortcut::display).collect();
-                        ui.label(text.join(", "));
+            ui.set_width(ui.available_width());
+            TableBuilder::new(ui)
+                .id_salt("settings-keyboard")
+                .striped(true)
+                .resizable(false)
+                .sense(Sense::click())
+                .cell_layout(Layout::left_to_right(Align::Center))
+                .column(Column::remainder().at_least(160.0).clip(true))
+                .column(Column::initial(260.0).at_least(140.0).clip(true))
+                .min_scrolled_height(table_height)
+                .max_scroll_height(table_height)
+                .header(TABLE_ROW, |mut header| {
+                    for key in ["settings.keyboard_action", "settings.keyboard_shortcut"] {
+                        header.col(|ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(t(key)).strong().color(theme::header_text()),
+                                )
+                                .selectable(false),
+                            );
+                        });
                     }
-                    let others: Vec<&str> = command::conflicts(d.command, &st.draft.keymap)
-                        .into_iter()
-                        .map(|c| t(c.def().title))
-                        .collect();
-                    if !others.is_empty() {
-                        ui.label(
-                            RichText::new(fx_app::tr(
-                                "settings.keyboard_also",
-                                &[("others", &others.join(", "))],
-                            ))
-                            .small()
-                            .color(theme::error()),
-                        );
-                    }
+                })
+                .body(|body| {
+                    body.rows(TABLE_ROW, lines.len(), |mut row| {
+                        match &lines[row.index()] {
+                            Line::Group(group) => {
+                                row.col(|ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(t(group)).strong().color(theme::dim()),
+                                        )
+                                        .selectable(false),
+                                    );
+                                });
+                                row.col(|_| {});
+                            }
+                            Line::Command(d) => {
+                                row.set_selected(st.selected == Some(d.command));
+                                row.col(|ui| {
+                                    ui.add_space(16.0);
+                                    ui.add(egui::Label::new(t(d.title)).selectable(false));
+                                });
+                                row.col(|ui| shortcut_cell(ui, st, d));
+                                let r = row.response();
+                                if r.double_clicked() {
+                                    double_clicked = Some(d.command);
+                                } else if r.clicked() {
+                                    clicked = Some(d.command);
+                                }
+                            }
+                        }
+                    });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button(t("settings.keyboard_record")).clicked() {
-                        st.recording = Some(d.command);
-                    }
-                    if ui
-                        .add_enabled(
-                            !shortcuts.is_empty(),
-                            egui::Button::new(t("settings.keyboard_unbind")),
-                        )
-                        .clicked()
-                    {
-                        st.draft.keymap.insert(d.id.to_owned(), Vec::new());
-                    }
-                    if ui
-                        .add_enabled(
-                            st.draft.keymap.contains_key(d.id),
-                            egui::Button::new(t("settings.keyboard_reset")),
-                        )
-                        .clicked()
-                    {
-                        st.draft.keymap.remove(d.id);
-                    }
-                });
-                ui.end_row();
-            }
         });
+    if let Some(command) = double_clicked.or(clicked) {
+        if st.selected != Some(command) {
+            st.recording = None;
+        }
+        st.selected = Some(command);
+        if double_clicked.is_some() {
+            st.recording = Some(command);
+        }
+    }
+    ui.add_space(ROW_GAP);
+    edit_strip(ui, st);
+    ui.add_space(4.0);
+    note(ui, t("settings.keyboard_note"), 0.0);
+}
+
+/// The shortcuts of one command: bold when changed from the default, with a conflict warning.
+fn shortcut_cell(ui: &mut Ui, st: &State, d: &Def) {
+    let shortcuts = command::shortcuts(d.command, &st.draft.keymap);
+    if shortcuts.is_empty() {
+        ui.label(RichText::new(t("settings.keyboard_none")).color(theme::dim()));
+    } else {
+        let text: Vec<String> = shortcuts.iter().map(Shortcut::display).collect();
+        let mut text = RichText::new(text.join(", "));
+        if changed(d, st) {
+            text = text.strong();
+        }
+        ui.add(egui::Label::new(text).selectable(false));
+    }
+    let others: Vec<&str> = command::conflicts(d.command, &st.draft.keymap)
+        .into_iter()
+        .map(|c| t(c.def().title))
+        .collect();
+    if !others.is_empty() {
+        let also = fx_app::tr("settings.keyboard_also", &[("others", &others.join(", "))]);
+        ui.add(
+            egui::Label::new(RichText::new(format!("\u{26A0} {also}")).color(theme::error()))
+                .selectable(false),
+        );
+    }
+}
+
+/// Acts on the selected row: a read-only field plus Record, Clear, Reset and Reset all.
+fn edit_strip(ui: &mut Ui, st: &mut State) {
+    let selected = st.selected.map(Command::def);
+    let mut shown = match (st.recording, selected) {
+        (Some(_), _) => t("settings.keyboard_press").to_owned(),
+        (None, Some(d)) => {
+            let keys = command::shortcuts(d.command, &st.draft.keymap);
+            if keys.is_empty() {
+                String::new()
+            } else {
+                keys.iter()
+                    .map(Shortcut::display)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        }
+        (None, None) => String::new(),
+    };
+    let min = egui::vec2(BUTTON_MIN_WIDTH, CONTROL_HEIGHT);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(t("settings.keyboard_shortcut"));
+        let width = (ui.available_width() - 3.0 * (BUTTON_MIN_WIDTH + 8.0) - 8.0).max(160.0);
+        ui.add(
+            TextEdit::singleline(&mut shown)
+                .interactive(false)
+                .desired_width(width)
+                .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
+                .align(egui::Align2::LEFT_CENTER),
+        );
+        let has_keys =
+            selected.is_some_and(|d| !command::shortcuts(d.command, &st.draft.keymap).is_empty());
+        let overridden = selected.is_some_and(|d| st.draft.keymap.contains_key(d.id));
+        let button = |ui: &mut Ui, enabled: bool, key: &'static str| {
+            ui.add_enabled(enabled, egui::Button::new(t(key)).min_size(min))
+                .clicked()
+        };
+        if button(ui, selected.is_some(), "settings.keyboard_record") {
+            st.recording = st.selected;
+        }
+        if button(ui, has_keys, "settings.keyboard_clear")
+            && let Some(d) = selected
+        {
+            st.draft.keymap.insert(d.id.to_owned(), Vec::new());
+        }
+        if button(ui, overridden, "settings.keyboard_reset")
+            && let Some(d) = selected
+        {
+            st.draft.keymap.remove(d.id);
+        }
+        if button(
+            ui,
+            !st.draft.keymap.is_empty(),
+            "settings.keyboard_reset_all",
+        ) {
+            st.draft.keymap.clear();
+        }
+    });
 }
 
 /// A page or search-result title.
@@ -531,12 +701,19 @@ fn title(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
 }
 
-/// A group heading with a rule under it, like a Qt group box title.
-fn group_heading(ui: &mut Ui, text: &str) {
-    ui.add_space(12.0);
-    ui.label(RichText::new(text).strong().color(theme::accent()));
-    ui.separator();
-    ui.add_space(2.0);
+/// A bordered group with its title top-left inside, like a Qt group box.
+fn group_box(ui: &mut Ui, title: &str, add_contents: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme::panel_hi()))
+        .corner_radius(6)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(title).strong());
+            ui.add_space(ROW_GAP);
+            add_contents(ui);
+        });
+    ui.add_space(GROUP_GAP);
 }
 
 /// Width of the label column: the widest field label of the rows shown, so every group lines up.
@@ -554,14 +731,14 @@ fn label_width(ui: &Ui, rows: &[&Row]) -> f32 {
                 .size()
                 .x
         })
-        .fold(120.0, f32::max)
+        .fold(0.0, f32::max)
+        .ceil()
 }
 
-/// Rows as a two-column form (label | control), split under group headings,
-/// and under category titles too when `titles` is set (search results).
-fn form(ui: &mut Ui, rows: &[&Row], form: &mut Form, titles: bool) {
+/// Rows as group boxes; field rows are label | control, check rows span both columns.
+/// In search results (`searching`) the box titles read "Category › Group".
+fn form(ui: &mut Ui, rows: &[&Row], form: &mut Form, searching: bool) {
     let label_w = label_width(ui, rows);
-    let field_w = (ui.available_width() - label_w - COLUMN_GAP).max(FIELD_WIDTH);
     let mut start = 0;
     while start < rows.len() {
         let (category, group) = (rows[start].category, rows[start].group);
@@ -570,42 +747,45 @@ fn form(ui: &mut Ui, rows: &[&Row], form: &mut Form, titles: bool) {
                 .iter()
                 .take_while(|r| r.category == category && r.group == group)
                 .count();
-        if titles && (start == 0 || rows[start - 1].category != category) {
-            if start > 0 {
-                ui.add_space(12.0);
-            }
-            title(ui, category.label());
-        }
-        group_heading(ui, t(group));
-        egui::Grid::new(("settings-form", category, group))
-            .num_columns(2)
-            .spacing([COLUMN_GAP, 8.0])
-            .show(ui, |ui| {
-                for r in &rows[start..end] {
-                    let label = t(r.label);
+        let heading = if searching {
+            fx_app::tr(
+                "settings.search_group",
+                &[("category", category.label()), ("group", t(group))],
+            )
+        } else {
+            t(group).to_owned()
+        };
+        group_box(ui, &heading, |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            for r in &rows[start..end] {
+                let label = t(r.label);
+                if r.kind == Kind::Check {
+                    ui.vertical(|ui| (r.show)(ui, form, label));
+                    continue;
+                }
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = COLUMN_GAP;
                     ui.allocate_ui_with_layout(
                         egui::vec2(label_w, CONTROL_HEIGHT),
-                        Layout::right_to_left(Align::Center),
+                        Layout::left_to_right(Align::Center),
                         |ui| {
                             ui.set_min_size(egui::vec2(label_w, CONTROL_HEIGHT));
-                            if r.kind == Kind::Field {
-                                ui.label(label);
-                            }
+                            ui.label(label);
                         },
                     );
                     ui.vertical(|ui| {
-                        ui.set_max_width(field_w);
+                        ui.spacing_mut().item_spacing.y = ROW_GAP;
                         (r.show)(ui, form, label);
                     });
-                    ui.end_row();
-                }
-            });
+                });
+            }
+        });
         start = end;
     }
 }
 
-/// A sidebar category entry: full-width 27 px row, rounded fill when selected or hovered.
-fn category_row(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+/// A sidebar category entry: full-width 26 px row, rounded fill when selected or hovered.
+fn category_row(ui: &mut Ui, label: &str, selected: bool, dimmed: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), SIDEBAR_ROW),
         Sense::click(),
@@ -634,7 +814,7 @@ fn category_row(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         egui::Align2::LEFT_CENTER,
         label,
         egui::TextStyle::Body.resolve(ui.style()),
-        theme::text(),
+        if dimmed { theme::dim() } else { theme::text() },
     );
     resp
 }
@@ -652,15 +832,38 @@ fn search(query: &str) -> Vec<&'static Row> {
         .collect()
 }
 
+/// Commands whose title, group or the Keyboard category label contains `query`.
+fn search_commands(query: &str) -> Vec<&'static Def> {
+    let q = query.trim().to_lowercase();
+    let keyboard = Category::Keyboard.label().to_lowercase().contains(&q);
+    COMMANDS
+        .iter()
+        .filter(|d| keyboard || t(d.title).to_lowercase().contains(&q))
+        .collect()
+}
+
+/// Whether the search `query` finds anything in `category`.
+fn category_matches(category: Category, query: &str) -> bool {
+    if category == Category::Keyboard {
+        !search_commands(query).is_empty()
+    } else {
+        search(query).iter().any(|r| r.category == category)
+    }
+}
+
 pub struct State {
     pub draft: Settings,
     pub start_text: String,
     pub category: Category,
     pub query: String,
+    /// The command selected in the Keyboard list.
+    selected: Option<Command>,
     /// The command whose next key combination is being captured.
     recording: Option<Command>,
     /// What the live preview last applied.
     previewed: Settings,
+    /// Rendered inside the main window (no native viewports available).
+    embedded: bool,
 }
 
 impl State {
@@ -673,9 +876,24 @@ impl State {
                 .map_or_else(String::new, |p| p.display().to_string()),
             category: Category::General,
             query: String::new(),
+            selected: None,
             recording: None,
             previewed: saved.clone(),
+            embedded: false,
         }
+    }
+
+    /// The draft as it would be saved: with the typed start folder.
+    fn pending(&self) -> Settings {
+        let mut settings = self.draft.clone();
+        let folder = self.start_text.trim();
+        settings.start_folder = (!folder.is_empty()).then(|| PathBuf::from(folder));
+        settings
+    }
+
+    /// Whether the settings window is shown inside the main window rather than as its own.
+    pub fn embedded(&self) -> bool {
+        self.embedded
     }
 }
 
@@ -696,21 +914,21 @@ fn page(ui: &mut Ui, st: &mut State, current_folder: String) {
         ROWS.iter().filter(|r| r.category == st.category).collect()
     };
     let keyboard_page = !searching && st.category == Category::Keyboard;
-    let commands: Vec<&Def> = COMMANDS
-        .iter()
-        .filter(|d| {
-            keyboard_page
-                || (searching
-                    && (t(d.title).to_lowercase().contains(&query)
-                        || Category::Keyboard.label().to_lowercase().contains(&query)))
-        })
-        .collect();
+    let commands: Vec<&Def> = if searching {
+        search_commands(&query)
+    } else if keyboard_page {
+        COMMANDS.iter().collect()
+    } else {
+        Vec::new()
+    };
     if !searching {
         title(ui, st.category.label());
     }
     if rows.is_empty() && commands.is_empty() {
         ui.add_space(8.0);
-        ui.label(RichText::new(t("settings.none")).color(theme::dim()));
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new(t("settings.none")).color(theme::dim()));
+        });
         return;
     }
     let mut f = Form {
@@ -719,121 +937,161 @@ fn page(ui: &mut Ui, st: &mut State, current_folder: String) {
         current_folder,
     };
     form(ui, &rows, &mut f, searching);
-    if !commands.is_empty() {
-        if searching {
-            ui.add_space(12.0);
-            title(ui, Category::Keyboard.label());
-        } else {
-            note(ui, t("settings.keyboard_note"));
-        }
-        ui.add_space(8.0);
-        keyboard_section(ui, st, &commands);
+    if commands.is_empty() {
+        return;
+    }
+    if keyboard_page {
+        // Fill the page: list, then strip (26) + note (~20) + gaps.
+        let height = (ui.available_height() - TABLE_ROW - CONTROL_HEIGHT - 48.0).max(120.0);
+        keyboard_section(ui, st, &commands, height);
+    } else {
+        group_box(ui, Category::Keyboard.label(), |ui| {
+            keyboard_section(ui, st, &commands, 220.0);
+        });
     }
 }
 
-/// Draws the dialog. Returns true when it should be closed.
-pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
-    // Esc first clears a non-empty search instead of closing.
-    let esc_clears =
-        !st.query.is_empty() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
-    if esc_clears {
-        st.query.clear();
+/// The sidebar: search field and the category list (dimmed when the search finds nothing there).
+fn sidebar(ui: &mut Ui, st: &mut State) {
+    ui.spacing_mut().item_spacing.y = 2.0;
+    ui.add(
+        TextEdit::singleline(&mut st.query)
+            .hint_text(t("settings.search"))
+            .desired_width(f32::INFINITY)
+            .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
+            .align(egui::Align2::LEFT_CENTER),
+    );
+    ui.add_space(6.0);
+    let searching = !st.query.trim().is_empty();
+    for c in Category::ALL {
+        let selected = st.category == c && !searching;
+        let dimmed = searching && !category_matches(c, &st.query);
+        if category_row(ui, c.label(), selected, dimmed).clicked() {
+            st.category = c;
+            st.query.clear();
+        }
     }
-    if look_changed(&st.draft, &st.previewed) {
-        theme::apply(ctx, &st.draft);
-        st.previewed = st.draft.clone();
-    }
+}
 
-    let current_folder = explorer.active().path().display().to_string();
-    let mut done = false;
-    let mut apply = false;
-    let size = DIALOG_SIZE.min(ctx.content_rect().size() - egui::vec2(64.0, 64.0));
-    let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(16);
-    let response = Modal::new(Id::unique("settings-dialog"))
-        .frame(frame)
-        .show(ctx, |ui| {
-            ui.set_width(size.x);
-            ui.set_height(size.y);
-            let spacing = ui.spacing_mut();
-            spacing.item_spacing = egui::vec2(8.0, 4.0);
-            spacing.interact_size.y = CONTROL_HEIGHT;
-            spacing.icon_spacing = 6.0;
-            ui.heading(t("settings.title"));
-            ui.add_space(8.0);
-            // Footer: separator, 12 px gap, 26 px buttons.
-            let body = ui.available_height() - (CONTROL_HEIGHT + 12.0 + 12.0);
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(SIDEBAR_WIDTH, body),
-                    Layout::top_down(Align::Min),
-                    |ui| {
-                        ui.set_width(SIDEBAR_WIDTH);
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.add(
-                            TextEdit::singleline(&mut st.query)
-                                .hint_text(t("settings.search"))
-                                .desired_width(f32::INFINITY)
-                                .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
-                                .align(egui::Align2::LEFT_CENTER),
-                        );
-                        ui.add_space(6.0);
-                        for c in Category::ALL {
-                            let selected = st.category == c && st.query.is_empty();
-                            if category_row(ui, c.label(), selected).clicked() {
-                                st.category = c;
-                                st.query.clear();
-                            }
-                        }
-                    },
-                );
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(8.0);
-                ScrollArea::vertical()
-                    .id_salt("settings-page")
-                    .max_height(body)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width() - 12.0);
-                        page(ui, st, current_folder);
-                    });
-            });
-            ui.separator();
-            ui.add_space(8.0);
+/// The settings window's id, for focusing it from the main window.
+pub fn viewport_id() -> ViewportId {
+    ViewportId::from_hash_of("settings")
+}
+
+/// What the footer asked for.
+#[derive(Default)]
+struct Outcome {
+    apply: bool,
+    done: bool,
+}
+
+/// Window content: footer, sidebar and page. `ok`/`cancel` are signalled through the outcome.
+fn content(ui: &mut Ui, explorer: &Explorer, st: &mut State, out: &mut Outcome) {
+    let dirty = st.pending() != *explorer.settings();
+    let style = ui.style().clone();
+    egui::Panel::bottom("settings-footer")
+        .frame(egui::Frame::side_top_panel(&style).inner_margin(12))
+        .show(ui, |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let min = egui::vec2(BUTTON_MIN_WIDTH, CONTROL_HEIGHT);
                 if ui
-                    .add(egui::Button::new(t("button.apply")).min_size(min))
+                    .add_enabled(dirty, egui::Button::new(t("button.apply")).min_size(min))
                     .clicked()
                 {
-                    apply = true;
+                    out.apply = true;
                 }
                 if ui
                     .add(egui::Button::new(t("button.cancel")).min_size(min))
                     .clicked()
                 {
-                    done = true;
-                    theme::apply(ctx, explorer.settings());
+                    out.done = true;
                 }
                 let ok = egui::Button::new(RichText::new(t("button.ok")).color(theme::on_accent()))
                     .fill(theme::accent())
                     .min_size(min);
                 if ui.add(ok).clicked() {
-                    apply = true;
-                    done = true;
+                    out.apply = true;
+                    out.done = true;
                 }
             });
         });
-    if response.should_close() && !esc_clears && !done {
-        done = true;
+    egui::Panel::left("settings-sidebar")
+        .resizable(false)
+        .exact_size(SIDEBAR_WIDTH)
+        .frame(egui::Frame::side_top_panel(&style).inner_margin(12))
+        .show(ui, |ui| sidebar(ui, st));
+    let current_folder = explorer.active().path().display().to_string();
+    let margin = egui::Margin {
+        left: 16,
+        right: 12,
+        top: 12,
+        bottom: 12,
+    };
+    egui::CentralPanel::default()
+        .frame(egui::Frame::central_panel(&style).inner_margin(margin))
+        .show(ui, |ui| {
+            let spacing = ui.spacing_mut();
+            spacing.item_spacing = egui::vec2(8.0, ROW_GAP);
+            spacing.interact_size.y = CONTROL_HEIGHT;
+            spacing.icon_spacing = 6.0;
+            if st.query.trim().is_empty() && st.category == Category::Keyboard {
+                page(ui, st, current_folder);
+            } else {
+                ScrollArea::vertical()
+                    .id_salt("settings-page")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width() - 12.0);
+                        page(ui, st, current_folder);
+                    });
+            }
+        });
+}
+
+/// Draws the settings window. Returns true when it should be closed.
+pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
+    let builder = ViewportBuilder::default()
+        .with_title(t("settings.title"))
+        .with_inner_size([960.0, 640.0])
+        .with_min_inner_size([740.0, 510.0]);
+    let mut out = Outcome::default();
+    ctx.show_viewport_immediate(viewport_id(), builder, |ui, class| {
+        let ctx = ui.ctx().clone();
+        st.embedded = class == ViewportClass::EmbeddedWindow;
+        if st.embedded {
+            ui.set_min_size(egui::vec2(900.0, 560.0));
+        }
+        // Esc first stops a recording or clears a non-empty search, else cancels.
+        let esc_free = st.recording.is_none() && !egui::Popup::is_any_open(&ctx);
+        if esc_free && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            if st.query.is_empty() {
+                out.done = true;
+            } else {
+                st.query.clear();
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested()) {
+            out.done = true;
+        }
+        if look_changed(&st.draft, &st.previewed) {
+            theme::apply(&ctx, &st.draft);
+            st.previewed = st.draft.clone();
+        }
+        content(ui, explorer, st, &mut out);
+    });
+    if out.apply {
+        let pending = st.pending();
+        explorer.set_settings(pending);
+    }
+    if out.done {
         theme::apply(ctx, explorer.settings());
     }
-    if apply {
-        let folder = st.start_text.trim();
-        st.draft.start_folder = (!folder.is_empty()).then(|| PathBuf::from(folder));
-        explorer.set_settings(st.draft.clone());
-    }
-    done
+    out.done
+}
+
+/// Brings the settings window to the front.
+pub fn focus(ctx: &Context) {
+    ctx.send_viewport_cmd_to(viewport_id(), ViewportCommand::Focus);
 }
 
 #[cfg(test)]
@@ -846,6 +1104,9 @@ mod tests {
         assert_eq!(search("THEME").len(), 1);
         assert_eq!(search("fonts").len(), 3);
         assert!(search("zzz").is_empty());
+        assert!(search_commands("zzz").is_empty());
+        assert!(category_matches(Category::Keyboard, "rename"));
+        assert!(!category_matches(Category::Fonts, "rename"));
     }
 
     #[test]
@@ -860,8 +1121,26 @@ mod tests {
     }
 
     #[test]
+    fn command_groups_have_text() {
+        for d in COMMANDS {
+            assert_ne!(t(d.group), d.group, "missing text for {}", d.group);
+        }
+    }
+
+    #[test]
+    fn commands_are_ordered_by_group() {
+        let mut seen: Vec<&str> = Vec::new();
+        for d in COMMANDS {
+            if seen.last() != Some(&d.group) {
+                assert!(!seen.contains(&d.group), "{} split", d.group);
+                seen.push(d.group);
+            }
+        }
+    }
+
+    #[test]
     fn groups_are_contiguous_within_a_category() {
-        // `form` starts a new heading whenever the group changes, so a group split in two would show twice.
+        // `form` starts a new box whenever the group changes, so a group split in two would show twice.
         let mut seen = Vec::new();
         for (i, r) in ROWS.iter().enumerate() {
             if i == 0 || ROWS[i - 1].category != r.category || ROWS[i - 1].group != r.group {

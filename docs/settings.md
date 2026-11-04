@@ -7,10 +7,13 @@ A missing file means defaults.
 
 ## Settings dialog
 
-The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing, Behavior, Copy and move and Keyboard.
-Each page lists its settings in titled groups, as a two-column form: the label on the left, the control on the right.
+Settings opens in its own window (960x640, resizable), with a search field and category list on the left.
+The categories are General, Appearance, Fonts, Listing, Behavior, Copy and move and Keyboard.
+Pages are made of framed groups with a two-column label/control form.
 Checkboxes carry their own label in the right column.
-A search box filters the settings by name and shows the matches grouped by category.
+OK, Cancel and Apply sit at the bottom right.
+The Keyboard page is an Action/Shortcut list grouped by category, with an edit strip (Record, Clear, Reset, Reset all) below it.
+The search field filters the settings by name and shows the matches grouped by category.
 
 ## Language
 
