@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 fx-core = { path = "../fx-core" }
 serde = { version = "1.0.229", features = ["derive"] }
+sys-locale = "0.3"
 toml = "1.1.8"
 trash = "5.2.9"
 

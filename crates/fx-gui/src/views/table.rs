@@ -2,7 +2,9 @@ use super::commandbar::menu_item;
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
-use fx_app::{Density, Explorer, LoadState, SortColumn, age, extension, format_size, format_time};
+use fx_app::{
+    Density, Explorer, LoadState, SortColumn, age, extension, format_size, format_time, t, tr,
+};
 use fx_core::EntryKind;
 use std::time::SystemTime;
 
@@ -36,7 +38,10 @@ pub fn show(
                 ui.add_space(40.0);
                 ui.colored_label(
                     theme::error(),
-                    format!("Cannot list {}", tab.path().display()),
+                    tr(
+                        "table.cannot_list",
+                        &[("path", &tab.path().display().to_string())],
+                    ),
                 );
                 ui.colored_label(theme::error(), message);
             });
@@ -78,11 +83,15 @@ pub fn show(
     let scroll = builder
         .header(22.0, |mut header| {
             let columns = [
-                ("Name", Some(SortColumn::Name), true),
-                ("Ext", Some(SortColumn::Ext), settings.show_ext_column),
-                ("Size", Some(SortColumn::Size), true),
-                ("Modified", Some(SortColumn::Modified), true),
-                ("Age", None, settings.show_age_column),
+                (t("col.name"), Some(SortColumn::Name), true),
+                (
+                    t("col_short.ext"),
+                    Some(SortColumn::Ext),
+                    settings.show_ext_column,
+                ),
+                (t("col.size"), Some(SortColumn::Size), true),
+                (t("col.modified"), Some(SortColumn::Modified), true),
+                (t("col.age"), None, settings.show_age_column),
             ];
             for (title, column, _) in columns.into_iter().filter(|c| c.2) {
                 header.col(|ui| {
@@ -259,58 +268,61 @@ fn row_menu(
     can_paste: bool,
     actions: &mut Vec<Action>,
 ) {
-    if menu_item(ui, "Open", "Enter", true) {
+    if menu_item(ui, t("cmd.open"), "Enter", true) {
         actions.push(Action::Open(row));
     }
-    if is_dir && menu_item(ui, "Open in new tab", "", true) {
+    if is_dir && menu_item(ui, t("cmd.open_new_tab"), "", true) {
         actions.push(Action::OpenInNewTab(row));
     }
     ui.separator();
-    if menu_item(ui, "Cut", "Ctrl+X", true) {
+    if menu_item(ui, t("cmd.cut"), "Ctrl+X", true) {
         actions.push(Action::Cut);
     }
-    if menu_item(ui, "Copy", "Ctrl+C", true) {
+    if menu_item(ui, t("cmd.copy"), "Ctrl+C", true) {
         actions.push(Action::Copy);
     }
-    if is_dir && menu_item(ui, "Paste into folder", "", can_paste) {
+    if is_dir && menu_item(ui, t("cmd.paste_into"), "", can_paste) {
         actions.push(Action::PasteInto(row));
     }
     ui.separator();
-    if menu_item(ui, "Rename", "F2", selected == 1) {
+    if menu_item(ui, t("cmd.rename"), "F2", selected == 1) {
         actions.push(Action::Rename);
     }
-    if menu_item(ui, "Delete", "Del", true) {
+    if menu_item(ui, t("cmd.delete"), "Del", true) {
         actions.push(Action::Delete { permanent: false });
     }
     ui.separator();
-    if menu_item(ui, "Copy path", "", true) {
+    if menu_item(ui, t("cmd.copy_path"), "", true) {
         actions.push(Action::CopyPath);
     }
-    if menu_item(ui, "Properties", "Alt+Enter", selected == 1) {
+    if menu_item(ui, t("cmd.properties"), "Alt+Enter", selected == 1) {
         actions.push(Action::Properties);
     }
 }
 
 fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mut Vec<Action>) {
-    if menu_item(ui, "New folder", "Ctrl+Shift+N", true) {
+    if menu_item(ui, t("cmd.new_folder"), "Ctrl+Shift+N", true) {
         actions.push(Action::NewFolder);
     }
-    if menu_item(ui, "Paste", "Ctrl+V", can_paste) {
+    if menu_item(ui, t("cmd.paste"), "Ctrl+V", can_paste) {
         actions.push(Action::Paste);
     }
-    if menu_item(ui, "Refresh", "F5", true) {
+    if menu_item(ui, t("cmd.refresh"), "F5", true) {
         actions.push(Action::Refresh);
     }
-    if menu_item(ui, "Select all", "Ctrl+A", true) {
+    if menu_item(ui, t("cmd.select_all"), "Ctrl+A", true) {
         actions.push(Action::SelectAll);
     }
     ui.separator();
     let mut hidden = show_hidden;
-    if ui.checkbox(&mut hidden, "Show hidden items").changed() {
+    if ui
+        .checkbox(&mut hidden, t("settings.show_hidden"))
+        .changed()
+    {
         actions.push(Action::SetShowHidden(hidden));
     }
     ui.separator();
-    if menu_item(ui, "Settings", "Ctrl+,", true) {
+    if menu_item(ui, t("cmd.settings"), "Ctrl+,", true) {
         actions.push(Action::OpenSettings);
     }
 }

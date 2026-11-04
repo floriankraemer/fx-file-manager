@@ -1,6 +1,6 @@
 //! Copy and move jobs as the UI sees them: a device-aware queue, throughput/ETA, and the finished notice.
 
-use crate::ops::{Notice, Outcome, items};
+use crate::ops::{Notice, Outcome};
 use fx_core::{
     Conflict, CopyError, Op, Request, Resolution, RunState, Snapshot, StorageKind, Summary,
     Transfer, VolumeInfo, volume_info,
@@ -273,25 +273,21 @@ impl Transfers {
     }
 }
 
-/// The one-line result: "Copied 3 items", "Moved 2 of 3 items. 4 errors: <first>", "Cancelled ...".
+/// The one-line result: "Copied 3 items", "Moved 2 of 3 items. 4 errors. First: ...", "Cancelled after ...".
 pub(crate) fn notice(s: &Summary, label: &str) -> Notice {
-    let verb = match s.op {
-        Op::Copy => "Copied",
-        Op::Move => "Moved",
-    };
     if s.cancelled {
-        return Notice::info(format!(
-            "Cancelled {}: {} files done",
-            lowercase_first(label),
-            s.files
+        return Notice::info(crate::tn(
+            "notice.transfer.cancelled",
+            s.files,
+            &[("label", label)],
         ));
     }
     let mut extra = Vec::new();
     if s.skipped > 0 {
-        extra.push(format!("{} skipped", s.skipped));
+        extra.push(crate::tn("notice.transfer.skipped", s.skipped, &[]));
     }
     if s.cloned > 0 {
-        extra.push(format!("{} cloned", s.cloned));
+        extra.push(crate::tn("notice.transfer.cloned", s.cloned, &[]));
     }
     let extra = if extra.is_empty() {
         String::new()
@@ -300,36 +296,44 @@ pub(crate) fn notice(s: &Summary, label: &str) -> Notice {
     };
     let errors = s.error_count();
     if errors == 0 && s.kept_sources.is_empty() {
-        return Notice::info(format!("{verb} {}{extra}", items(s.items)));
+        let key = match s.op {
+            Op::Copy => "notice.copied",
+            Op::Move => "notice.moved",
+        };
+        return Notice::info(crate::tn(key, s.items as u64, &[]) + &extra);
     }
-    let first = s
-        .errors
-        .iter()
-        .find(|e| !e.warning)
-        .map(|e| format!(" First: {e}"))
-        .unwrap_or_default();
-    let kept = if s.kept_sources.is_empty() {
-        String::new()
-    } else {
-        format!(" {} kept in place.", items(s.kept_sources.len()))
+    let mut first = vec![crate::tn("notice.transfer.errors", errors as u64, &[])];
+    if !s.kept_sources.is_empty() {
+        first.push(crate::tn(
+            "notice.transfer.kept",
+            s.kept_sources.len() as u64,
+            &[],
+        ));
+    }
+    if let Some(e) = s.errors.iter().find(|e| !e.warning) {
+        first.push(crate::tr(
+            "notice.transfer.first_error",
+            &[("error", &e.to_string())],
+        ));
+    }
+    let key = match s.op {
+        Op::Copy => "notice.copy_partial",
+        Op::Move => "notice.move_partial",
     };
-    let failed = if errors == 1 {
-        "1 error".to_owned()
-    } else {
-        format!("{errors} errors")
-    };
-    Notice::error(format!(
-        "{verb} {} of {}{extra}. {failed}.{kept}{first}",
-        s.items_done,
-        items(s.items),
-    ))
-}
-
-fn lowercase_first(s: &str) -> String {
-    let mut c = s.chars();
-    c.next()
-        .map(|f| f.to_lowercase().chain(c).collect())
-        .unwrap_or_default()
+    let (done, total) = (s.items_done.to_string(), s.items.to_string());
+    let text = crate::tr(
+        key,
+        &[
+            ("done", &done),
+            ("total", &total),
+            ("first", &first.join(" ")),
+        ],
+    );
+    // The skip and clone counts belong to the first sentence.
+    Notice::error(match text.split_once(". ") {
+        Some((head, tail)) if !extra.is_empty() => format!("{head}{extra}. {tail}"),
+        _ => text,
+    })
 }
 
 #[cfg(test)]
@@ -437,7 +441,7 @@ mod tests {
         c.cancelled = true;
         assert_eq!(
             notice(&c, "Copying 3 items to b").text,
-            "Cancelled copying 3 items to b: 10 files done"
+            "Cancelled after 10 files: Copying 3 items to b"
         );
     }
 }

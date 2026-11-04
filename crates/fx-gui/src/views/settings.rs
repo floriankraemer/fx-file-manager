@@ -8,8 +8,8 @@ use eframe::egui::{
     Ui,
 };
 use fx_app::{
-    ConflictChoice, Density, Explorer, FolderOrder, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings,
-    open_with_system,
+    ConflictChoice, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE, MIN_FONT_SIZE,
+    Settings, open_with_system, t,
 };
 use std::path::PathBuf;
 
@@ -38,12 +38,12 @@ impl Category {
 
     pub fn label(self) -> &'static str {
         match self {
-            Category::General => "General",
-            Category::Appearance => "Appearance",
-            Category::Fonts => "Fonts",
-            Category::Listing => "Listing",
-            Category::Behavior => "Behavior",
-            Category::Transfers => "Copy and move",
+            Category::General => t("settings.cat.general"),
+            Category::Appearance => t("settings.cat.appearance"),
+            Category::Fonts => t("settings.cat.fonts"),
+            Category::Listing => t("settings.cat.listing"),
+            Category::Behavior => t("settings.cat.behavior"),
+            Category::Transfers => t("settings.cat.transfers"),
         }
     }
 }
@@ -57,6 +57,7 @@ pub struct Form<'a> {
 
 struct Row {
     category: Category,
+    /// Catalog key of the label.
     label: &'static str,
     show: fn(&mut Ui, &mut Form, &'static str),
 }
@@ -64,40 +65,48 @@ struct Row {
 const ROWS: &[Row] = &[
     Row {
         category: Category::General,
-        label: "Start folder",
+        label: "settings.start_folder",
         show: |ui, f, l| {
             ui.label(l);
             ui.add(
                 TextEdit::singleline(f.start_text)
-                    .hint_text("Home folder")
+                    .hint_text(t("settings.home_folder"))
                     .desired_width(220.0),
             );
-            if ui.button("Use current folder").clicked() {
+            if ui.button(t("settings.use_current")).clicked() {
                 *f.start_text = f.current_folder.clone();
             }
         },
     },
     Row {
         category: Category::General,
-        label: "Show hidden items",
+        label: "settings.show_hidden",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.show_hidden, l);
         },
     },
     Row {
+        category: Category::General,
+        label: "settings.language",
+        show: |ui, f, l| {
+            ui.label(l);
+            language_combo(ui, &mut f.draft.language);
+        },
+    },
+    Row {
         category: Category::Appearance,
-        label: "Theme",
+        label: "settings.theme",
         show: |ui, f, l| {
             ui.label(l);
             theme_picker(ui, &mut f.draft.theme);
-            if ui.button("Open themes folder").clicked()
+            if ui.button(t("settings.open_themes")).clicked()
                 && let Some(dir) = Settings::themes_dir()
                 && let Err(err) =
                     std::fs::create_dir_all(&dir).and_then(|()| open_with_system(&dir))
             {
                 eprintln!("fx: cannot open {}: {err}", dir.display());
             }
-            if ui.button("Reload themes").clicked() {
+            if ui.button(t("settings.reload_themes")).clicked() {
                 theme::reload();
                 theme::apply(ui.ctx(), f.draft);
             }
@@ -105,30 +114,34 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Appearance,
-        label: "Density",
+        label: "settings.density",
         show: |ui, f, l| {
             ui.label(l);
-            ui.radio_value(&mut f.draft.density, Density::Compact, "Compact");
-            ui.radio_value(&mut f.draft.density, Density::Comfortable, "Comfortable");
+            ui.radio_value(&mut f.draft.density, Density::Compact, t("density.compact"));
+            ui.radio_value(
+                &mut f.draft.density,
+                Density::Comfortable,
+                t("density.comfortable"),
+            );
         },
     },
     Row {
         category: Category::Appearance,
-        label: "Show Ext column",
+        label: "settings.ext_column",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.show_ext_column, l);
         },
     },
     Row {
         category: Category::Appearance,
-        label: "Show Age column",
+        label: "settings.age_column",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.show_age_column, l);
         },
     },
     Row {
         category: Category::Fonts,
-        label: "Font family",
+        label: "settings.font_family",
         show: |ui, f, l| {
             ui.label(l);
             font_combo(ui, &mut f.draft.font_family);
@@ -136,7 +149,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Fonts,
-        label: "List font size",
+        label: "settings.list_font_size",
         show: |ui, f, l| {
             ui.label(l);
             font_size(ui, &mut f.draft.list_font_size);
@@ -144,7 +157,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Fonts,
-        label: "Tree font size",
+        label: "settings.tree_font_size",
         show: |ui, f, l| {
             ui.label(l);
             font_size(ui, &mut f.draft.tree_font_size);
@@ -152,14 +165,14 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Listing,
-        label: "Folder order",
+        label: "settings.folder_order",
         show: |ui, f, l| {
             ui.label(l);
             let o = &mut f.draft.folder_order;
             let text = |o: FolderOrder| match o {
-                FolderOrder::Top => "Folders on top",
-                FolderOrder::Mixed => "Folders mixed with files",
-                FolderOrder::Bottom => "Folders on bottom",
+                FolderOrder::Top => t("folder_order.top"),
+                FolderOrder::Mixed => t("folder_order.mixed"),
+                FolderOrder::Bottom => t("folder_order.bottom"),
             };
             egui::ComboBox::from_id_salt("folder-order")
                 .selected_text(text(*o))
@@ -172,40 +185,40 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Listing,
-        label: "Preload subfolders in the background",
+        label: "settings.preload",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.preload_subfolders, l);
         },
     },
     Row {
         category: Category::Behavior,
-        label: "Single click in the folder tree",
+        label: "settings.tree_single_click",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.tree_single_click, l);
         },
     },
     Row {
         category: Category::Behavior,
-        label: "Single click in the file list",
+        label: "settings.list_single_click",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.list_single_click, l);
         },
     },
     Row {
         category: Category::Behavior,
-        label: "Move deleted items to Trash",
+        label: "settings.use_trash",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.use_trash, l);
         },
     },
     Row {
         category: Category::Behavior,
-        label: "Confirm before deleting",
+        label: "settings.confirm_delete",
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.confirm_delete, l);
             if !f.draft.use_trash {
                 ui.label(
-                    RichText::new("Without Trash, deleting is permanent and always asks first.")
+                    RichText::new(t("settings.confirm_delete_note"))
                         .small()
                         .color(theme::dim()),
                 );
@@ -214,7 +227,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Transfers,
-        label: "When an item already exists",
+        label: "settings.conflict_policy",
         show: |ui, f, l| {
             ui.label(l);
             let policy = &mut f.draft.conflict_policy;
@@ -229,7 +242,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::Transfers,
-        label: "Copy workers (advanced)",
+        label: "settings.copy_workers",
         show: |ui, f, l| {
             ui.label(l);
             ui.add(
@@ -237,7 +250,7 @@ const ROWS: &[Row] = &[
                     .range(0..=MAX_COPY_WORKERS)
                     .custom_formatter(|n, _| {
                         if n == 0.0 {
-                            "Automatic".to_owned()
+                            t("settings.copy_workers_auto").to_owned()
                         } else {
                             format!("{n}")
                         }
@@ -254,13 +267,28 @@ const ROWS: &[Row] = &[
     },
 ];
 
+/// Each language is listed under its own name, so it stays findable when the UI language is unreadable.
+fn language_combo(ui: &mut Ui, language: &mut Language) {
+    let name = |l: Language| match l {
+        Language::System => t("language.system"),
+        other => other.native_name(),
+    };
+    egui::ComboBox::from_id_salt("language")
+        .selected_text(name(*language))
+        .show_ui(ui, |ui| {
+            for l in Language::ALL {
+                ui.selectable_value(language, l, name(l));
+            }
+        });
+}
+
 /// Combo box of all themes, each with a strip of swatches.
 fn theme_picker(ui: &mut Ui, id: &mut String) {
     let themes = theme::themes();
     let selected = themes
         .iter()
         .find(|t| t.id == *id)
-        .map_or(id.as_str(), |t| t.name.as_str());
+        .map_or_else(|| id.clone(), |th| theme::display_name(th));
     egui::ComboBox::from_id_salt("theme")
         .selected_text(selected)
         .show_ui(ui, |ui| {
@@ -271,7 +299,7 @@ fn theme_picker(ui: &mut Ui, id: &mut String) {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
                         ui.painter().rect_filled(r, 2.0, c);
                     }
-                    ui.selectable_value(id, t.id.clone(), &t.name);
+                    ui.selectable_value(id, t.id.clone(), theme::display_name(t));
                 });
             }
         });
@@ -289,15 +317,15 @@ fn font_size(ui: &mut Ui, size: &mut f32) {
 fn font_combo(ui: &mut Ui, family: &mut Option<String>) {
     let filter_id = ui.scope_id().with("font-filter");
     egui::ComboBox::from_id_salt("font-family")
-        .selected_text(family.as_deref().unwrap_or("Default"))
+        .selected_text(family.as_deref().unwrap_or(t("settings.font_default")))
         .height(300.0)
         .show_ui(ui, |ui| {
             let mut filter: String = ui.data_mut(|d| d.get_temp(filter_id).unwrap_or_default());
-            ui.add(TextEdit::singleline(&mut filter).hint_text("Filter fonts"));
+            ui.add(TextEdit::singleline(&mut filter).hint_text(t("settings.font_filter")));
             let needle = filter.to_lowercase();
             ui.data_mut(|d| d.insert_temp(filter_id, filter));
             if needle.is_empty() {
-                ui.selectable_value(family, None, "Default");
+                ui.selectable_value(family, None, t("settings.font_default"));
             }
             for name in theme::system_font_families() {
                 if name.to_lowercase().contains(&needle) {
@@ -312,9 +340,9 @@ fn search(query: &str) -> Vec<&'static Row> {
     let q = query.trim().to_lowercase();
     ROWS.iter()
         .filter(|r| {
-            r.label.to_lowercase().contains(&q)
+            t(r.label).to_lowercase().contains(&q)
                 || r.category.label().to_lowercase().contains(&q)
-                || (r.label == "Theme"
+                || (r.label == "settings.theme"
                     && ["color", "colour", "dark", "light"].contains(&q.as_str()))
         })
         .collect()
@@ -370,7 +398,7 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
     let response = Modal::new(Id::unique("settings-dialog")).show(ctx, |ui| {
         ui.set_width(760.0);
         ui.set_height(520.0);
-        ui.heading("Settings");
+        ui.heading(t("settings.title"));
         ui.add_space(6.0);
         let body = ui.available_height() - 40.0;
         ui.horizontal_top(|ui| {
@@ -381,7 +409,7 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
                     ui.set_width(180.0);
                     ui.add(
                         TextEdit::singleline(&mut st.query)
-                            .hint_text("Search settings")
+                            .hint_text(t("settings.search"))
                             .desired_width(f32::INFINITY),
                     );
                     ui.add_space(6.0);
@@ -413,7 +441,7 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
                         search(&st.query)
                     };
                     if rows.is_empty() {
-                        ui.label(RichText::new("No matching settings").color(theme::dim()));
+                        ui.label(RichText::new(t("settings.none")).color(theme::dim()));
                     }
                     let mut last = None;
                     for r in rows {
@@ -427,19 +455,19 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
                             ui.separator();
                         }
                         last = Some(r.category);
-                        ui.horizontal_wrapped(|ui| (r.show)(ui, &mut form, r.label));
+                        ui.horizontal_wrapped(|ui| (r.show)(ui, &mut form, t(r.label)));
                     }
                 });
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.button("Apply").clicked() {
+            if ui.button(t("button.apply")).clicked() {
                 apply = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(t("button.cancel")).clicked() {
                 done = true;
                 theme::apply(ctx, explorer.settings());
             }
-            if ui.button("OK").clicked() {
+            if ui.button(t("button.ok")).clicked() {
                 apply = true;
                 done = true;
             }
@@ -467,6 +495,16 @@ mod tests {
         assert_eq!(search("THEME").len(), 1);
         assert_eq!(search("fonts").len(), 3);
         assert!(search("zzz").is_empty());
+    }
+
+    #[test]
+    fn row_labels_are_catalog_keys() {
+        for r in ROWS {
+            assert_ne!(t(r.label), r.label, "missing text for {}", r.label);
+        }
+        for c in Category::ALL {
+            assert!(!c.label().starts_with("settings."), "{c:?}");
+        }
     }
 
     #[test]

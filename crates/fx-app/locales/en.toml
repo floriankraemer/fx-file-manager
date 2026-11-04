@@ -1,0 +1,295 @@
+# English is the source of truth and the fallback for missing keys.
+# Plural groups use the suffixes .one .few .many .other; every plural text receives {n}.
+
+[language]
+system = "System default"
+
+[menu]
+file = "File"
+view = "View"
+help = "Help"
+about = "About fx"
+
+[cmd]
+open = "Open"
+open_new_tab = "Open in new tab"
+cut = "Cut"
+copy = "Copy"
+paste = "Paste"
+paste_into = "Paste into folder"
+rename = "Rename"
+delete = "Delete"
+copy_path = "Copy path"
+properties = "Properties"
+new_folder = "New folder"
+refresh = "Refresh"
+select_all = "Select all"
+settings = "Settings"
+sort = "Sort"
+
+[tip]
+back = "Back (Alt+←)"
+forward = "Forward (Alt+→)"
+up = "Up (Alt+↑)"
+refresh = "Refresh (F5)"
+about = "About fx (F1)"
+new_folder = "New folder (Ctrl+Shift+N)"
+rename = "Rename (F2)"
+delete = "Delete (Del)"
+close_tab = "Close tab (Ctrl+W)"
+new_tab = "New tab (Ctrl+T)"
+
+[filter]
+hint = "Filter…"
+
+[sort]
+ascending = "Ascending"
+descending = "Descending"
+
+[col]
+name = "Name"
+ext = "Extension"
+size = "Size"
+modified = "Modified"
+age = "Age"
+
+[col_short]
+ext = "Ext"
+
+[density]
+compact = "Compact"
+comfortable = "Comfortable"
+
+[places]
+places = "Places"
+drives = "Drives"
+home = "Home"
+
+[table]
+cannot_list = "Cannot list {path}"
+
+[status]
+summary = "{items} · {counts} · {size} · storage: {storage} · listed in {time}"
+items.one = "{n} item"
+items.other = "{n} items"
+files.one = "{n} file"
+files.other = "{n} files"
+dirs.one = "{n} folder"
+dirs.other = "{n} folders"
+links.one = "{n} link"
+links.other = "{n} links"
+misc.one = "{n} other"
+misc.other = "{n} other"
+
+[age]
+minutes = "{n}m"
+hours = "{n}h"
+days = "{n}d"
+weeks = "{n}w"
+months = "{n}mo"
+years = "{n}y"
+
+[button]
+ok = "OK"
+cancel = "Cancel"
+apply = "Apply"
+close = "Close"
+copy = "Copy"
+create = "Create"
+rename = "Rename"
+delete_permanently = "Delete permanently"
+move_to_trash = "Move to Trash"
+
+[dialog.delete]
+permanent_single = "Permanently delete \"{name}\"? This cannot be undone."
+permanent_multi.one = "Permanently delete {n} item? This cannot be undone."
+permanent_multi.other = "Permanently delete {n} items? This cannot be undone."
+trash_single = "Move \"{name}\" to Trash?"
+trash_multi.one = "Move {n} item to Trash?"
+trash_multi.other = "Move {n} items to Trash?"
+more = "…and {n} more"
+
+[prop]
+name = "Name"
+path = "Path"
+type = "Type"
+size = "Size"
+modified = "Modified"
+permissions = "Permissions"
+size_value.one = "{size} ({n} byte)"
+size_value.other = "{size} ({n} bytes)"
+
+[kind]
+folder = "Folder"
+file = "File"
+symlink = "Symbolic link"
+misc = "Other"
+
+[about]
+tagline = "A fast, cross-platform file manager"
+version = "Version"
+build_hash = "Build hash"
+build_date = "Build date"
+author = "Author"
+license = "License"
+repository = "Repository"
+copy_tip = "Copy version and build info"
+translations = "Translations are machine generated. Corrections are welcome as pull requests."
+
+[settings]
+title = "Settings"
+search = "Search settings"
+none = "No matching settings"
+start_folder = "Start folder"
+home_folder = "Home folder"
+use_current = "Use current folder"
+show_hidden = "Show hidden items"
+language = "Language"
+theme = "Theme"
+open_themes = "Open themes folder"
+reload_themes = "Reload themes"
+density = "Density"
+ext_column = "Show Ext column"
+age_column = "Show Age column"
+font_family = "Font family"
+font_default = "Default"
+font_filter = "Filter fonts"
+list_font_size = "List font size"
+tree_font_size = "Tree font size"
+folder_order = "Folder order"
+preload = "Preload subfolders in the background"
+tree_single_click = "Single click in the folder tree"
+list_single_click = "Single click in the file list"
+use_trash = "Move deleted items to Trash"
+confirm_delete = "Confirm before deleting"
+confirm_delete_note = "Without Trash, deleting is permanent and always asks first."
+conflict_policy = "When an item already exists"
+copy_workers = "Copy workers (advanced)"
+copy_workers_auto = "Automatic"
+copy_workers_note = "Automatic picks the count per storage type (SSD, HDD, USB, network)."
+
+[settings.cat]
+general = "General"
+appearance = "Appearance"
+fonts = "Fonts"
+listing = "Listing"
+behavior = "Behavior"
+transfers = "Copy and move"
+
+[folder_order]
+top = "Folders on top"
+mixed = "Folders mixed with files"
+bottom = "Folders on bottom"
+
+[theme]
+nord-dark = "Nord Dark"
+nord-light = "Nord Light"
+solarized-dark = "Solarized Dark"
+solarized-light = "Solarized Light"
+dracula = "Dracula"
+gruvbox-dark = "Gruvbox Dark"
+high-contrast = "High Contrast"
+
+[error]
+name_empty = "The name must not be empty"
+name_separator = "The name must not contain a path separator"
+name_dot = "\".\" and \"..\" are not valid names"
+paste_into_self = "a folder cannot be pasted into itself"
+invalid_name = "invalid name"
+
+[notice]
+save_failed = "Could not save settings: {error}"
+nothing_to_delete = "Nothing selected to delete"
+nothing_selected = "Nothing selected"
+rename_missing = "No such item to rename"
+rename_impossible = "This item cannot be renamed"
+busy = "Another file operation is still running"
+paste_failed = "Could not paste {name}: {error}"
+copied.one = "Copied {n} item"
+copied.other = "Copied {n} items"
+moved.one = "Moved {n} item"
+moved.other = "Moved {n} items"
+copy_partial = "Copied {done} of {total} items. {first}"
+move_partial = "Moved {done} of {total} items. {first}"
+delete_failed = "Could not delete {name}: {error}"
+trash_failed = "Could not move {name} to trash: {error}"
+deleted.one = "Deleted {n} item"
+deleted.other = "Deleted {n} items"
+trashed.one = "Moved {n} item to trash"
+trashed.other = "Moved {n} items to trash"
+delete_all_failed = "{first} ({failed} of {total} items failed)"
+delete_partial = "Deleted {done} of {total} items. {first}"
+trash_partial = "Moved {done} of {total} items to trash. {first}"
+renamed = "Renamed {from} to {to}"
+exists = "An item named {name} already exists"
+rename_failed = "Could not rename {name}: {error}"
+folder_created = "Created folder {name}"
+folder_failed = "Could not create folder {name}: {error}"
+
+[transfer]
+copying.one = "Copying {n} item to {dest}"
+copying.other = "Copying {n} items to {dest}"
+moving.one = "Moving {n} item to {dest}"
+moving.other = "Moving {n} items to {dest}"
+waiting = "Waiting for the disk"
+paused = "Paused"
+disk_full = "The destination is full"
+files = "{done} of {total} files"
+files_at_least = "{done} of at least {total} files"
+bytes = "{done} of {total}"
+bytes_at_least = "{done} of at least {total}"
+rate = "{rate}/s"
+left = "{time} left"
+pause = "Pause"
+resume = "Resume"
+retry = "Retry"
+skip_full = "Skip files that do not fit"
+dismiss = "Dismiss"
+copy_report = "Copy report"
+show_problems.one = "Show {n} problem"
+show_problems.other = "Show {n} problems"
+hide_problems.one = "Hide {n} problem"
+hide_problems.other = "Hide {n} problems"
+cancelled_after.one = "Cancelled after {n} file"
+cancelled_after.other = "Cancelled after {n} files"
+finished_errors.one = "Finished with {n} error"
+finished_errors.other = "Finished with {n} errors"
+kept.one = "{n} source left in place because not everything was moved"
+kept.other = "{n} sources left in place because not everything was moved"
+warning = "warning"
+error = "error"
+
+[notice.transfer]
+skipped.one = "{n} skipped"
+skipped.other = "{n} skipped"
+cloned.one = "{n} cloned"
+cloned.other = "{n} cloned"
+errors.one = "{n} error."
+errors.other = "{n} errors."
+kept.one = "{n} item kept in place."
+kept.other = "{n} items kept in place."
+first_error = "First: {error}"
+cancelled.one = "Cancelled after {n} file: {label}"
+cancelled.other = "Cancelled after {n} files: {label}"
+
+[conflict]
+file_exists = "A file named \"{name}\" already exists"
+folder_exists = "A folder named \"{name}\" already exists"
+location = "in {dir}"
+existing = "Existing"
+new = "New"
+folder_modified = "Folder, modified {time}"
+file_modified = "{size}, modified {time}"
+apply_all = "Do this for all remaining conflicts"
+keep_both = "Keep both"
+replace = "Replace"
+skip = "Skip"
+cancel_transfer = "Cancel transfer"
+
+[conflict_policy]
+ask = "Ask every time"
+skip = "Skip"
+overwrite = "Overwrite"
+keep_both = "Keep both, rename the copy"
+overwrite_if_newer = "Overwrite if newer"
+skip_identical = "Skip identical files (resume)"

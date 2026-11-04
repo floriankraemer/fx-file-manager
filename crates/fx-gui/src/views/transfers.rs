@@ -3,7 +3,7 @@
 
 use crate::theme;
 use eframe::egui::{Align, Layout, ProgressBar, RichText, ScrollArea, Ui};
-use fx_app::{Explorer, TransferInfo, TransferState, format_size};
+use fx_app::{Explorer, TransferInfo, TransferState, format_size, t, tn, tr};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -27,53 +27,63 @@ pub fn format_eta(d: Duration) -> String {
 }
 
 /// `120 of at least 400 files · 1.2 GB of 3.4 GB · 85 MB/s · 0:42 left`
-pub fn progress_text(t: &TransferInfo) -> String {
-    let Some(s) = &t.snapshot else {
+pub fn progress_text(info: &TransferInfo) -> String {
+    let Some(s) = &info.snapshot else {
         return String::new();
     };
-    let at_least = if s.walk_complete { "" } else { "at least " };
+    let (files, bytes) = if s.walk_complete {
+        ("transfer.files", "transfer.bytes")
+    } else {
+        ("transfer.files_at_least", "transfer.bytes_at_least")
+    };
+    let (done, total) = (s.files_done.to_string(), s.files_total.to_string());
     let mut parts = vec![
-        format!("{} of {at_least}{} files", s.files_done, s.files_total),
-        format!(
-            "{} of {at_least}{}",
-            format_size(s.bytes_done),
-            format_size(s.bytes_total)
+        tr(files, &[("done", &done), ("total", &total)]),
+        tr(
+            bytes,
+            &[
+                ("done", &format_size(s.bytes_done)),
+                ("total", &format_size(s.bytes_total)),
+            ],
         ),
     ];
-    if t.rate >= 1.0 {
-        parts.push(format!("{}/s", format_size(t.rate as u64)));
+    if info.rate >= 1.0 {
+        parts.push(tr(
+            "transfer.rate",
+            &[("rate", &format_size(info.rate as u64))],
+        ));
     }
-    if let Some(eta) = t.eta {
-        parts.push(format!("{} left", format_eta(eta)));
+    if let Some(eta) = info.eta {
+        parts.push(tr("transfer.left", &[("time", &format_eta(eta))]));
     }
     parts.join(" · ")
 }
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer, st: &mut State) {
-    for t in explorer.transfers() {
+    for info in explorer.transfers() {
         ui.add_space(2.0);
-        row(ui, explorer, st, &t);
+        row(ui, explorer, st, &info);
     }
     ui.add_space(2.0);
 }
 
-fn row(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, t: &TransferInfo) {
+fn row(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, info: &TransferInfo) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(&t.label).strong().color(theme::text()));
-        let status = match t.state {
-            TransferState::Queued => Some(("Waiting for the disk", theme::dim())),
-            TransferState::Paused => Some(("Paused", theme::dim())),
-            TransferState::DiskFull => Some(("The destination is full", theme::error())),
+        ui.label(RichText::new(&info.label).strong().color(theme::text()));
+        let status = match info.state {
+            TransferState::Queued => Some((t("transfer.waiting"), theme::dim())),
+            TransferState::Paused => Some((t("transfer.paused"), theme::dim())),
+            TransferState::DiskFull => Some((t("transfer.disk_full"), theme::error())),
             TransferState::Running | TransferState::Finished => None,
         };
         if let Some((text, color)) = status {
             ui.colored_label(color, text);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            buttons(ui, explorer, st, t)
+            buttons(ui, explorer, st, info)
         });
     });
-    if let Some(s) = &t.snapshot {
+    if let Some(s) = &info.snapshot {
         let fraction = if s.bytes_total > 0 {
             s.bytes_done as f32 / s.bytes_total as f32
         } else if s.files_total > 0 {
@@ -83,25 +93,22 @@ fn row(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, t: &TransferInfo) {
         };
         ui.add(ProgressBar::new(fraction.clamp(0.0, 1.0)).desired_height(6.0));
         ui.horizontal(|ui| {
-            ui.colored_label(theme::dim(), progress_text(t));
+            ui.colored_label(theme::dim(), progress_text(info));
             if let Some(current) = &s.current {
                 ui.colored_label(theme::dim(), format!("· {}", current.display()));
             }
         });
     }
-    if let Some(summary) = &t.summary {
+    if let Some(summary) = &info.summary {
         let errors = summary.error_count();
         let mut parts = Vec::new();
         if summary.cancelled {
-            parts.push(format!("Cancelled after {} files", summary.files));
+            parts.push(tn("transfer.cancelled_after", summary.files, &[]));
         } else if errors > 0 {
-            parts.push(format!("Finished with {}", plural_of(errors, "error")));
+            parts.push(tn("transfer.finished_errors", errors as u64, &[]));
         }
         if !summary.kept_sources.is_empty() {
-            parts.push(format!(
-                "{} left in place because not everything was moved",
-                plural_of(summary.kept_sources.len(), "source")
-            ));
+            parts.push(tn("transfer.kept", summary.kept_sources.len() as u64, &[]));
         }
         let color = if errors > 0 {
             theme::error()
@@ -110,79 +117,78 @@ fn row(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, t: &TransferInfo) {
         };
         ui.colored_label(color, parts.join(" · "));
     }
-    if st.expanded.contains(&t.id) {
-        report(ui, t);
+    if st.expanded.contains(&info.id) {
+        report(ui, info);
     }
 }
 
-fn buttons(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, t: &TransferInfo) {
-    match t.state {
+fn buttons(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, info: &TransferInfo) {
+    match info.state {
         TransferState::Finished => {
-            if ui.button("Dismiss").clicked() {
-                st.expanded.remove(&t.id);
-                explorer.dismiss_transfer(t.id);
+            if ui.button(t("transfer.dismiss")).clicked() {
+                st.expanded.remove(&info.id);
+                explorer.dismiss_transfer(info.id);
             }
         }
         TransferState::DiskFull => {
-            if ui.button("Cancel").clicked() {
-                explorer.cancel_transfer(t.id);
+            if ui.button(t("button.cancel")).clicked() {
+                explorer.cancel_transfer(info.id);
             }
-            if ui.button("Skip files that do not fit").clicked() {
-                explorer.skip_disk_full(t.id);
+            if ui.button(t("transfer.skip_full")).clicked() {
+                explorer.skip_disk_full(info.id);
             }
-            if ui.button("Retry").clicked() {
-                explorer.resume_transfer(t.id);
+            if ui.button(t("transfer.retry")).clicked() {
+                explorer.resume_transfer(info.id);
             }
         }
         TransferState::Queued | TransferState::Running | TransferState::Paused => {
-            if ui.button("Cancel").clicked() {
-                explorer.cancel_transfer(t.id);
+            if ui.button(t("button.cancel")).clicked() {
+                explorer.cancel_transfer(info.id);
             }
-            if t.state == TransferState::Paused {
-                if ui.button("Resume").clicked() {
-                    explorer.resume_transfer(t.id);
+            if info.state == TransferState::Paused {
+                if ui.button(t("transfer.resume")).clicked() {
+                    explorer.resume_transfer(info.id);
                 }
-            } else if t.state == TransferState::Running && ui.button("Pause").clicked() {
-                explorer.pause_transfer(t.id);
+            } else if info.state == TransferState::Running
+                && ui.button(t("transfer.pause")).clicked()
+            {
+                explorer.pause_transfer(info.id);
             }
         }
     }
-    if !t.errors.is_empty() {
-        let open = st.expanded.contains(&t.id);
-        let label = format!(
-            "{} {}",
-            if open { "Hide" } else { "Show" },
-            plural_of(t.errors.len(), "problem")
-        );
-        if ui.button(label).clicked() && !st.expanded.remove(&t.id) {
-            st.expanded.insert(t.id);
+    if !info.errors.is_empty() {
+        let open = st.expanded.contains(&info.id);
+        let key = if open {
+            "transfer.hide_problems"
+        } else {
+            "transfer.show_problems"
+        };
+        let label = tn(key, info.errors.len() as u64, &[]);
+        if ui.button(label).clicked() && !st.expanded.remove(&info.id) {
+            st.expanded.insert(info.id);
         }
-    }
-}
-
-fn plural_of(n: usize, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
     }
 }
 
 /// The per-item report, with a button that copies it as text for a bug report or a retry list.
-fn report(ui: &mut Ui, t: &TransferInfo) {
-    let text: Vec<String> = t
+fn report(ui: &mut Ui, info: &TransferInfo) {
+    let text: Vec<String> = info
         .errors
         .iter()
         .map(|e| {
-            let tag = if e.warning { "warning" } else { "error" };
+            let tag = t(if e.warning {
+                "transfer.warning"
+            } else {
+                "transfer.error"
+            });
             format!("{tag}: {e}")
         })
         .collect();
     ScrollArea::vertical()
-        .id_salt(("transfer-report", t.id))
+        .id_salt(("transfer-report", info.id))
         .max_height(REPORT_HEIGHT)
         .show(ui, |ui| {
-            for (e, line) in t.errors.iter().zip(&text) {
+            for (e, line) in info.errors.iter().zip(&text) {
                 let color = if e.warning {
                     theme::dim()
                 } else {
@@ -191,7 +197,7 @@ fn report(ui: &mut Ui, t: &TransferInfo) {
                 ui.colored_label(color, line);
             }
         });
-    if ui.button("Copy report").clicked() {
+    if ui.button(t("transfer.copy_report")).clicked() {
         ui.ctx().copy_text(text.join("\n"));
     }
     ui.separator();

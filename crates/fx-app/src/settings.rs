@@ -1,5 +1,6 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
+use crate::i18n::Language;
 use crate::places::home_dir;
 use fx_core::ConflictPolicy;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,8 @@ pub struct Settings {
     pub tree_font_size: f32,
     /// Where folders sort relative to files.
     pub folder_order: FolderOrder,
+    /// UI language; `system` follows the OS.
+    pub language: Language,
     /// What a paste does when an item with the same name exists.
     pub conflict_policy: ConflictChoice,
     /// Copy workers per transfer; `0` lets the copy planner decide per storage type.
@@ -64,6 +67,7 @@ impl Default for Settings {
             list_font_size: 13.5,
             tree_font_size: 13.5,
             folder_order: FolderOrder::default(),
+            language: Language::default(),
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
         }
@@ -122,15 +126,16 @@ impl ConflictChoice {
         ConflictChoice::SkipIdentical,
     ];
 
+    /// In the current UI language.
     pub fn label(self) -> &'static str {
-        match self {
-            ConflictChoice::Ask => "Ask every time",
-            ConflictChoice::Skip => "Skip",
-            ConflictChoice::Overwrite => "Overwrite",
-            ConflictChoice::KeepBoth => "Keep both, rename the copy",
-            ConflictChoice::OverwriteIfNewer => "Overwrite if newer",
-            ConflictChoice::SkipIdentical => "Skip identical files (resume)",
-        }
+        crate::t(match self {
+            ConflictChoice::Ask => "conflict_policy.ask",
+            ConflictChoice::Skip => "conflict_policy.skip",
+            ConflictChoice::Overwrite => "conflict_policy.overwrite",
+            ConflictChoice::KeepBoth => "conflict_policy.keep_both",
+            ConflictChoice::OverwriteIfNewer => "conflict_policy.overwrite_if_newer",
+            ConflictChoice::SkipIdentical => "conflict_policy.skip_identical",
+        })
     }
 }
 
@@ -276,6 +281,7 @@ mod tests {
             list_font_size: 16.0,
             tree_font_size: 10.5,
             folder_order: FolderOrder::Bottom,
+            language: Language::Uk,
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
         };

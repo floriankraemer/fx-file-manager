@@ -1,0 +1,270 @@
+# 机器翻译（AI）。欢迎通过 Pull Request 提交更正。
+
+[language]
+system = "系统默认"
+
+[menu]
+file = "文件"
+view = "查看"
+help = "帮助"
+about = "关于 fx"
+
+[cmd]
+open = "打开"
+open_new_tab = "在新标签页中打开"
+cut = "剪切"
+copy = "复制"
+paste = "粘贴"
+paste_into = "粘贴到文件夹"
+rename = "重命名"
+delete = "删除"
+copy_path = "复制路径"
+properties = "属性"
+new_folder = "新建文件夹"
+refresh = "刷新"
+select_all = "全选"
+settings = "设置"
+sort = "排序"
+
+[tip]
+back = "后退 (Alt+←)"
+forward = "前进 (Alt+→)"
+up = "上一级 (Alt+↑)"
+refresh = "刷新 (F5)"
+about = "关于 fx (F1)"
+new_folder = "新建文件夹 (Ctrl+Shift+N)"
+rename = "重命名 (F2)"
+delete = "删除 (Del)"
+close_tab = "关闭标签页 (Ctrl+W)"
+new_tab = "新建标签页 (Ctrl+T)"
+
+[filter]
+hint = "筛选…"
+
+[sort]
+ascending = "升序"
+descending = "降序"
+
+[col]
+name = "名称"
+ext = "扩展名"
+size = "大小"
+modified = "修改时间"
+age = "时长"
+
+[col_short]
+ext = "扩展名"
+
+[density]
+compact = "紧凑"
+comfortable = "舒适"
+
+[places]
+places = "位置"
+drives = "驱动器"
+home = "主文件夹"
+
+[table]
+cannot_list = "无法列出 {path}"
+
+[status]
+summary = "{items} · {counts} · {size} · 存储：{storage} · 列出用时 {time}"
+items.other = "{n} 项"
+files.other = "{n} 个文件"
+dirs.other = "{n} 个文件夹"
+links.other = "{n} 个链接"
+misc.other = "{n} 个其他"
+
+[age]
+minutes = "{n}分"
+hours = "{n}时"
+days = "{n}天"
+weeks = "{n}周"
+months = "{n}月"
+years = "{n}年"
+
+[button]
+ok = "确定"
+cancel = "取消"
+apply = "应用"
+close = "关闭"
+copy = "复制"
+create = "创建"
+rename = "重命名"
+delete_permanently = "永久删除"
+move_to_trash = "移到回收站"
+
+[dialog.delete]
+permanent_single = "永久删除“{name}”？此操作无法撤销。"
+trash_single = "将“{name}”移到回收站？"
+permanent_multi.other = "永久删除{n}项？此操作无法撤销。"
+trash_multi.other = "将{n}项移到回收站？"
+more = "…另有 {n} 项"
+
+[prop]
+name = "名称"
+path = "路径"
+type = "类型"
+size = "大小"
+modified = "修改时间"
+permissions = "权限"
+size_value.other = "{size}（{n} 字节）"
+
+[kind]
+folder = "文件夹"
+file = "文件"
+symlink = "符号链接"
+misc = "其他"
+
+[about]
+tagline = "快速的跨平台文件管理器"
+version = "版本"
+build_hash = "构建哈希"
+build_date = "构建日期"
+author = "作者"
+license = "许可证"
+repository = "仓库"
+copy_tip = "复制版本和构建信息"
+translations = "翻译由机器生成。欢迎通过 Pull Request 提交更正。"
+
+[settings]
+title = "设置"
+search = "搜索设置"
+none = "没有匹配的设置"
+start_folder = "起始文件夹"
+home_folder = "主文件夹"
+use_current = "使用当前文件夹"
+show_hidden = "显示隐藏项目"
+language = "语言"
+theme = "主题"
+open_themes = "打开主题文件夹"
+reload_themes = "重新加载主题"
+density = "密度"
+ext_column = "显示扩展名列"
+age_column = "显示时长列"
+font_family = "字体"
+font_default = "默认"
+font_filter = "筛选字体"
+list_font_size = "列表字号"
+tree_font_size = "文件夹树字号"
+folder_order = "文件夹顺序"
+preload = "在后台预加载子文件夹"
+tree_single_click = "在文件夹树中单击"
+list_single_click = "在文件列表中单击"
+use_trash = "将删除的项目移到回收站"
+confirm_delete = "删除前确认"
+confirm_delete_note = "没有回收站时，删除是永久的，并且始终会先询问。"
+conflict_policy = "项目已存在时"
+copy_workers = "复制线程数（高级）"
+copy_workers_auto = "自动"
+copy_workers_note = "自动会根据存储类型（SSD、HDD、USB、网络）选择数量。"
+
+[settings.cat]
+general = "常规"
+appearance = "外观"
+fonts = "字体"
+listing = "列表"
+behavior = "行为"
+transfers = "复制和移动"
+
+[folder_order]
+top = "文件夹在前"
+mixed = "文件夹与文件混合"
+bottom = "文件夹在后"
+
+[theme]
+nord-dark = "Nord 深色"
+nord-light = "Nord 浅色"
+solarized-dark = "Solarized 深色"
+solarized-light = "Solarized 浅色"
+dracula = "Dracula"
+gruvbox-dark = "Gruvbox 深色"
+high-contrast = "高对比度"
+
+[error]
+name_empty = "名称不能为空"
+name_separator = "名称不能包含路径分隔符"
+name_dot = "“.”和“..”不是有效的名称"
+paste_into_self = "文件夹不能粘贴到自身中"
+invalid_name = "名称无效"
+
+[notice]
+save_failed = "无法保存设置：{error}"
+nothing_to_delete = "未选择要删除的项目"
+nothing_selected = "未选择任何项目"
+rename_missing = "没有要重命名的项目"
+rename_impossible = "无法重命名此项目"
+busy = "另一个文件操作仍在进行中"
+paste_failed = "无法粘贴 {name}：{error}"
+copied.other = "已复制{n}项"
+moved.other = "已移动{n}项"
+copy_partial = "已复制 {done}/{total} 项。{first}"
+move_partial = "已移动 {done}/{total} 项。{first}"
+delete_failed = "无法删除 {name}：{error}"
+trash_failed = "无法将 {name} 移到回收站：{error}"
+deleted.other = "已删除{n}项"
+trashed.other = "已将{n}项移到回收站"
+delete_all_failed = "{first}（{total} 项中有 {failed} 项失败）"
+delete_partial = "已删除 {done}/{total} 项。{first}"
+trash_partial = "已将 {done}/{total} 项移到回收站。{first}"
+renamed = "已将 {from} 重命名为 {to}"
+exists = "名为 {name} 的项目已存在"
+rename_failed = "无法重命名 {name}：{error}"
+folder_created = "已创建文件夹 {name}"
+folder_failed = "无法创建文件夹 {name}：{error}"
+
+[transfer]
+copying.other = "正在将 {n} 个项目复制到 {dest}"
+moving.other = "正在将 {n} 个项目移动到 {dest}"
+waiting = "正在等待磁盘"
+paused = "已暂停"
+disk_full = "目标位置已满"
+files = "{done} / {total} 个文件"
+files_at_least = "{done} / 至少 {total} 个文件"
+bytes = "{done} / {total}"
+bytes_at_least = "{done} / 至少 {total}"
+rate = "{rate}/秒"
+left = "剩余 {time}"
+pause = "暂停"
+resume = "继续"
+retry = "重试"
+skip_full = "跳过放不下的文件"
+dismiss = "关闭"
+copy_report = "复制报告"
+show_problems.other = "显示 {n} 个问题"
+hide_problems.other = "隐藏 {n} 个问题"
+cancelled_after.other = "已在 {n} 个文件后取消"
+finished_errors.other = "已完成，有 {n} 个错误"
+kept.other = "{n} 个源未完全移动，已保留在原处"
+warning = "警告"
+error = "错误"
+
+[notice.transfer]
+skipped.other = "已跳过 {n} 个"
+cloned.other = "已克隆 {n} 个"
+errors.other = "{n} 个错误。"
+kept.other = "{n} 个项目保留在原处。"
+first_error = "第一个：{error}"
+cancelled.other = "已在 {n} 个文件后取消：{label}"
+
+[conflict]
+file_exists = "名为“{name}”的文件已存在"
+folder_exists = "名为“{name}”的文件夹已存在"
+location = "位于 {dir}"
+existing = "现有"
+new = "新的"
+folder_modified = "文件夹，修改于 {time}"
+file_modified = "{size}，修改于 {time}"
+apply_all = "对其余所有冲突执行相同操作"
+keep_both = "保留两者"
+replace = "替换"
+skip = "跳过"
+cancel_transfer = "取消传输"
+
+[conflict_policy]
+ask = "每次询问"
+skip = "跳过"
+overwrite = "覆盖"
+keep_both = "保留两者，重命名副本"
+overwrite_if_newer = "较新时覆盖"
+skip_identical = "跳过相同文件（续传）"

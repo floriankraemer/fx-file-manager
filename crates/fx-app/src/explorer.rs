@@ -1,7 +1,7 @@
 //! Owns the tabs and the background loader. Navigation goes through here because only Explorer can start loads.
 
 use crate::ops::{
-    EntryDetails, Job, Notice, NoticeKind, Outcome, details, display_name, items, unique_name,
+    EntryDetails, Job, Notice, NoticeKind, Outcome, details, display_name, unique_name,
     validate_name,
 };
 use crate::settings::Settings;
@@ -187,7 +187,10 @@ impl Explorer {
             )),
         };
         if let Err(err) = saved {
-            self.notify(NoticeKind::Error, format!("Could not save settings: {err}"));
+            self.notify(
+                NoticeKind::Error,
+                crate::tr("notice.save_failed", &[("error", &err.to_string())]),
+            );
         }
     }
 
@@ -360,7 +363,7 @@ impl Explorer {
             .filter_map(|&row| self.entry_path(row))
             .collect();
         if paths.is_empty() {
-            return self.notify(NoticeKind::Error, "Nothing selected to delete");
+            return self.notify(NoticeKind::Error, crate::t("notice.nothing_to_delete"));
         }
         self.submit(Job::Delete { paths, permanent });
     }
@@ -372,7 +375,7 @@ impl Explorer {
             .filter_map(|&row| self.entry_path(row))
             .collect();
         if paths.is_empty() {
-            return self.notify(NoticeKind::Error, "Nothing selected");
+            return self.notify(NoticeKind::Error, crate::t("notice.nothing_selected"));
         }
         self.clipboard = Some((paths, cut));
     }
@@ -403,8 +406,12 @@ impl Explorer {
         if self.settings.copy_workers > 0 {
             req.overrides.workers = Some(self.settings.copy_workers as usize);
         }
-        let verb = if cut { "Moving" } else { "Copying" };
-        let label = format!("{verb} {} to {}", items(sources.len()), display_name(&dest));
+        let key = if cut {
+            "transfer.moving"
+        } else {
+            "transfer.copying"
+        };
+        let label = crate::tn(key, sources.len() as u64, &[("dest", &display_name(&dest))]);
         self.transfers.submit(req, label);
         self.poll_transfers();
     }
@@ -467,10 +474,10 @@ impl Explorer {
             return self.notify(NoticeKind::Error, err.to_string());
         }
         let Some(from) = self.entry_path(row) else {
-            return self.notify(NoticeKind::Error, "No such item to rename");
+            return self.notify(NoticeKind::Error, crate::t("notice.rename_missing"));
         };
         let Some(to) = from.parent().map(|dir| dir.join(new_name)) else {
-            return self.notify(NoticeKind::Error, "This item cannot be renamed");
+            return self.notify(NoticeKind::Error, crate::t("notice.rename_impossible"));
         };
         self.submit(Job::Rename { from, to });
     }
@@ -487,7 +494,7 @@ impl Explorer {
     /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's directory.
     pub fn suggest_folder_name(&self) -> String {
         let dir = self.active().path();
-        unique_name("New folder", |name| {
+        unique_name(crate::t("cmd.new_folder"), |name| {
             fs::symlink_metadata(dir.join(name)).is_err()
         })
     }
@@ -620,7 +627,7 @@ impl Explorer {
 
     fn submit(&mut self, job: Job) {
         if self.job_in_flight {
-            return self.notify(NoticeKind::Error, "Another file operation is still running");
+            return self.notify(NoticeKind::Error, crate::t("notice.busy"));
         }
         self.job_in_flight = true;
         let tx = self.job_tx.clone();

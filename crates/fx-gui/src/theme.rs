@@ -285,41 +285,80 @@ pub fn system_font_families() -> &'static [String] {
     })
 }
 
-fn load_font(family: &str) -> Option<egui::FontData> {
+/// Loads the first installed family of `families`.
+fn load_font(families: &[&str]) -> Option<egui::FontData> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
-    let query = fontdb::Query {
-        families: &[fontdb::Family::Name(family)],
-        ..Default::default()
-    };
-    let id = db.query(&query)?;
-    db.with_face_data(id, |data, index| {
-        let mut font = egui::FontData::from_owned(data.to_vec());
-        font.index = index;
-        font
+    families.iter().find_map(|family| {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family)],
+            ..Default::default()
+        };
+        let id = db.query(&query)?;
+        db.with_face_data(id, |data, index| {
+            let mut font = egui::FontData::from_owned(data.to_vec());
+            font.index = index;
+            font
+        })
     })
 }
 
-/// Installs `family` as the first proportional font; only touches egui when it changed.
-fn apply_font(ctx: &egui::Context, family: Option<&str>) {
-    static LAST: Mutex<Option<String>> = Mutex::new(None);
+/// System fonts with Simplified Chinese glyphs on Linux, Windows and macOS. Nothing is bundled to keep the binary small;
+/// without one of these installed, Chinese text shows as boxes.
+const CJK_FONTS: &[&str] = &[
+    "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "Source Han Sans SC",
+    "WenQuanYi Micro Hei",
+    "WenQuanYi Zen Hei",
+    "Droid Sans Fallback",
+    "Microsoft YaHei",
+    "SimSun",
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Heiti SC",
+];
+
+/// Installs `family` as the first proportional font and, for Chinese, a CJK fallback last.
+/// Only touches egui when one of them changed.
+fn apply_font(ctx: &egui::Context, family: Option<&str>, cjk: bool) {
+    type Applied = (Option<String>, bool);
+    static LAST: Mutex<Option<Applied>> = Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if last.as_deref() == family {
+    let wanted = (family.map(str::to_owned), cjk);
+    if last.as_ref() == Some(&wanted) {
         return;
     }
     let mut fonts = egui::FontDefinitions::default();
-    if let Some(data) = family.and_then(load_font) {
+    if let Some(data) = family.and_then(|f| load_font(&[f])) {
         fonts.font_data.insert("user".to_owned(), data.into());
         if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
             list.insert(0, "user".to_owned());
         }
     }
+    if cjk && let Some(data) = load_font(CJK_FONTS) {
+        fonts.font_data.insert("cjk".to_owned(), data.into());
+        for list in fonts.families.values_mut() {
+            list.push("cjk".to_owned());
+        }
+    }
     ctx.set_fonts(fonts);
-    *last = family.map(str::to_owned);
+    *last = Some(wanted);
+}
+
+/// Display name of a theme: translated for built-in themes, the file's `name` otherwise.
+pub fn display_name(theme: &Theme) -> String {
+    let key = format!("theme.{}", theme.id);
+    fx_app::i18n::find_in(fx_app::i18n::current(), &key)
+        .map_or_else(|| theme.name.clone(), str::to_owned)
 }
 
 pub fn apply(ctx: &egui::Context, settings: &Settings) {
-    apply_font(ctx, settings.font_family.as_deref());
+    apply_font(
+        ctx,
+        settings.font_family.as_deref(),
+        settings.language.needs_cjk(),
+    );
     let chosen = find(&settings.theme);
     let p = &chosen.palette;
     let (theme, base) = match chosen.base {
