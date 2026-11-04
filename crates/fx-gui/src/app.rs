@@ -5,7 +5,7 @@ use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
 use eframe::egui::{self, Context, Key, Modifiers};
-use fx_app::{Explorer, Place, Settings, places};
+use fx_app::{Explorer, Language, Place, Settings, i18n, places};
 use std::path::PathBuf;
 
 pub struct App {
@@ -14,21 +14,26 @@ pub struct App {
     scroll_to_selection: bool,
     dialog: Option<Dialog>,
     toast: Option<Toast>,
-    applied_look: (String, Option<String>, f32, f32),
+    applied_look: Look,
     was_focused: bool,
 }
 
-fn look(s: &Settings) -> (String, Option<String>, f32, f32) {
+/// What `theme::apply` and the translated texts depend on; a change re-applies them.
+type Look = (String, Option<String>, f32, f32, Language);
+
+fn look(s: &Settings) -> Look {
     (
         s.theme.clone(),
         s.font_family.clone(),
         s.list_font_size,
         s.tree_font_size,
+        s.language,
     )
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf, settings: Settings) -> Self {
+        i18n::set_language(settings.language);
         let applied_look = look(&settings);
         theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
@@ -218,6 +223,11 @@ impl eframe::App for App {
         }
         let current = look(self.explorer.settings());
         if current != self.applied_look {
+            if current.4 != self.applied_look.4 {
+                i18n::set_language(current.4);
+                // Place labels are translated when listed.
+                self.places = places();
+            }
             theme::apply(ctx, self.explorer.settings());
             self.applied_look = current;
         }

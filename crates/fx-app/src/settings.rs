@@ -1,5 +1,6 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
+use crate::i18n::Language;
 use crate::places::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -39,6 +40,8 @@ pub struct Settings {
     pub tree_font_size: f32,
     /// Where folders sort relative to files.
     pub folder_order: FolderOrder,
+    /// UI language; `system` follows the OS.
+    pub language: Language,
 }
 
 impl Default for Settings {
@@ -59,6 +62,7 @@ impl Default for Settings {
             list_font_size: 13.5,
             tree_font_size: 13.5,
             folder_order: FolderOrder::default(),
+            language: Language::default(),
         }
     }
 }
@@ -221,6 +225,7 @@ mod tests {
             list_font_size: 16.0,
             tree_font_size: 10.5,
             folder_order: FolderOrder::Bottom,
+            language: Language::Uk,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

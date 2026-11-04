@@ -1,7 +1,7 @@
 use crate::action::Action;
 use crate::theme;
 use eframe::egui::{CursorIcon, Layout, RichText, Sense, Stroke, TextStyle, Ui, vec2};
-use fx_app::{Explorer, breadcrumbs};
+use fx_app::{Explorer, breadcrumbs, t};
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     let (can_back, can_forward, can_up) = {
@@ -12,38 +12,38 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if ui
             .add_enabled(can_back, egui::Button::new("←"))
-            .on_hover_text("Back (Alt+←)")
+            .on_hover_text(t("tip.back"))
             .clicked()
         {
             explorer.back();
         }
         if ui
             .add_enabled(can_forward, egui::Button::new("→"))
-            .on_hover_text("Forward (Alt+→)")
+            .on_hover_text(t("tip.forward"))
             .clicked()
         {
             explorer.forward();
         }
         if ui
             .add_enabled(can_up, egui::Button::new("↑"))
-            .on_hover_text("Up (Alt+↑)")
+            .on_hover_text(t("tip.up"))
             .clicked()
         {
             explorer.up();
         }
-        if ui.button("⟳").on_hover_text("Refresh (F5)").clicked() {
+        if ui.button("⟳").on_hover_text(t("tip.refresh")).clicked() {
             explorer.refresh();
         }
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("ⓘ").on_hover_text("About fx (F1)").clicked() {
+            if ui.button("ⓘ").on_hover_text(t("tip.about")).clicked() {
                 actions.push(Action::OpenAbout);
             }
             let tab = explorer.active_mut();
             let mut filter = tab.filter().to_owned();
             let edit = egui::TextEdit::singleline(&mut filter)
-                .hint_text("Filter…")
+                .hint_text(t("filter.hint"))
                 .desired_width(160.0);
             if ui.add(edit).changed() {
                 tab.set_filter(&filter);

@@ -1,0 +1,221 @@
+# Maschinell übersetzt (KI). Korrekturen sind per Pull Request willkommen.
+
+[language]
+system = "Systemstandard"
+
+[menu]
+file = "Datei"
+view = "Ansicht"
+help = "Hilfe"
+about = "Über fx"
+
+[cmd]
+open = "Öffnen"
+open_new_tab = "In neuem Tab öffnen"
+cut = "Ausschneiden"
+copy = "Kopieren"
+paste = "Einfügen"
+paste_into = "In Ordner einfügen"
+rename = "Umbenennen"
+delete = "Löschen"
+copy_path = "Pfad kopieren"
+properties = "Eigenschaften"
+new_folder = "Neuer Ordner"
+refresh = "Aktualisieren"
+select_all = "Alles auswählen"
+settings = "Einstellungen"
+sort = "Sortieren"
+
+[tip]
+back = "Zurück (Alt+←)"
+forward = "Vorwärts (Alt+→)"
+up = "Nach oben (Alt+↑)"
+refresh = "Aktualisieren (F5)"
+about = "Über fx (F1)"
+new_folder = "Neuer Ordner (Strg+Umschalt+N)"
+rename = "Umbenennen (F2)"
+delete = "Löschen (Entf)"
+close_tab = "Tab schließen (Strg+W)"
+new_tab = "Neuer Tab (Strg+T)"
+
+[filter]
+hint = "Filtern…"
+
+[sort]
+ascending = "Aufsteigend"
+descending = "Absteigend"
+
+[col]
+name = "Name"
+ext = "Dateiendung"
+size = "Größe"
+modified = "Geändert"
+age = "Alter"
+
+[col_short]
+ext = "Endung"
+
+[density]
+compact = "Kompakt"
+comfortable = "Komfortabel"
+
+[places]
+places = "Orte"
+drives = "Laufwerke"
+home = "Persönlicher Ordner"
+
+[table]
+cannot_list = "{path} kann nicht aufgelistet werden"
+
+[status]
+summary = "{items} · {counts} · {size} · Speicher: {storage} · aufgelistet in {time}"
+items.one = "{n} Element"
+items.other = "{n} Elemente"
+files.one = "{n} Datei"
+files.other = "{n} Dateien"
+dirs.one = "{n} Ordner"
+dirs.other = "{n} Ordner"
+links.one = "{n} Link"
+links.other = "{n} Links"
+misc.one = "{n} Sonstiges"
+misc.other = "{n} Sonstige"
+
+[age]
+minutes = "{n} Min."
+hours = "{n} Std."
+days = "{n} T."
+weeks = "{n} Wo."
+months = "{n} Mon."
+years = "{n} J."
+
+[button]
+ok = "OK"
+cancel = "Abbrechen"
+apply = "Übernehmen"
+close = "Schließen"
+copy = "Kopieren"
+create = "Erstellen"
+rename = "Umbenennen"
+delete_permanently = "Endgültig löschen"
+move_to_trash = "In den Papierkorb"
+
+[dialog.delete]
+permanent_single = "„{name}“ endgültig löschen? Dies kann nicht rückgängig gemacht werden."
+permanent_multi.one = "{n} Element endgültig löschen? Dies kann nicht rückgängig gemacht werden."
+permanent_multi.other = "{n} Elemente endgültig löschen? Dies kann nicht rückgängig gemacht werden."
+trash_single = "„{name}“ in den Papierkorb verschieben?"
+trash_multi.one = "{n} Element in den Papierkorb verschieben?"
+trash_multi.other = "{n} Elemente in den Papierkorb verschieben?"
+more = "…und {n} weitere"
+
+[prop]
+name = "Name"
+path = "Pfad"
+type = "Typ"
+size = "Größe"
+modified = "Geändert"
+permissions = "Berechtigungen"
+size_value.one = "{size} ({n} Byte)"
+size_value.other = "{size} ({n} Bytes)"
+
+[kind]
+folder = "Ordner"
+file = "Datei"
+symlink = "Symbolische Verknüpfung"
+misc = "Sonstiges"
+
+[about]
+tagline = "Ein schneller, plattformübergreifender Dateimanager"
+version = "Version"
+build_hash = "Build-Hash"
+build_date = "Build-Datum"
+author = "Autor"
+license = "Lizenz"
+repository = "Repository"
+copy_tip = "Version und Build-Informationen kopieren"
+translations = "Die Übersetzungen sind maschinell erzeugt. Korrekturen sind als Pull Requests willkommen."
+
+[settings]
+title = "Einstellungen"
+search = "Einstellungen durchsuchen"
+none = "Keine passenden Einstellungen"
+start_folder = "Startordner"
+home_folder = "Persönlicher Ordner"
+use_current = "Aktuellen Ordner verwenden"
+show_hidden = "Versteckte Elemente anzeigen"
+language = "Sprache"
+theme = "Design"
+open_themes = "Designordner öffnen"
+reload_themes = "Designs neu laden"
+density = "Dichte"
+ext_column = "Spalte „Endung“ anzeigen"
+age_column = "Spalte „Alter“ anzeigen"
+font_family = "Schriftfamilie"
+font_default = "Standard"
+font_filter = "Schriften filtern"
+list_font_size = "Schriftgröße der Liste"
+tree_font_size = "Schriftgröße des Ordnerbaums"
+folder_order = "Ordnerreihenfolge"
+preload = "Unterordner im Hintergrund vorladen"
+tree_single_click = "Einfachklick im Ordnerbaum"
+list_single_click = "Einfachklick in der Dateiliste"
+use_trash = "Gelöschte Elemente in den Papierkorb verschieben"
+confirm_delete = "Vor dem Löschen bestätigen"
+confirm_delete_note = "Ohne Papierkorb ist das Löschen endgültig und wird immer bestätigt."
+
+[settings.cat]
+general = "Allgemein"
+appearance = "Darstellung"
+fonts = "Schriften"
+listing = "Auflistung"
+behavior = "Verhalten"
+
+[folder_order]
+top = "Ordner zuerst"
+mixed = "Ordner und Dateien gemischt"
+bottom = "Ordner zuletzt"
+
+[theme]
+nord-dark = "Nord Dunkel"
+nord-light = "Nord Hell"
+solarized-dark = "Solarized Dunkel"
+solarized-light = "Solarized Hell"
+dracula = "Dracula"
+gruvbox-dark = "Gruvbox Dunkel"
+high-contrast = "Hoher Kontrast"
+
+[error]
+name_empty = "Der Name darf nicht leer sein"
+name_separator = "Der Name darf kein Pfadtrennzeichen enthalten"
+name_dot = "„.“ und „..“ sind keine gültigen Namen"
+paste_into_self = "ein Ordner kann nicht in sich selbst eingefügt werden"
+invalid_name = "ungültiger Name"
+
+[notice]
+save_failed = "Einstellungen konnten nicht gespeichert werden: {error}"
+nothing_to_delete = "Nichts zum Löschen ausgewählt"
+nothing_selected = "Nichts ausgewählt"
+rename_missing = "Element zum Umbenennen nicht gefunden"
+rename_impossible = "Dieses Element kann nicht umbenannt werden"
+busy = "Ein anderer Dateivorgang läuft noch"
+paste_failed = "{name} konnte nicht eingefügt werden: {error}"
+copied.one = "{n} Element kopiert"
+copied.other = "{n} Elemente kopiert"
+moved.one = "{n} Element verschoben"
+moved.other = "{n} Elemente verschoben"
+copy_partial = "{done} von {total} Elementen kopiert. {first}"
+move_partial = "{done} von {total} Elementen verschoben. {first}"
+delete_failed = "{name} konnte nicht gelöscht werden: {error}"
+trash_failed = "{name} konnte nicht in den Papierkorb verschoben werden: {error}"
+deleted.one = "{n} Element gelöscht"
+deleted.other = "{n} Elemente gelöscht"
+trashed.one = "{n} Element in den Papierkorb verschoben"
+trashed.other = "{n} Elemente in den Papierkorb verschoben"
+delete_all_failed = "{first} ({failed} von {total} Elementen fehlgeschlagen)"
+delete_partial = "{done} von {total} Elementen gelöscht. {first}"
+trash_partial = "{done} von {total} Elementen in den Papierkorb verschoben. {first}"
+renamed = "{from} in {to} umbenannt"
+exists = "Ein Element namens {name} existiert bereits"
+rename_failed = "{name} konnte nicht umbenannt werden: {error}"
+folder_created = "Ordner {name} erstellt"
+folder_failed = "Ordner {name} konnte nicht erstellt werden: {error}"

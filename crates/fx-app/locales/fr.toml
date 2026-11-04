@@ -1,0 +1,221 @@
+# Traduction automatique (IA). Les corrections sont les bienvenues via pull request.
+
+[language]
+system = "Par défaut du système"
+
+[menu]
+file = "Fichier"
+view = "Affichage"
+help = "Aide"
+about = "À propos de fx"
+
+[cmd]
+open = "Ouvrir"
+open_new_tab = "Ouvrir dans un nouvel onglet"
+cut = "Couper"
+copy = "Copier"
+paste = "Coller"
+paste_into = "Coller dans le dossier"
+rename = "Renommer"
+delete = "Supprimer"
+copy_path = "Copier le chemin"
+properties = "Propriétés"
+new_folder = "Nouveau dossier"
+refresh = "Actualiser"
+select_all = "Tout sélectionner"
+settings = "Paramètres"
+sort = "Trier"
+
+[tip]
+back = "Précédent (Alt+←)"
+forward = "Suivant (Alt+→)"
+up = "Dossier parent (Alt+↑)"
+refresh = "Actualiser (F5)"
+about = "À propos de fx (F1)"
+new_folder = "Nouveau dossier (Ctrl+Maj+N)"
+rename = "Renommer (F2)"
+delete = "Supprimer (Suppr)"
+close_tab = "Fermer l’onglet (Ctrl+W)"
+new_tab = "Nouvel onglet (Ctrl+T)"
+
+[filter]
+hint = "Filtrer…"
+
+[sort]
+ascending = "Croissant"
+descending = "Décroissant"
+
+[col]
+name = "Nom"
+ext = "Extension"
+size = "Taille"
+modified = "Modifié"
+age = "Âge"
+
+[col_short]
+ext = "Ext."
+
+[density]
+compact = "Compacte"
+comfortable = "Confortable"
+
+[places]
+places = "Emplacements"
+drives = "Lecteurs"
+home = "Dossier personnel"
+
+[table]
+cannot_list = "Impossible de lister {path}"
+
+[status]
+summary = "{items} · {counts} · {size} · stockage : {storage} · listé en {time}"
+items.one = "{n} élément"
+items.other = "{n} éléments"
+files.one = "{n} fichier"
+files.other = "{n} fichiers"
+dirs.one = "{n} dossier"
+dirs.other = "{n} dossiers"
+links.one = "{n} lien"
+links.other = "{n} liens"
+misc.one = "{n} autre"
+misc.other = "{n} autres"
+
+[age]
+minutes = "{n} min"
+hours = "{n} h"
+days = "{n} j"
+weeks = "{n} sem."
+months = "{n} mois"
+years = "{n} a"
+
+[button]
+ok = "OK"
+cancel = "Annuler"
+apply = "Appliquer"
+close = "Fermer"
+copy = "Copier"
+create = "Créer"
+rename = "Renommer"
+delete_permanently = "Supprimer définitivement"
+move_to_trash = "Mettre à la corbeille"
+
+[dialog.delete]
+permanent_single = "Supprimer définitivement « {name} » ? Cette action est irréversible."
+permanent_multi.one = "Supprimer définitivement {n} élément ? Cette action est irréversible."
+permanent_multi.other = "Supprimer définitivement {n} éléments ? Cette action est irréversible."
+trash_single = "Mettre « {name} » à la corbeille ?"
+trash_multi.one = "Mettre {n} élément à la corbeille ?"
+trash_multi.other = "Mettre {n} éléments à la corbeille ?"
+more = "…et {n} de plus"
+
+[prop]
+name = "Nom"
+path = "Chemin"
+type = "Type"
+size = "Taille"
+modified = "Modifié"
+permissions = "Autorisations"
+size_value.one = "{size} ({n} octet)"
+size_value.other = "{size} ({n} octets)"
+
+[kind]
+folder = "Dossier"
+file = "Fichier"
+symlink = "Lien symbolique"
+misc = "Autre"
+
+[about]
+tagline = "Un gestionnaire de fichiers rapide et multiplateforme"
+version = "Version"
+build_hash = "Hash de compilation"
+build_date = "Date de compilation"
+author = "Auteur"
+license = "Licence"
+repository = "Dépôt"
+copy_tip = "Copier la version et les informations de compilation"
+translations = "Les traductions sont générées automatiquement. Les corrections sont les bienvenues via pull request."
+
+[settings]
+title = "Paramètres"
+search = "Rechercher dans les paramètres"
+none = "Aucun paramètre correspondant"
+start_folder = "Dossier de démarrage"
+home_folder = "Dossier personnel"
+use_current = "Utiliser le dossier actuel"
+show_hidden = "Afficher les éléments masqués"
+language = "Langue"
+theme = "Thème"
+open_themes = "Ouvrir le dossier des thèmes"
+reload_themes = "Recharger les thèmes"
+density = "Densité"
+ext_column = "Afficher la colonne Ext."
+age_column = "Afficher la colonne Âge"
+font_family = "Famille de police"
+font_default = "Par défaut"
+font_filter = "Filtrer les polices"
+list_font_size = "Taille de police de la liste"
+tree_font_size = "Taille de police de l’arborescence"
+folder_order = "Ordre des dossiers"
+preload = "Précharger les sous-dossiers en arrière-plan"
+tree_single_click = "Simple clic dans l’arborescence"
+list_single_click = "Simple clic dans la liste de fichiers"
+use_trash = "Mettre les éléments supprimés à la corbeille"
+confirm_delete = "Confirmer avant de supprimer"
+confirm_delete_note = "Sans corbeille, la suppression est définitive et demande toujours confirmation."
+
+[settings.cat]
+general = "Général"
+appearance = "Apparence"
+fonts = "Polices"
+listing = "Liste"
+behavior = "Comportement"
+
+[folder_order]
+top = "Dossiers en premier"
+mixed = "Dossiers mélangés aux fichiers"
+bottom = "Dossiers en dernier"
+
+[theme]
+nord-dark = "Nord sombre"
+nord-light = "Nord clair"
+solarized-dark = "Solarized sombre"
+solarized-light = "Solarized clair"
+dracula = "Dracula"
+gruvbox-dark = "Gruvbox sombre"
+high-contrast = "Contraste élevé"
+
+[error]
+name_empty = "Le nom ne doit pas être vide"
+name_separator = "Le nom ne doit pas contenir de séparateur de chemin"
+name_dot = "« . » et « .. » ne sont pas des noms valides"
+paste_into_self = "un dossier ne peut pas être collé dans lui-même"
+invalid_name = "nom non valide"
+
+[notice]
+save_failed = "Impossible d’enregistrer les paramètres : {error}"
+nothing_to_delete = "Aucune sélection à supprimer"
+nothing_selected = "Aucune sélection"
+rename_missing = "Aucun élément à renommer"
+rename_impossible = "Cet élément ne peut pas être renommé"
+busy = "Une autre opération sur les fichiers est encore en cours"
+paste_failed = "Impossible de coller {name} : {error}"
+copied.one = "{n} élément copié"
+copied.other = "{n} éléments copiés"
+moved.one = "{n} élément déplacé"
+moved.other = "{n} éléments déplacés"
+copy_partial = "{done} éléments sur {total} copiés. {first}"
+move_partial = "{done} éléments sur {total} déplacés. {first}"
+delete_failed = "Impossible de supprimer {name} : {error}"
+trash_failed = "Impossible de mettre {name} à la corbeille : {error}"
+deleted.one = "{n} élément supprimé"
+deleted.other = "{n} éléments supprimés"
+trashed.one = "{n} élément mis à la corbeille"
+trashed.other = "{n} éléments mis à la corbeille"
+delete_all_failed = "{first} (échec pour {failed} éléments sur {total})"
+delete_partial = "{done} éléments sur {total} supprimés. {first}"
+trash_partial = "{done} éléments sur {total} mis à la corbeille. {first}"
+renamed = "{from} renommé en {to}"
+exists = "Un élément nommé {name} existe déjà"
+rename_failed = "Impossible de renommer {name} : {error}"
+folder_created = "Dossier {name} créé"
+folder_failed = "Impossible de créer le dossier {name} : {error}"

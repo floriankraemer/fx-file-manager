@@ -24,8 +24,8 @@ pub enum PlaceGroup {
 impl PlaceGroup {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Places => "Places",
-            Self::Drives => "Drives",
+            Self::Places => crate::t("places.places"),
+            Self::Drives => crate::t("places.drives"),
         }
     }
 }
@@ -50,7 +50,7 @@ pub fn places() -> Vec<Place> {
     let mut out = Vec::new();
     if let Some(home) = home_dir() {
         out.extend(existing(
-            std::iter::once(("Home".to_owned(), home.clone())).chain(
+            std::iter::once((crate::t("places.home").to_owned(), home.clone())).chain(
                 USER_DIRS
                     .iter()
                     .map(|name| ((*name).to_owned(), home.join(name))),

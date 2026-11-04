@@ -48,9 +48,9 @@ pub enum NameError {
 impl fmt::Display for NameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Empty => "The name must not be empty",
-            Self::Separator => "The name must not contain a path separator",
-            Self::Dot => "\".\" and \"..\" are not valid names",
+            Self::Empty => crate::t("error.name_empty"),
+            Self::Separator => crate::t("error.name_separator"),
+            Self::Dot => crate::t("error.name_dot"),
         })
     }
 }
@@ -136,15 +136,32 @@ fn paste(sources: &[PathBuf], dest: &Path, cut: bool) -> Outcome {
         match result {
             Ok(()) => done += 1,
             Err(message) => {
-                first_failure.get_or_insert(format!("Could not paste {name}: {message}"));
+                first_failure.get_or_insert(crate::tr(
+                    "notice.paste_failed",
+                    &[("name", &name), ("error", &message)],
+                ));
             }
         }
     }
-    let verb = if cut { "Moved" } else { "Copied" };
     let notice = match first_failure {
-        None => Notice::info(format!("{verb} {}", items(done))),
+        None => Notice::info(crate::tn(
+            if cut { "notice.moved" } else { "notice.copied" },
+            done as u64,
+            &[],
+        )),
         Some(first) if done == 0 => Notice::error(first),
-        Some(first) => Notice::error(format!("{verb} {done} of {} items. {first}", sources.len())),
+        Some(first) => Notice::error(crate::tr(
+            if cut {
+                "notice.move_partial"
+            } else {
+                "notice.copy_partial"
+            },
+            &[
+                ("done", &done.to_string()),
+                ("total", &sources.len().to_string()),
+                ("first", &first),
+            ],
+        )),
     };
     let mut touched = parents(sources.iter().map(PathBuf::as_path));
     touched.push(dest.to_path_buf());
@@ -157,9 +174,9 @@ fn paste(sources: &[PathBuf], dest: &Path, cut: bool) -> Outcome {
 
 fn paste_one(src: &Path, dest: &Path, cut: bool) -> Result<(), String> {
     if dest.starts_with(src) {
-        return Err("a folder cannot be pasted into itself".into());
+        return Err(crate::t("error.paste_into_self").into());
     }
-    let name = src.file_name().ok_or("invalid name")?;
+    let name = src.file_name().ok_or(crate::t("error.invalid_name"))?;
     let target = dest.join(unique_file_name(name, |n| {
         fs::symlink_metadata(dest.join(n)).is_err()
     }));
@@ -238,24 +255,47 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
             Err(message) => {
                 failed += 1;
                 first_failure.get_or_insert_with(|| {
-                    let action = if permanent { "delete" } else { "move to trash" };
-                    format!("Could not {action} {}: {message}", display_name(path))
+                    let key = if permanent {
+                        "notice.delete_failed"
+                    } else {
+                        "notice.trash_failed"
+                    };
+                    crate::tr(key, &[("name", &display_name(path)), ("error", &message)])
                 });
             }
         }
     }
     let total = paths.len();
-    let verb = if permanent { "Deleted" } else { "Moved" };
-    let destination = if permanent { "" } else { " to trash" };
     let notice = match first_failure {
-        None if permanent => Notice::info(format!("Deleted {}", items(total))),
-        None => Notice::info(format!("Moved {} to trash", items(total))),
+        None => Notice::info(crate::tn(
+            if permanent {
+                "notice.deleted"
+            } else {
+                "notice.trashed"
+            },
+            total as u64,
+            &[],
+        )),
         Some(first) if deleted == 0 && total == 1 => Notice::error(first),
-        Some(first) if deleted == 0 => {
-            Notice::error(format!("{first} ({failed} of {total} items failed)"))
-        }
-        Some(first) => Notice::error(format!(
-            "{verb} {deleted} of {total} items{destination}. {first}"
+        Some(first) if deleted == 0 => Notice::error(crate::tr(
+            "notice.delete_all_failed",
+            &[
+                ("first", &first),
+                ("failed", &failed.to_string()),
+                ("total", &total.to_string()),
+            ],
+        )),
+        Some(first) => Notice::error(crate::tr(
+            if permanent {
+                "notice.delete_partial"
+            } else {
+                "notice.trash_partial"
+            },
+            &[
+                ("done", &deleted.to_string()),
+                ("total", &total.to_string()),
+                ("first", &first),
+            ],
         )),
     };
     Outcome {
@@ -300,11 +340,17 @@ fn rename(from: &Path, to: &Path) -> Outcome {
     let (from_name, to_name) = (display_name(from), display_name(to));
     let touched = parents([from, to]);
     let notice = match rename_no_replace(from, to) {
-        Ok(()) => Notice::info(format!("Renamed {from_name} to {to_name}")),
+        Ok(()) => Notice::info(crate::tr(
+            "notice.renamed",
+            &[("from", &from_name), ("to", &to_name)],
+        )),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            Notice::error(format!("An item named {to_name} already exists"))
+            Notice::error(crate::tr("notice.exists", &[("name", &to_name)]))
         }
-        Err(err) => Notice::error(format!("Could not rename {from_name}: {}", plain(&err))),
+        Err(err) => Notice::error(crate::tr(
+            "notice.rename_failed",
+            &[("name", &from_name), ("error", &plain(&err))],
+        )),
     };
     Outcome {
         notice,
@@ -337,15 +383,18 @@ fn create_folder(path: PathBuf) -> Outcome {
     let touched = parents([path.as_path()]);
     match fs::create_dir(&path) {
         Ok(()) => Outcome {
-            notice: Notice::info(format!("Created folder {name}")),
+            notice: Notice::info(crate::tr("notice.folder_created", &[("name", &name)])),
             touched,
             created: Some(path),
         },
         Err(err) => Outcome {
             notice: Notice::error(if err.kind() == io::ErrorKind::AlreadyExists {
-                format!("An item named {name} already exists")
+                crate::tr("notice.exists", &[("name", &name)])
             } else {
-                format!("Could not create folder {name}: {}", plain(&err))
+                crate::tr(
+                    "notice.folder_failed",
+                    &[("name", &name), ("error", &plain(&err))],
+                )
             }),
             touched,
             created: None,
@@ -446,14 +495,6 @@ fn parents<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Vec<PathBuf> {
         .filter(|parent| seen.insert(parent.to_path_buf()))
         .map(Path::to_path_buf)
         .collect()
-}
-
-fn items(count: usize) -> String {
-    if count == 1 {
-        "1 item".to_owned()
-    } else {
-        format!("{count} items")
-    }
 }
 
 #[cfg(test)]

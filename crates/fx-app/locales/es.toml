@@ -1,0 +1,221 @@
+# Traducción automática (IA). Las correcciones se agradecen mediante pull request.
+
+[language]
+system = "Predeterminado del sistema"
+
+[menu]
+file = "Archivo"
+view = "Ver"
+help = "Ayuda"
+about = "Acerca de fx"
+
+[cmd]
+open = "Abrir"
+open_new_tab = "Abrir en una pestaña nueva"
+cut = "Cortar"
+copy = "Copiar"
+paste = "Pegar"
+paste_into = "Pegar en la carpeta"
+rename = "Renombrar"
+delete = "Eliminar"
+copy_path = "Copiar ruta"
+properties = "Propiedades"
+new_folder = "Nueva carpeta"
+refresh = "Actualizar"
+select_all = "Seleccionar todo"
+settings = "Ajustes"
+sort = "Ordenar"
+
+[tip]
+back = "Atrás (Alt+←)"
+forward = "Adelante (Alt+→)"
+up = "Subir (Alt+↑)"
+refresh = "Actualizar (F5)"
+about = "Acerca de fx (F1)"
+new_folder = "Nueva carpeta (Ctrl+Mayús+N)"
+rename = "Renombrar (F2)"
+delete = "Eliminar (Supr)"
+close_tab = "Cerrar pestaña (Ctrl+W)"
+new_tab = "Nueva pestaña (Ctrl+T)"
+
+[filter]
+hint = "Filtrar…"
+
+[sort]
+ascending = "Ascendente"
+descending = "Descendente"
+
+[col]
+name = "Nombre"
+ext = "Extensión"
+size = "Tamaño"
+modified = "Modificado"
+age = "Antigüedad"
+
+[col_short]
+ext = "Ext."
+
+[density]
+compact = "Compacta"
+comfortable = "Cómoda"
+
+[places]
+places = "Lugares"
+drives = "Unidades"
+home = "Carpeta personal"
+
+[table]
+cannot_list = "No se puede listar {path}"
+
+[status]
+summary = "{items} · {counts} · {size} · almacenamiento: {storage} · listado en {time}"
+items.one = "{n} elemento"
+items.other = "{n} elementos"
+files.one = "{n} archivo"
+files.other = "{n} archivos"
+dirs.one = "{n} carpeta"
+dirs.other = "{n} carpetas"
+links.one = "{n} enlace"
+links.other = "{n} enlaces"
+misc.one = "{n} otro"
+misc.other = "{n} otros"
+
+[age]
+minutes = "{n} min"
+hours = "{n} h"
+days = "{n} d"
+weeks = "{n} sem"
+months = "{n} m"
+years = "{n} a"
+
+[button]
+ok = "Aceptar"
+cancel = "Cancelar"
+apply = "Aplicar"
+close = "Cerrar"
+copy = "Copiar"
+create = "Crear"
+rename = "Renombrar"
+delete_permanently = "Eliminar definitivamente"
+move_to_trash = "Mover a la papelera"
+
+[dialog.delete]
+permanent_single = "¿Eliminar definitivamente «{name}»? Esta acción no se puede deshacer."
+permanent_multi.one = "¿Eliminar definitivamente {n} elemento? Esta acción no se puede deshacer."
+permanent_multi.other = "¿Eliminar definitivamente {n} elementos? Esta acción no se puede deshacer."
+trash_single = "¿Mover «{name}» a la papelera?"
+trash_multi.one = "¿Mover {n} elemento a la papelera?"
+trash_multi.other = "¿Mover {n} elementos a la papelera?"
+more = "…y {n} más"
+
+[prop]
+name = "Nombre"
+path = "Ruta"
+type = "Tipo"
+size = "Tamaño"
+modified = "Modificado"
+permissions = "Permisos"
+size_value.one = "{size} ({n} byte)"
+size_value.other = "{size} ({n} bytes)"
+
+[kind]
+folder = "Carpeta"
+file = "Archivo"
+symlink = "Enlace simbólico"
+misc = "Otro"
+
+[about]
+tagline = "Un gestor de archivos rápido y multiplataforma"
+version = "Versión"
+build_hash = "Hash de compilación"
+build_date = "Fecha de compilación"
+author = "Autor"
+license = "Licencia"
+repository = "Repositorio"
+copy_tip = "Copiar la versión y la información de compilación"
+translations = "Las traducciones son automáticas. Las correcciones son bienvenidas mediante pull request."
+
+[settings]
+title = "Ajustes"
+search = "Buscar ajustes"
+none = "No hay ajustes que coincidan"
+start_folder = "Carpeta de inicio"
+home_folder = "Carpeta personal"
+use_current = "Usar la carpeta actual"
+show_hidden = "Mostrar elementos ocultos"
+language = "Idioma"
+theme = "Tema"
+open_themes = "Abrir la carpeta de temas"
+reload_themes = "Recargar temas"
+density = "Densidad"
+ext_column = "Mostrar la columna Ext."
+age_column = "Mostrar la columna Antigüedad"
+font_family = "Familia de fuente"
+font_default = "Predeterminada"
+font_filter = "Filtrar fuentes"
+list_font_size = "Tamaño de fuente de la lista"
+tree_font_size = "Tamaño de fuente del árbol"
+folder_order = "Orden de las carpetas"
+preload = "Precargar subcarpetas en segundo plano"
+tree_single_click = "Un clic en el árbol de carpetas"
+list_single_click = "Un clic en la lista de archivos"
+use_trash = "Mover los elementos eliminados a la papelera"
+confirm_delete = "Confirmar antes de eliminar"
+confirm_delete_note = "Sin papelera, la eliminación es definitiva y siempre pide confirmación."
+
+[settings.cat]
+general = "General"
+appearance = "Apariencia"
+fonts = "Fuentes"
+listing = "Listado"
+behavior = "Comportamiento"
+
+[folder_order]
+top = "Carpetas primero"
+mixed = "Carpetas mezcladas con archivos"
+bottom = "Carpetas al final"
+
+[theme]
+nord-dark = "Nord oscuro"
+nord-light = "Nord claro"
+solarized-dark = "Solarized oscuro"
+solarized-light = "Solarized claro"
+dracula = "Dracula"
+gruvbox-dark = "Gruvbox oscuro"
+high-contrast = "Alto contraste"
+
+[error]
+name_empty = "El nombre no puede estar vacío"
+name_separator = "El nombre no puede contener un separador de ruta"
+name_dot = "«.» y «..» no son nombres válidos"
+paste_into_self = "una carpeta no se puede pegar dentro de sí misma"
+invalid_name = "nombre no válido"
+
+[notice]
+save_failed = "No se pudieron guardar los ajustes: {error}"
+nothing_to_delete = "No hay nada seleccionado para eliminar"
+nothing_selected = "No hay nada seleccionado"
+rename_missing = "No existe el elemento que se quiere renombrar"
+rename_impossible = "Este elemento no se puede renombrar"
+busy = "Todavía hay otra operación de archivos en curso"
+paste_failed = "No se pudo pegar {name}: {error}"
+copied.one = "{n} elemento copiado"
+copied.other = "{n} elementos copiados"
+moved.one = "{n} elemento movido"
+moved.other = "{n} elementos movidos"
+copy_partial = "{done} de {total} elementos copiados. {first}"
+move_partial = "{done} de {total} elementos movidos. {first}"
+delete_failed = "No se pudo eliminar {name}: {error}"
+trash_failed = "No se pudo mover {name} a la papelera: {error}"
+deleted.one = "{n} elemento eliminado"
+deleted.other = "{n} elementos eliminados"
+trashed.one = "{n} elemento movido a la papelera"
+trashed.other = "{n} elementos movidos a la papelera"
+delete_all_failed = "{first} (fallaron {failed} de {total} elementos)"
+delete_partial = "{done} de {total} elementos eliminados. {first}"
+trash_partial = "{done} de {total} elementos movidos a la papelera. {first}"
+renamed = "{from} renombrado a {to}"
+exists = "Ya existe un elemento llamado {name}"
+rename_failed = "No se pudo renombrar {name}: {error}"
+folder_created = "Carpeta {name} creada"
+folder_failed = "No se pudo crear la carpeta {name}: {error}"
