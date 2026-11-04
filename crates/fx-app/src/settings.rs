@@ -43,6 +43,8 @@ pub struct Settings {
     pub folder_order: FolderOrder,
     /// UI language; `system` follows the OS.
     pub language: Language,
+    /// Date order of the Modified column: the language's own or ISO.
+    pub date_format: DateFormat,
     /// What a paste does when an item with the same name exists.
     pub conflict_policy: ConflictChoice,
     /// Copy workers per transfer; `0` lets the copy planner decide per storage type.
@@ -70,6 +72,7 @@ impl Default for Settings {
             tree_font_size: 13.5,
             folder_order: FolderOrder::default(),
             language: Language::default(),
+            date_format: DateFormat::default(),
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
             verify_copies: false,
@@ -104,6 +107,14 @@ pub enum FolderOrder {
     Top,
     Mixed,
     Bottom,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DateFormat {
+    #[default]
+    Locale,
+    Iso,
 }
 
 /// Persisted form of [`ConflictPolicy`].
@@ -285,6 +296,7 @@ mod tests {
             tree_font_size: 10.5,
             folder_order: FolderOrder::Bottom,
             language: Language::Uk,
+            date_format: DateFormat::Iso,
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
             verify_copies: true,

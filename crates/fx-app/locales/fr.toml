@@ -156,6 +156,8 @@ font_filter = "Filtrer les polices"
 list_font_size = "Taille de police de la liste"
 tree_font_size = "Taille de police de l’arborescence"
 folder_order = "Ordre des dossiers"
+date_format = "Format de date"
+cjk_missing = "Aucune police chinoise n'est installée, le texte chinois s'affiche donc en carrés. Installez Noto Sans CJK SC ou équivalent."
 preload = "Précharger les sous-dossiers en arrière-plan"
 tree_single_click = "Simple clic dans l’arborescence"
 list_single_click = "Simple clic dans la liste de fichiers"
@@ -294,3 +296,23 @@ overwrite = "Écraser"
 keep_both = "Conserver les deux, renommer la copie"
 overwrite_if_newer = "Écraser si plus récent"
 skip_identical = "Ignorer les fichiers identiques (reprise)"
+
+[unit]
+b = "o"
+kb = "Ko"
+mb = "Mo"
+gb = "Go"
+tb = "To"
+pb = "Po"
+ms = "ms"
+
+[date_format]
+locale = "Selon la langue"
+iso = "ISO (2026-11-04)"
+
+[os_error]
+not_found = "Introuvable"
+permission_denied = "Permission refusée"
+already_exists = "Existe déjà"
+directory_not_empty = "Le dossier n'est pas vide"
+no_space = "Plus d'espace disponible sur le périphérique"

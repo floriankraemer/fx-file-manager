@@ -157,6 +157,8 @@ font_filter = "Filter fonts"
 list_font_size = "List font size"
 tree_font_size = "Tree font size"
 folder_order = "Folder order"
+date_format = "Date format"
+cjk_missing = "No Chinese font is installed, so Chinese text shows as boxes. Install Noto Sans CJK SC or similar."
 preload = "Preload subfolders in the background"
 tree_single_click = "Single click in the folder tree"
 list_single_click = "Single click in the file list"
@@ -295,3 +297,23 @@ overwrite = "Overwrite"
 keep_both = "Keep both, rename the copy"
 overwrite_if_newer = "Overwrite if newer"
 skip_identical = "Skip identical files (resume)"
+
+[unit]
+b = "B"
+kb = "KB"
+mb = "MB"
+gb = "GB"
+tb = "TB"
+pb = "PB"
+ms = "ms"
+
+[date_format]
+locale = "Follow language"
+iso = "ISO (2026-11-04)"
+
+[os_error]
+not_found = "Not found"
+permission_denied = "Permission denied"
+already_exists = "Already exists"
+directory_not_empty = "Directory not empty"
+no_space = "No space left on device"

@@ -319,6 +319,12 @@ const CJK_FONTS: &[&str] = &[
     "Heiti SC",
 ];
 
+/// Whether a system font with Simplified Chinese glyphs is installed. Looked up once.
+pub fn cjk_font_found() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| load_font(CJK_FONTS).is_some())
+}
+
 /// Installs `family` as the first proportional font and, for Chinese, a CJK fallback last.
 /// Only touches egui when one of them changed.
 fn apply_font(ctx: &egui::Context, family: Option<&str>, cjk: bool) {

@@ -37,6 +37,7 @@ fn look(s: &Settings) -> Look {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf, settings: Settings) -> Self {
         i18n::set_language(settings.language);
+        fx_app::set_date_format(settings.date_format);
         let applied_look = look(&settings);
         theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
@@ -232,6 +233,7 @@ impl eframe::App for App {
         for action in actions {
             self.dispatch(ctx, action);
         }
+        fx_app::set_date_format(self.explorer.settings().date_format);
         let current = look(self.explorer.settings());
         if current != self.applied_look {
             if current.4 != self.applied_look.4 {

@@ -45,6 +45,15 @@ Values outside that range are clamped on load.
 - `"mixed"`: folders and files sorted together.
 - `"bottom"`: folders after files, as in Finder.
 
+`date_format` sets how the Modified column and tooltips write dates:
+
+- `"locale"` (default): the order of the UI language, for example `04.11.2026 14:30` in German and Ukrainian, `04/11/2026 14:30` in Spanish and French, `2026年11月4日 14:30` in Chinese.
+  English keeps `2026-11-04 14:30`.
+- `"iso"`: `2026-11-04 14:30` in every language.
+
+Sizes, numbers and timings follow the UI language too (decimal separator, digit groups, unit names such as `Ko` in French).
+Sizes always use 1024-based steps, and sorting uses raw bytes.
+
 ## Copy and move
 
 - `conflict_policy` (default `"ask"`): what a paste does when an item with the same name exists.
