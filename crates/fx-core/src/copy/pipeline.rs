@@ -3,7 +3,7 @@
 
 use super::conflict::{self, Conflict, ConflictPolicy, Resolution, keep_both_name, temp_name};
 use super::plan::{CopyPlan, Durability, MethodCache, Op, Order, Os, Schedule};
-use super::progress::{DiskFull, ErrorOp, Progress, Shared, is_cancelled};
+use super::progress::{DiskFull, ErrorOp, Progress, Shared, cancelled, is_cancelled};
 use super::verify;
 use super::{Meta, Request, Summary};
 use crate::EntryKind;
@@ -16,7 +16,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -267,7 +267,7 @@ struct Job<'a> {
     caps: FsCaps,
     policy: ConflictPolicy,
     /// First destination of each multiply-linked source inode, so later names become hardlinks.
-    links: Mutex<HashMap<(u64, u64), PathBuf>>,
+    links: LinkGroups,
     /// Directories scheduled but not listed yet; the walk is complete when it drops to zero.
     dirs_pending: AtomicUsize,
     last_group: bool,
@@ -524,7 +524,7 @@ impl<'a> Job<'a> {
             cache: MethodCache::default(),
             caps: dst.caps,
             policy,
-            links: Mutex::default(),
+            links: LinkGroups::default(),
             dirs_pending: AtomicUsize::new(0),
             last_group,
             items,
@@ -881,7 +881,19 @@ impl<'a> Job<'a> {
         progress.set_current(path, meta.size);
 
         let link_key = (meta.nlink > 1).then_some((meta.dev, meta.ino));
-        let existing = link_key.and_then(|k| lock(&self.links).get(&k).cloned());
+        // The first name of a group is copied by one worker; the others wait for it, then link.
+        let claim = match link_key {
+            Some(key) => Some(self.links.claim(key, self.sh).map_err(|err| Failure {
+                op: ErrorOp::Link,
+                err,
+            })?),
+            None => None,
+        };
+        let (existing, leader) = match claim {
+            Some(Claim::Existing(path)) => (Some(path), None),
+            Some(Claim::Leader(guard)) => (None, Some(guard)),
+            None => (None, None),
+        };
         if let Some(existing) = existing {
             match self.place(e, path, &meta, ErrorOp::Link, |n| {
                 os::hard_link(&existing, dst_dir, n)
@@ -914,10 +926,8 @@ impl<'a> Job<'a> {
                         err,
                     });
                 }
-                if let Some(key) = link_key {
-                    lock(&self.links)
-                        .entry(key)
-                        .or_insert_with(|| dst_path.clone());
+                if let Some(leader) = leader {
+                    leader.finish(dst_path.clone());
                 }
                 self.warn(&dst_path, ErrorOp::Metadata, copied.warnings);
                 Ok((
@@ -1580,6 +1590,80 @@ fn link_rewritten(roots: &[PathBuf], src: &Path, dst: &Path) -> bool {
 #[cfg(not(windows))]
 fn link_rewritten(_roots: &[PathBuf], _src: &Path, _dst: &Path) -> bool {
     false
+}
+
+/// The first destination of each multiply-linked source file, keyed by (device, inode). A name that
+/// arrives while the first is still being copied waits for it, so a group is never copied twice.
+#[derive(Default)]
+struct LinkGroups {
+    slots: Mutex<HashMap<(u64, u64), LinkSlot>>,
+    changed: Condvar,
+}
+
+enum LinkSlot {
+    Copying,
+    Done(PathBuf),
+}
+
+enum Claim<'a> {
+    /// The group's first copy is finished: link to it.
+    Existing(PathBuf),
+    /// This worker copies the data and then calls [`LinkLeader::finish`].
+    Leader(LinkLeader<'a>),
+}
+
+/// Held while the first name of a group is copied. Dropped without `finish` (error, skip, cancel), it
+/// frees the group so the next waiting name becomes the one to copy.
+struct LinkLeader<'a> {
+    groups: &'a LinkGroups,
+    key: (u64, u64),
+    done: bool,
+}
+
+impl LinkLeader<'_> {
+    fn finish(mut self, dst: PathBuf) {
+        lock(&self.groups.slots).insert(self.key, LinkSlot::Done(dst));
+        self.done = true;
+        self.groups.changed.notify_all();
+    }
+}
+
+impl Drop for LinkLeader<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            lock(&self.groups.slots).remove(&self.key);
+            self.groups.changed.notify_all();
+        }
+    }
+}
+
+impl LinkGroups {
+    fn claim(&self, key: (u64, u64), sh: &Shared) -> io::Result<Claim<'_>> {
+        let mut slots = lock(&self.slots);
+        loop {
+            match slots.get(&key) {
+                None => {
+                    slots.insert(key, LinkSlot::Copying);
+                    return Ok(Claim::Leader(LinkLeader {
+                        groups: self,
+                        key,
+                        done: false,
+                    }));
+                }
+                Some(LinkSlot::Done(path)) => return Ok(Claim::Existing(path.clone())),
+                Some(LinkSlot::Copying) => {
+                    if sh.is_cancelled() {
+                        return Err(cancelled());
+                    }
+                    slots = self
+                        .changed
+                        .wait_timeout(slots, Duration::from_millis(50))
+                        .unwrap_or_else(|p| p.into_inner())
+                        .0;
+                }
+            }
+        }
+    }
 }
 
 /// A `StorageFull` warning when `needed` bytes cannot fit in `free`; `None` when free space is unknown.

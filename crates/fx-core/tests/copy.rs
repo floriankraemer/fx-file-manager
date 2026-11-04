@@ -657,6 +657,32 @@ mod unix {
     }
 
     #[test]
+    fn hardlinks_in_different_folders_stay_one_file_under_parallel_workers() {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("first"), bytes(1, 3000)).unwrap();
+        for d in 0..48 {
+            let dir = src.join(format!("d{d:02}"));
+            fs::create_dir(&dir).unwrap();
+            fs::hard_link(src.join("first"), dir.join("link")).unwrap();
+        }
+        for round in 0..5 {
+            let dst = t.path().join(format!("dst{round}"));
+            let overrides = Overrides {
+                schedule: Some(Schedule::Streaming),
+                ..Overrides::default()
+            };
+            assert_clean(&copy(&src, &dst, ConflictPolicy::Skip, overrides));
+            let ino = fs::metadata(dst.join("first")).unwrap().ino();
+            for d in 0..48 {
+                let link = dst.join(format!("d{d:02}/link"));
+                assert_eq!(fs::metadata(link).unwrap().ino(), ino, "round {round} d{d}");
+            }
+        }
+    }
+
+    #[test]
     fn merged_folders_keep_their_own_mode() {
         let t = tempfile::tempdir().unwrap();
         let (src, dst) = (t.path().join("src"), t.path().join("dst"));

@@ -49,7 +49,7 @@ On one disk, small files are read in batches of up to 64 MiB and written afterwa
 - A source and destination that are the same file under two paths (bind mounts, hardlinks) are detected by inode: a copy duplicates it as `name (2)`, a move leaves it alone.
 - Permissions, owner (as root), nanosecond times, xattrs and POSIX ACLs (Linux), `fcopyfile` metadata (macOS), and attributes, ADS and times (Windows, via `CopyFile2`) are copied.
 - The mtime is set last, so an interrupted file never looks complete; re-running with skip identical rewrites exactly the incomplete files.
-- Symlinks are recreated, never followed; hardlinked files stay hardlinked; FIFOs are recreated (Linux and macOS); sparse files keep their holes.
+- Symlinks are recreated, never followed; hardlinked files stay hardlinked (a name that arrives while the first of its group is being copied waits for it, so workers never copy a group twice); FIFOs are recreated (Linux and macOS); sparse files keep their holes.
 - Folders are created as `0700` and get their final mode and times after their children, so read-only source folders copy fine.
 - A cross-volume move deletes a source item only after its copy finished with no error and no skipped entry and after a durability barrier on every destination device (`syncfs` on Linux, per-file `fsync` plus `F_FULLFSYNC` on macOS, per-file `FlushFileBuffers` on Windows).
 - Even then each source entry is deleted only if its copy matches in kind, size, mtime and link target, so files added or changed in the source during the move stay.
