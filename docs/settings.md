@@ -10,6 +10,17 @@ A missing file means defaults.
 The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing and Behavior.
 A search box filters the settings by name.
 
+## Language
+
+- `language` (default `"system"`): language of the user interface.
+  Values are `"system"`, `"en"`, `"de"`, `"uk"`, `"es"`, `"fr"` and `"zh-CN"`.
+
+`"system"` follows the operating system locale and uses English when that language is not available.
+The picker in the General category lists each language under its own name.
+A change applies immediately, without a restart.
+The German, Ukrainian, Spanish, French and Simplified Chinese texts are machine translated.
+See [translating](translating.md) for how to fix or add a translation.
+
 ## Appearance
 
 - `theme` (default `"nord-dark"`): id of the active theme.
@@ -42,4 +53,5 @@ list_font_size = 14.0
 tree_font_size = 12.0
 folder_order = "top"
 theme = "nord-dark"
+language = "system"
 ```

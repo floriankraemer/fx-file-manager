@@ -81,22 +81,22 @@ pub enum AgeBucket {
     Years,
 }
 
-/// Compact age such as `"5m"`, `"3h"`, `"4d"`, `"2w"`, `"6mo"`, `"2y"`.
+/// Compact age such as `"5m"`, `"3h"`, `"4d"`, `"2w"`, `"6mo"`, `"2y"` (English; other languages use their own units).
 /// Future times (clock skew) read as `"0m"`. A missing time yields `(Years, "")`; callers should show nothing for an empty string.
 pub fn age(modified: Option<SystemTime>, now: SystemTime) -> (AgeBucket, String) {
     let Some(modified) = modified else {
         return (AgeBucket::Years, String::new());
     };
     let secs = now.duration_since(modified).map_or(0, |d| d.as_secs());
-    let (bucket, unit, suffix) = match secs {
-        s if s < SECS_PER_HOUR => (AgeBucket::Minutes, SECS_PER_MINUTE, "m"),
-        s if s < SECS_PER_DAY => (AgeBucket::Hours, SECS_PER_HOUR, "h"),
-        s if s < SECS_PER_WEEK => (AgeBucket::Days, SECS_PER_DAY, "d"),
-        s if s < SECS_PER_MONTH => (AgeBucket::Weeks, SECS_PER_WEEK, "w"),
-        s if s < SECS_PER_YEAR => (AgeBucket::Months, SECS_PER_MONTH, "mo"),
-        _ => (AgeBucket::Years, SECS_PER_YEAR, "y"),
+    let (bucket, unit, key) = match secs {
+        s if s < SECS_PER_HOUR => (AgeBucket::Minutes, SECS_PER_MINUTE, "age.minutes"),
+        s if s < SECS_PER_DAY => (AgeBucket::Hours, SECS_PER_HOUR, "age.hours"),
+        s if s < SECS_PER_WEEK => (AgeBucket::Days, SECS_PER_DAY, "age.days"),
+        s if s < SECS_PER_MONTH => (AgeBucket::Weeks, SECS_PER_WEEK, "age.weeks"),
+        s if s < SECS_PER_YEAR => (AgeBucket::Months, SECS_PER_MONTH, "age.months"),
+        _ => (AgeBucket::Years, SECS_PER_YEAR, "age.years"),
     };
-    (bucket, format!("{}{suffix}", secs / unit))
+    (bucket, crate::tr(key, &[("n", &(secs / unit).to_string())]))
 }
 
 /// Text after the last dot, or `""` when there is none. Leading-dot names such as `.bashrc` have no extension.

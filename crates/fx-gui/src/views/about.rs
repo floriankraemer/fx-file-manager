@@ -3,6 +3,7 @@
 use super::dialogs::{button_row, modal};
 use crate::theme;
 use eframe::egui::{Button, Context, Grid, RichText};
+use fx_app::t;
 
 const NAME: &str = "fx";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -20,30 +21,36 @@ fn report(name: &str, version: &str, hash: &str, date: &str) -> String {
 pub fn show(ctx: &Context) -> bool {
     modal(ctx, "about-dialog", |ui| {
         ui.heading(NAME);
-        ui.label(RichText::new("A fast, cross-platform file manager").color(theme::dim()));
+        ui.label(RichText::new(t("about.tagline")).color(theme::dim()));
         ui.add_space(8.0);
         Grid::new("about-rows").num_columns(2).show(ui, |ui| {
             for (label, value) in [
-                ("Version", VERSION),
-                ("Build hash", HASH),
-                ("Build date", DATE),
-                ("Author", AUTHORS),
-                ("License", LICENSE),
+                (t("about.version"), VERSION),
+                (t("about.build_hash"), HASH),
+                (t("about.build_date"), DATE),
+                (t("about.author"), AUTHORS),
+                (t("about.license"), LICENSE),
             ] {
                 ui.label(RichText::new(label).color(theme::dim()));
                 ui.label(value);
                 ui.end_row();
             }
-            ui.label(RichText::new("Repository").color(theme::dim()));
+            ui.label(RichText::new(t("about.repository")).color(theme::dim()));
             ui.hyperlink(REPOSITORY);
             ui.end_row();
         });
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(t("about.translations"))
+                .small()
+                .color(theme::dim()),
+        );
         let mut close = false;
         button_row(ui, |ui| {
-            close |= ui.add(Button::new("Close")).clicked();
+            close |= ui.add(Button::new(t("button.close"))).clicked();
             if ui
-                .button("Copy")
-                .on_hover_text("Copy version and build info")
+                .button(t("button.copy"))
+                .on_hover_text(t("about.copy_tip"))
                 .clicked()
             {
                 ui.ctx().copy_text(report(NAME, VERSION, HASH, DATE));

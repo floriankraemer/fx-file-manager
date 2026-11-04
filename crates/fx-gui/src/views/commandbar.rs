@@ -3,7 +3,7 @@
 use super::icons::{self, Glyph};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, Popup, Response, Sense, TextStyle, Ui, vec2};
-use fx_app::{Explorer, SortColumn, SortSpec};
+use fx_app::{Explorer, SortColumn, SortSpec, t};
 
 const HEIGHT: f32 = 28.0;
 
@@ -12,20 +12,20 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
     let one_selected = explorer.active().selection().len() == 1;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if command(ui, Glyph::NewFolder, "New folder", true, false)
-            .on_hover_text("New folder (Ctrl+Shift+N)")
+        if command(ui, Glyph::NewFolder, t("cmd.new_folder"), true, false)
+            .on_hover_text(t("tip.new_folder"))
             .clicked()
         {
             actions.push(Action::NewFolder);
         }
-        if command(ui, Glyph::Rename, "Rename", one_selected, false)
-            .on_hover_text("Rename (F2)")
+        if command(ui, Glyph::Rename, t("cmd.rename"), one_selected, false)
+            .on_hover_text(t("tip.rename"))
             .clicked()
         {
             actions.push(Action::Rename);
         }
-        if command(ui, Glyph::Delete, "Delete", has_selection, false)
-            .on_hover_text("Delete (Del)")
+        if command(ui, Glyph::Delete, t("cmd.delete"), has_selection, false)
+            .on_hover_text(t("tip.delete"))
             .clicked()
         {
             actions.push(Action::Delete { permanent: false });
@@ -34,13 +34,13 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         ui.separator();
         ui.add_space(4.0);
 
-        let resp = command(ui, Glyph::Sort, "Sort", true, true);
+        let resp = command(ui, Glyph::Sort, t("cmd.sort"), true, true);
         Popup::menu(&resp).show(|ui| sort_menu(ui, explorer.active().sort(), actions));
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let resp = command(ui, Glyph::More, "", true, false);
             Popup::menu(&resp).show(|ui| {
-                if menu_item(ui, "Select all", "Ctrl+A", true) {
+                if menu_item(ui, t("cmd.select_all"), "Ctrl+A", true) {
                     actions.push(Action::SelectAll);
                 }
             });
@@ -50,10 +50,10 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
 
 fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {
     let columns = [
-        (SortColumn::Name, "Name"),
-        (SortColumn::Ext, "Extension"),
-        (SortColumn::Size, "Size"),
-        (SortColumn::Modified, "Modified"),
+        (SortColumn::Name, t("col.name")),
+        (SortColumn::Ext, t("col.ext")),
+        (SortColumn::Size, t("col.size")),
+        (SortColumn::Modified, t("col.modified")),
     ];
     for (column, label) in columns {
         if ui.radio(sort.column == column, label).clicked() {
@@ -61,7 +61,7 @@ fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {
         }
     }
     ui.separator();
-    for (ascending, label) in [(true, "Ascending"), (false, "Descending")] {
+    for (ascending, label) in [(true, t("sort.ascending")), (false, t("sort.descending"))] {
         if ui.radio(sort.ascending == ascending, label).clicked() {
             actions.push(Action::SetSort(SortSpec { ascending, ..sort }));
         }

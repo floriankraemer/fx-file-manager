@@ -6,7 +6,9 @@ use eframe::egui::{
     self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
     text::{CCursor, CCursorRange},
 };
-use fx_app::{EntryDetails, Explorer, format_size, format_time, stem_chars, validate_name};
+use fx_app::{
+    EntryDetails, Explorer, format_size, format_time, stem_chars, t, tn, tr, validate_name,
+};
 use fx_core::EntryKind;
 use std::path::PathBuf;
 
@@ -129,21 +131,24 @@ fn delete(
 ) -> bool {
     modal(ctx, "delete-dialog", |ui| {
         let count = paths.len();
-        let subject = if count == 1 {
-            format!("\"{}\"", file_name(&paths[0]))
+        let name = file_name(&paths[0]);
+        let (single, multi) = if permanent {
+            (
+                "dialog.delete.permanent_single",
+                "dialog.delete.permanent_multi",
+            )
         } else {
-            format!("{count} items")
+            ("dialog.delete.trash_single", "dialog.delete.trash_multi")
+        };
+        let title = if count == 1 {
+            tr(single, &[("name", &name)])
+        } else {
+            tn(multi, count as u64, &[])
         };
         if permanent {
-            ui.label(
-                RichText::new(format!(
-                    "Permanently delete {subject}? This cannot be undone."
-                ))
-                .heading()
-                .color(theme::error()),
-            );
+            ui.label(RichText::new(title).heading().color(theme::error()));
         } else {
-            ui.heading(format!("Move {subject} to Trash?"));
+            ui.heading(title);
         }
         if count > 1 {
             ui.add_space(6.0);
@@ -152,20 +157,23 @@ fn delete(
             }
             if count > LISTED_NAMES {
                 ui.label(
-                    RichText::new(format!("…and {} more", count - LISTED_NAMES))
-                        .color(theme::dim()),
+                    RichText::new(tr(
+                        "dialog.delete.more",
+                        &[("n", &(count - LISTED_NAMES).to_string())],
+                    ))
+                    .color(theme::dim()),
                 );
             }
         }
         let mut close = false;
         button_row(ui, |ui| {
             let (label, color) = if permanent {
-                ("Delete permanently", theme::error())
+                (t("button.delete_permanently"), theme::error())
             } else {
-                ("Move to Trash", theme::accent())
+                (t("button.move_to_trash"), theme::accent())
             };
             let confirm = ui.add(Button::new(RichText::new(label).color(color)));
-            let cancel = ui.add(Button::new("Cancel"));
+            let cancel = ui.add(Button::new(t("button.cancel")));
             default_focus(ui, if permanent { &cancel } else { &confirm });
             if confirm.clicked() {
                 let unchanged = rows
@@ -192,7 +200,7 @@ fn rename(
     fresh: &mut bool,
 ) -> bool {
     modal(ctx, "rename-dialog", |ui| {
-        ui.heading("Rename");
+        ui.heading(t("cmd.rename"));
         ui.add_space(6.0);
         let selection = stem_chars(text);
         let mut close = false;
@@ -202,8 +210,8 @@ fn rename(
             ui.colored_label(theme::error(), err.to_string());
         }
         button_row(ui, |ui| {
-            let ok = ui.add_enabled(error.is_none(), Button::new("Rename"));
-            close |= ui.button("Cancel").clicked();
+            let ok = ui.add_enabled(error.is_none(), Button::new(t("button.rename")));
+            close |= ui.button(t("button.cancel")).clicked();
             if error.is_none() && (ok.clicked() || submit) {
                 if explorer.entry_path(row).as_ref() == Some(path) && *text != file_name(path) {
                     explorer.rename(row, text);
@@ -217,7 +225,7 @@ fn rename(
 
 fn new_folder(ctx: &Context, explorer: &mut Explorer, text: &mut String, fresh: &mut bool) -> bool {
     modal(ctx, "new-folder-dialog", |ui| {
-        ui.heading("New folder");
+        ui.heading(t("cmd.new_folder"));
         ui.add_space(6.0);
         let mut close = false;
         let submit = name_field(ui, text, fresh, None);
@@ -226,8 +234,8 @@ fn new_folder(ctx: &Context, explorer: &mut Explorer, text: &mut String, fresh: 
             ui.colored_label(theme::error(), err.to_string());
         }
         button_row(ui, |ui| {
-            let ok = ui.add_enabled(error.is_none(), Button::new("Create"));
-            close |= ui.button("Cancel").clicked();
+            let ok = ui.add_enabled(error.is_none(), Button::new(t("button.create")));
+            close |= ui.button(t("button.cancel")).clicked();
             if error.is_none() && (ok.clicked() || submit) {
                 explorer.create_folder(text);
                 close = true;
@@ -267,17 +275,17 @@ fn name_field(
 
 fn properties(ctx: &Context, details: &EntryDetails) -> bool {
     modal(ctx, "properties-dialog", |ui| {
-        ui.heading("Properties");
+        ui.heading(t("cmd.properties"));
         ui.add_space(6.0);
         let kind = match details.kind {
-            EntryKind::Dir => "Folder",
-            EntryKind::File => "File",
-            EntryKind::Symlink => "Symbolic link",
-            EntryKind::Other => "Other",
+            EntryKind::Dir => t("kind.folder"),
+            EntryKind::File => t("kind.file"),
+            EntryKind::Symlink => t("kind.symlink"),
+            EntryKind::Other => t("kind.misc"),
         };
         let size = details.size.map_or_else(
             || "—".to_owned(),
-            |bytes| format!("{} ({bytes} bytes)", format_size(bytes)),
+            |bytes| tn("prop.size_value", bytes, &[("size", &format_size(bytes))]),
         );
         let modified = details.modified.map_or_else(|| "—".to_owned(), format_time);
         let path = details.path.display().to_string();
@@ -290,19 +298,19 @@ fn properties(ctx: &Context, details: &EntryDetails) -> bool {
                     ui.label(value);
                     ui.end_row();
                 };
-                row(ui, "Name", &details.name);
-                ui.label(RichText::new("Path").color(theme::dim()));
+                row(ui, t("prop.name"), &details.name);
+                ui.label(RichText::new(t("prop.path")).color(theme::dim()));
                 // A `&str` buffer is read-only but still selectable and copyable.
                 ui.add(TextEdit::singleline(&mut path.as_str()).desired_width(260.0));
                 ui.end_row();
-                row(ui, "Type", kind);
-                row(ui, "Size", &size);
-                row(ui, "Modified", &modified);
-                row(ui, "Permissions", &details.permissions);
+                row(ui, t("prop.type"), kind);
+                row(ui, t("prop.size"), &size);
+                row(ui, t("prop.modified"), &modified);
+                row(ui, t("prop.permissions"), &details.permissions);
             });
         let mut close = false;
         button_row(ui, |ui| {
-            let button = ui.button("Close");
+            let button = ui.button(t("button.close"));
             default_focus(ui, &button);
             close = button.clicked();
         });

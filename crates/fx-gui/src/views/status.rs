@@ -1,6 +1,6 @@
 use crate::theme;
 use eframe::egui::{Layout, Ui};
-use fx_app::{Explorer, LoadState, format_millis, format_size};
+use fx_app::{Explorer, LoadState, format_millis, format_size, tn, tr};
 use fx_core::EntryKind;
 
 pub fn show(ui: &mut Ui, explorer: &Explorer) {
@@ -16,24 +16,27 @@ pub fn show(ui: &mut Ui, explorer: &Explorer) {
     };
     ui.horizontal(|ui| {
         let counts = [
-            (view.files, "files"),
-            (view.dirs, "dirs"),
-            (view.symlinks, "links"),
-            (view.others, "other"),
+            (view.files, "status.files"),
+            (view.dirs, "status.dirs"),
+            (view.symlinks, "status.links"),
+            (view.others, "status.misc"),
         ]
         .iter()
         .filter(|(n, _)| *n > 0)
-        .map(|(n, label)| format!("{n} {label}"))
+        .map(|&(n, key)| tn(key, n as u64, &[]))
         .collect::<Vec<_>>()
         .join(" · ");
         ui.colored_label(
             theme::dim(),
-            format!(
-                "{} items · {counts} · {} · storage: {} · listed in {}",
-                tab.order().len(),
-                format_size(view.total_file_bytes),
-                view.storage,
-                format_millis(view.elapsed),
+            tr(
+                "status.summary",
+                &[
+                    ("items", &tn("status.items", tab.order().len() as u64, &[])),
+                    ("counts", &counts),
+                    ("size", &format_size(view.total_file_bytes)),
+                    ("storage", &view.storage.to_string()),
+                    ("time", &format_millis(view.elapsed)),
+                ],
             ),
         );
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {

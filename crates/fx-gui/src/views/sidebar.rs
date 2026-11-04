@@ -3,7 +3,7 @@ use super::icons::{self, Glyph};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
-use fx_app::{Children, Explorer, Place, PlaceGroup};
+use fx_app::{Children, Explorer, Place, PlaceGroup, t};
 use std::path::{Path, PathBuf};
 
 const GROUPS: [PlaceGroup; 2] = [PlaceGroup::Places, PlaceGroup::Drives];
@@ -169,17 +169,17 @@ fn node(
     }
 
     resp.context_menu(|ui| {
-        if menu_item(ui, "Open", "", true) {
+        if menu_item(ui, t("cmd.open"), "", true) {
             *action = Some(Action::Navigate(path.to_path_buf()));
         }
-        if menu_item(ui, "Open in new tab", "", true) {
+        if menu_item(ui, t("cmd.open_new_tab"), "", true) {
             *action = Some(Action::OpenInNewTab(path.to_path_buf()));
         }
         ui.separator();
-        if menu_item(ui, "Paste", "Ctrl+V", explorer.can_paste()) {
+        if menu_item(ui, t("cmd.paste"), "Ctrl+V", explorer.can_paste()) {
             *action = Some(Action::PasteInto(path.to_path_buf()));
         }
-        if menu_item(ui, "Copy path", "", true) {
+        if menu_item(ui, t("cmd.copy_path"), "", true) {
             *action = Some(Action::CopyPath(path.to_path_buf()));
         }
     });
