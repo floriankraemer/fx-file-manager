@@ -17,6 +17,8 @@ pub struct App {
     places: Vec<Place>,
     scroll_to_selection: bool,
     dialog: Option<Dialog>,
+    /// The settings window, shown natively while open.
+    settings: Option<Box<views::settings::State>>,
     toast: Option<Toast>,
     transfers: views::transfers::State,
     applied_look: Look,
@@ -51,6 +53,7 @@ impl App {
             places: places(),
             scroll_to_selection: false,
             dialog: None,
+            settings: None,
             toast: None,
             transfers: views::transfers::State::default(),
             applied_look,
@@ -102,8 +105,12 @@ impl App {
                 self.open_dialog(dialog);
             }
             Action::OpenSettings => {
-                let dialog = Dialog::settings(ex);
-                self.open_dialog(Some(dialog));
+                if self.settings.is_some() {
+                    views::settings::focus(ctx);
+                } else if self.dialog.is_none() {
+                    let state = views::settings::State::new(ex.settings());
+                    self.settings = Some(Box::new(state));
+                }
             }
             Action::OpenAbout => self.open_dialog(Some(Dialog::About)),
             Action::SelectAll => ex.active_mut().select_all(),
@@ -217,6 +224,19 @@ impl App {
     }
 }
 
+/// Covers the main window while settings is open; true when the user clicked it.
+fn block_input(ctx: &Context) -> bool {
+    let rect = ctx.content_rect();
+    egui::Area::new(egui::Id::unique("settings-blocker"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.min)
+        .show(ctx, |ui| {
+            ui.allocate_exact_size(rect.size(), egui::Sense::click()).1
+        })
+        .inner
+        .clicked()
+}
+
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
@@ -235,7 +255,8 @@ impl eframe::App for App {
         }
         self.was_focused = focused;
         let mut actions = Vec::new();
-        self.scroll_to_selection = self.dialog.is_none() && self.handle_keys(ctx, &mut actions);
+        self.scroll_to_selection =
+            self.dialog.is_none() && self.settings.is_none() && self.handle_keys(ctx, &mut actions);
         for action in actions {
             self.dispatch(ctx, action);
         }
@@ -301,6 +322,13 @@ impl eframe::App for App {
             && dialogs::show(&ctx, dialog, &mut self.explorer)
         {
             self.dialog = None;
+        }
+        if let Some(state) = &mut self.settings {
+            if views::settings::show(&ctx, &mut self.explorer, state) {
+                self.settings = None;
+            } else if !state.embedded() && block_input(&ctx) {
+                views::settings::focus(&ctx);
+            }
         }
         if let Some(current) = &self.toast
             && !toast::show(&ctx, current)

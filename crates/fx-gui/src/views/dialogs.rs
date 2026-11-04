@@ -1,6 +1,6 @@
-//! Modal dialogs: delete confirmation, rename, new folder, properties, settings, paste conflicts.
+//! Modal dialogs: delete confirmation, rename, new folder, properties, paste conflicts.
 
-use super::{about, settings};
+use super::about;
 use crate::theme;
 use eframe::egui::{
     self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
@@ -33,7 +33,6 @@ pub enum Dialog {
         fresh: bool,
     },
     Properties(EntryDetails),
-    Settings(Box<settings::State>),
     About,
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
     Conflict {
@@ -91,10 +90,6 @@ impl Dialog {
             })
         })
     }
-
-    pub fn settings(explorer: &Explorer) -> Self {
-        Self::Settings(Box::new(settings::State::new(explorer.settings())))
-    }
 }
 
 /// Draws the dialog. Returns true when it should be closed.
@@ -113,7 +108,6 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
         } => rename(ctx, explorer, *row, path, text, fresh),
         Dialog::NewFolder { text, fresh } => new_folder(ctx, explorer, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
-        Dialog::Settings(state) => settings::show(ctx, explorer, state),
         Dialog::About => about::show(ctx),
         Dialog::Conflict {
             transfer,
