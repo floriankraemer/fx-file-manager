@@ -6,17 +6,18 @@ use crate::ops::{
 use crate::settings::Settings;
 use crate::tab::{LoadState, Tab};
 use crate::tree::{Children, FolderTree, TreeNode, list_children};
-use crate::view::DirView;
-use fx_core::{ListError, ListOptions, list_dir};
-use std::collections::VecDeque;
+use crate::view::{DirView, needs_relist};
+use fx_core::{EntryKind, ListError, ListOptions, StorageKind, list_dir};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(target_os = "windows")]
 const OPENER: &str = "explorer";
@@ -29,6 +30,27 @@ struct Completed {
     tab_id: u64,
     generation: u64,
     result: Result<DirView, ListError>,
+}
+
+/// How often the open folder's mtime is checked for external changes (see [`Explorer::poll`]).
+pub const REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// At most this many subfolders are preloaded, in display order.
+const PRELOAD_MAX: usize = 16;
+/// Listings larger than this are not cached; they would cost more memory than the instant paint is worth.
+const PRELOAD_MAX_ENTRIES: usize = 20_000;
+
+struct PreloadDone {
+    generation: u64,
+    path: PathBuf,
+    result: Result<DirView, ListError>,
+}
+
+/// Outcome of the background mtime check of a tab's folder.
+struct StatChecked {
+    tab_id: u64,
+    generation: u64,
+    stale: bool,
 }
 
 struct TreeLoaded {
@@ -61,6 +83,19 @@ pub struct Explorer {
     /// Internal clipboard set by copy/cut: absolute paths and whether paste should move them.
     // ponytail: app-internal only, not the OS file clipboard; add per-platform clipboard integration if cross-app paste is needed
     clipboard: Option<(Vec<PathBuf>, bool)>,
+    preload_tx: Sender<PreloadDone>,
+    preload_rx: Receiver<PreloadDone>,
+    /// Listings of the active folder's subfolders; only an optimistic first paint, a fresh load always follows.
+    preloaded: HashMap<PathBuf, DirView>,
+    /// Bumped to cancel the running preload thread and to drop its in-flight results.
+    preload_gen: Arc<AtomicU64>,
+    /// Folder whose subfolders the current preload covers; `None` once it was cancelled or never started.
+    preload_parent: Option<PathBuf>,
+    stat_tx: Sender<StatChecked>,
+    stat_rx: Receiver<StatChecked>,
+    /// At most one mtime check runs at a time.
+    stat_in_flight: bool,
+    next_tick: Instant,
 }
 
 impl Explorer {
@@ -77,6 +112,8 @@ impl Explorer {
         let (tx, rx) = mpsc::channel();
         let (job_tx, job_rx) = mpsc::channel();
         let (tree_tx, tree_rx) = mpsc::channel();
+        let (preload_tx, preload_rx) = mpsc::channel();
+        let (stat_tx, stat_rx) = mpsc::channel();
         let mut explorer = Self {
             tabs: Vec::new(),
             active: 0,
@@ -95,6 +132,15 @@ impl Explorer {
             settings_path: Settings::path(),
             notices: VecDeque::new(),
             clipboard: None,
+            preload_tx,
+            preload_rx,
+            preloaded: HashMap::new(),
+            preload_gen: Arc::new(AtomicU64::new(0)),
+            preload_parent: None,
+            stat_tx,
+            stat_rx,
+            stat_in_flight: false,
+            next_tick: Instant::now() + REVALIDATE_INTERVAL,
         };
         explorer.new_tab(start);
         explorer
@@ -111,7 +157,11 @@ impl Explorer {
         for tab in &mut self.tabs {
             tab.set_show_hidden(settings.show_hidden);
         }
+        let preload_changed = settings.preload_subfolders != self.settings.preload_subfolders;
         self.settings = settings;
+        if preload_changed {
+            self.maybe_preload();
+        }
         if hidden_changed {
             self.tree_generation += 1;
             let cached: Vec<PathBuf> = self.tree.children.keys().cloned().collect();
@@ -251,6 +301,19 @@ impl Explorer {
         self.start_load(index);
     }
 
+    /// Re-lists the active tab's folder without clearing the view, so there is no loading flash and the selection stays.
+    /// The result arrives through [`Explorer::poll`]; navigating meanwhile discards it. Does nothing while the tab is loading.
+    /// Poll-based detection only sees directory mtime changes (files added/removed/renamed); call this on window focus
+    /// to also pick up size/content changes of existing files.
+    // ponytail: mtime polling, not a watcher; a `notify` hint calling this method is the upgrade path
+    pub fn revalidate(&mut self) {
+        let tab = self.active();
+        if matches!(tab.state(), LoadState::Loading) {
+            return;
+        }
+        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+    }
+
     /// Enters a directory (or a symlink to one); opens anything else with the system handler.
     /// Does nothing while the tab is not loaded.
     pub fn activate(&mut self, row: usize) {
@@ -382,12 +445,45 @@ impl Explorer {
     /// Returns true if any tab or notice changed.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
+        let active_id = self.active().id();
+        let mut active_loaded = false;
         while let Ok(done) = self.rx.try_recv() {
             let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id() == done.tab_id) else {
                 continue;
             };
-            changed |= tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
+            let ok = done.result.is_ok();
+            let applied = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
+            active_loaded |= applied && ok && tab.id() == active_id;
+            changed |= applied;
         }
+        // A revalidation of the folder already being preloaded keeps that preload: cached views are
+        // only a first paint that a fresh load always replaces, so redoing up to PRELOAD_MAX listings
+        // on every focus change or mtime tick would buy nothing.
+        if active_loaded && self.preload_parent.as_deref() != Some(self.active().path()) {
+            self.maybe_preload();
+        }
+        while let Ok(done) = self.preload_rx.try_recv() {
+            if done.generation == self.preload_gen.load(Ordering::Acquire)
+                && let Ok(view) = done.result
+                && view.listing.entries.len() <= PRELOAD_MAX_ENTRIES
+            {
+                self.preloaded.insert(done.path, view);
+            }
+        }
+        while let Ok(checked) = self.stat_rx.try_recv() {
+            self.stat_in_flight = false;
+            if !checked.stale {
+                continue;
+            }
+            // A navigation or reload since the check bumped the generation and made it moot.
+            if let Some(tab) = self.tabs.iter().find(|tab| tab.id() == checked.tab_id)
+                && tab.generation() == checked.generation
+                && !matches!(tab.state(), LoadState::Loading)
+            {
+                self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+            }
+        }
+        self.tick_revalidate();
         while let Ok(done) = self.tree_rx.try_recv() {
             if done.generation != self.tree_generation {
                 continue;
@@ -409,6 +505,14 @@ impl Explorer {
 
     fn finish_job(&mut self, outcome: Outcome) {
         self.job_in_flight = false;
+        self.preload_gen.fetch_add(1, Ordering::AcqRel);
+        self.preload_parent = None;
+        self.preloaded.retain(|cached, _| {
+            !outcome
+                .touched
+                .iter()
+                .any(|t| t.starts_with(cached) || cached.starts_with(t))
+        });
         self.notices.push_back(outcome.notice);
         for path in &outcome.touched {
             if self.tree.children.contains_key(path) {
@@ -473,12 +577,23 @@ impl Explorer {
         let generation = tab.begin_load();
         let tab_id = tab.id();
         let path = tab.path().to_path_buf();
+        // Navigating cancels a running preload; the next completed load starts a new one.
+        self.preload_gen.fetch_add(1, Ordering::AcqRel);
+        self.preload_parent = None;
+        if self.settings.preload_subfolders
+            && let Some(view) = self.preloaded.remove(&path)
+        {
+            // Same generation as the fresh load below, which then replaces this possibly stale view.
+            self.tabs[index].apply_load(generation, Ok(view));
+        }
+        self.spawn_load(tab_id, generation, path);
+    }
+
+    fn spawn_load(&self, tab_id: u64, generation: u64, path: PathBuf) {
         let tx = self.tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
-            let started = Instant::now();
-            let result = list_dir(&path, &list_options())
-                .map(|listed| DirView::new(path, listed, started.elapsed()));
+            let result = list_view(path);
             // A send only fails once the Explorer is gone, and then nobody needs the result.
             let _ = tx.send(Completed {
                 tab_id,
@@ -488,6 +603,101 @@ impl Explorer {
             wake();
         });
     }
+
+    /// Cancels any running preload, then lists the active folder's subfolders one by one in the background.
+    /// Skipped when disabled, on network storage, or unless the active tab is loaded.
+    fn maybe_preload(&mut self) {
+        self.preload_gen.fetch_add(1, Ordering::AcqRel);
+        self.preloaded.clear();
+        self.preload_parent = None;
+        if !self.settings.preload_subfolders {
+            return;
+        }
+        let tab = self.active();
+        let LoadState::Loaded(view) = tab.state() else {
+            return;
+        };
+        if view.storage == StorageKind::Network {
+            return;
+        }
+        // Symlinks have their own kind, so only real directories are listed.
+        let folders: Vec<PathBuf> = tab
+            .order()
+            .iter()
+            .map(|&i| &view.listing.entries[i as usize])
+            .filter(|entry| entry.kind == EntryKind::Dir)
+            .map(|entry| view.path.join(view.listing.name(entry)))
+            .take(PRELOAD_MAX)
+            .collect();
+        self.preload_parent = Some(view.path.clone());
+        let generation = self.preload_gen.load(Ordering::Acquire);
+        let current = Arc::clone(&self.preload_gen);
+        let tx = self.preload_tx.clone();
+        let wake = Arc::clone(&self.wake);
+        thread::spawn(move || {
+            for path in folders {
+                if current.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                let result = list_view(path.clone());
+                if current.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                let _ = tx.send(PreloadDone {
+                    generation,
+                    path,
+                    result,
+                });
+                wake();
+            }
+        });
+    }
+
+    /// Every `REVALIDATE_INTERVAL`, stats the active folder on a worker thread and re-lists it if it changed.
+    fn tick_revalidate(&mut self) {
+        let now = Instant::now();
+        if now < self.next_tick {
+            return;
+        }
+        self.next_tick = now + REVALIDATE_INTERVAL;
+        if self.stat_in_flight {
+            return;
+        }
+        let tab = self.active();
+        let LoadState::Loaded(view) = tab.state() else {
+            return;
+        };
+        let (tab_id, generation) = (tab.id(), tab.generation());
+        let (path, mtime, listed_at) = (tab.path().to_path_buf(), view.mtime, view.listed_at);
+        self.stat_in_flight = true;
+        let tx = self.stat_tx.clone();
+        let wake = Arc::clone(&self.wake);
+        thread::spawn(move || {
+            let stale = needs_relist(mtime, listed_at, dir_mtime(&path));
+            let _ = tx.send(StatChecked {
+                tab_id,
+                generation,
+                stale,
+            });
+            // Only a stale folder needs a repaint; otherwise the next idle tick clears the in-flight flag.
+            if stale {
+                wake();
+            }
+        });
+    }
+}
+
+/// Stats the folder before listing it, so a change made while listing leaves the recorded mtime older than the folder's.
+fn list_view(path: PathBuf) -> Result<DirView, ListError> {
+    let listed_at = SystemTime::now();
+    let mtime = dir_mtime(&path);
+    let started = Instant::now();
+    list_dir(&path, &list_options())
+        .map(|listed| DirView::new(path, listed, started.elapsed(), mtime, listed_at))
+}
+
+fn dir_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 /// Listing is sorted by the view model, so the backend's own sort is skipped.
@@ -1121,5 +1331,243 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(explorer.tree().is_expanded(root));
+    }
+
+    /// Polls until `done` holds; bounded so a broken change fails instead of hanging.
+    fn wait_for(explorer: &mut Explorer, what: &str, done: impl Fn(&Explorer) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(explorer) {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn cached(explorer: &Explorer) -> Vec<String> {
+        let mut names: Vec<String> = explorer
+            .preloaded
+            .keys()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Explorer whose settings are saved into `dir`, never into the user's real config.
+    fn explorer_with(dir: &Path, settings: Settings) -> Explorer {
+        let mut explorer = Explorer::with_settings(dir.to_path_buf(), settings, || {});
+        explorer.settings_path = Some(dir.join("cfg").join("settings.toml"));
+        settle(&mut explorer);
+        explorer
+    }
+
+    #[test]
+    fn preload_caches_subfolders_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        fs::create_dir(root.join("b")).unwrap();
+        fs::write(root.join("f.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 2);
+        assert_eq!(cached(&explorer), ["a", "b"]);
+    }
+
+    #[test]
+    fn preloaded_folder_paints_instantly_then_refreshes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let child = root.join("child");
+        fs::create_dir(&child).unwrap();
+        fs::write(child.join("old.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+
+        fs::write(child.join("new.txt"), b"x").unwrap();
+        explorer.navigate(child);
+        assert_eq!(names(&explorer), ["old.txt"], "painted from the cache");
+        settle(&mut explorer);
+        wait_for(&mut explorer, "fresh listing", |e| {
+            names(e).contains(&"new.txt".to_owned())
+        });
+    }
+
+    #[test]
+    fn disabled_preload_caches_nothing_and_navigation_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        let settings = Settings {
+            preload_subfolders: false,
+            ..Settings::default()
+        };
+        let mut explorer = explorer_with(root, settings);
+        for _ in 0..50 {
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(explorer.preloaded.is_empty());
+        explorer.navigate(root.join("a"));
+        assert!(matches!(explorer.active().state(), LoadState::Loading));
+    }
+
+    #[test]
+    fn stale_preload_results_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+        explorer.cancel_for_test();
+        let stale = explorer.preload_gen.load(Ordering::Acquire) - 1;
+        let listed = list_view(root.join("a"));
+        explorer
+            .preload_tx
+            .send(PreloadDone {
+                generation: stale,
+                path: root.join("a"),
+                result: listed,
+            })
+            .unwrap();
+        explorer.poll();
+        assert!(explorer.preloaded.is_empty());
+    }
+
+    impl Explorer {
+        /// Simulates a newer preload generation superseding the running one.
+        fn cancel_for_test(&mut self) {
+            self.preload_gen.fetch_add(1, Ordering::AcqRel);
+            self.preloaded.clear();
+        }
+    }
+
+    #[test]
+    fn preload_respects_the_folder_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for i in 0..PRELOAD_MAX + 5 {
+            fs::create_dir(root.join(format!("d{i:02}"))).unwrap();
+        }
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| {
+            e.preloaded.len() == PRELOAD_MAX
+        });
+        for _ in 0..50 {
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(explorer.preloaded.len(), PRELOAD_MAX);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_folders_are_not_preloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("real")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| !e.preloaded.is_empty());
+        for _ in 0..50 {
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(cached(&explorer), ["real"]);
+    }
+
+    #[test]
+    fn deleting_evicts_the_cached_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        fs::create_dir(root.join("b")).unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 2);
+        let a = row_of(&explorer, "a");
+        explorer.delete(&[a], true);
+        settle(&mut explorer);
+        assert!(!explorer.preloaded.contains_key(&root.join("a")));
+    }
+
+    #[test]
+    fn toggling_the_setting_clears_and_repopulates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        let mut explorer = explorer_with(root, Settings::default());
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+
+        explorer.set_settings(Settings {
+            preload_subfolders: false,
+            ..Settings::default()
+        });
+        assert!(explorer.preloaded.is_empty());
+        explorer.set_settings(Settings::default());
+        wait_for(&mut explorer, "repopulate", |e| e.preloaded.len() == 1);
+    }
+
+    #[test]
+    fn revalidate_picks_up_external_files_without_a_loading_flash() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.active_mut().select(Some(0));
+
+        fs::write(root.join("b.txt"), b"x").unwrap();
+        explorer.revalidate();
+        assert!(matches!(explorer.active().state(), LoadState::Loaded(_)));
+        wait_for(&mut explorer, "revalidated listing", |e| {
+            names(e).contains(&"b.txt".to_owned())
+        });
+        assert_eq!(selected_names(&explorer), ["a.txt"], "selection survives");
+    }
+
+    #[test]
+    fn revalidate_keeps_the_running_preload() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        let mut explorer = explorer_in(root);
+        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+        let generation = explorer.preload_gen.load(Ordering::Acquire);
+
+        fs::write(root.join("new.txt"), b"x").unwrap();
+        explorer.revalidate();
+        wait_for(&mut explorer, "revalidated listing", |e| {
+            names(e).contains(&"new.txt".to_owned())
+        });
+        assert_eq!(explorer.preload_gen.load(Ordering::Acquire), generation);
+        assert_eq!(cached(&explorer), ["a"]);
+    }
+
+    #[test]
+    fn navigating_discards_a_pending_revalidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::write(root.join("sub").join("inner.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.revalidate();
+        explorer.navigate(root.join("sub"));
+        settle(&mut explorer);
+        for _ in 0..50 {
+            explorer.poll();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(explorer.active().path(), root.join("sub"));
+        assert_eq!(names(&explorer), ["inner.txt"]);
+    }
+
+    #[test]
+    fn tick_notices_external_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut explorer = explorer_in(root);
+        fs::write(root.join("late.txt"), b"x").unwrap();
+        explorer.next_tick = Instant::now();
+        wait_for(&mut explorer, "tick", |e| {
+            names(e).contains(&"late.txt".to_owned())
+        });
     }
 }

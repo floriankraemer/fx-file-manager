@@ -362,6 +362,17 @@ fn settings(
             );
         }
 
+        section(ui, "Performance");
+        ui.checkbox(
+            &mut draft.preload_subfolders,
+            "Preload subfolders in the background",
+        );
+        ui.label(
+            RichText::new("Opens subfolders instantly; listings are always re-checked.")
+                .small()
+                .color(theme::dim()),
+        );
+
         section(ui, "Appearance");
         ui.horizontal(|ui| {
             ui.label("Theme");

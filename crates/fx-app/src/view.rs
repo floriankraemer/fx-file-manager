@@ -4,7 +4,7 @@ use crate::format::extension;
 use fx_core::{Entry, EntryKind, Listed, Listing, StorageKind, natural_cmp};
 use std::cmp::Ordering;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub struct DirView {
@@ -23,10 +23,41 @@ pub struct DirView {
     pub others: usize,
     /// Sum of sizes of `File` entries.
     pub total_file_bytes: u64,
+    /// Directory mtime, stat'd before the listing started so a change during listing is seen later.
+    /// `None` when the filesystem does not report it.
+    pub mtime: Option<SystemTime>,
+    /// Wall-clock time when the listing started; compared with `mtime` to spot racy stamps.
+    pub listed_at: SystemTime,
+}
+
+/// A directory mtime this close to the listing start may have been shared by a change we missed
+/// (coarse timestamps, e.g. FAT/SMB), so the listing cannot be trusted as current. Same idea as git's racy index entries.
+pub(crate) const RACY_WINDOW: Duration = Duration::from_secs(2);
+
+/// Whether a folder listed with (`mtime`, `listed_at`) must be listed again, given its `current` mtime.
+pub(crate) fn needs_relist(
+    mtime: Option<SystemTime>,
+    listed_at: SystemTime,
+    current: Option<SystemTime>,
+) -> bool {
+    if mtime != current {
+        return true;
+    }
+    mtime.is_some_and(|m| {
+        listed_at
+            .duration_since(m)
+            .map_or(true, |age| age < RACY_WINDOW)
+    })
 }
 
 impl DirView {
-    pub(crate) fn new(path: PathBuf, listed: Listed, elapsed: Duration) -> Self {
+    pub(crate) fn new(
+        path: PathBuf,
+        listed: Listed,
+        elapsed: Duration,
+        mtime: Option<SystemTime>,
+        listed_at: SystemTime,
+    ) -> Self {
         let Listed {
             listing, storage, ..
         } = listed;
@@ -52,6 +83,8 @@ impl DirView {
             symlinks,
             others,
             total_file_bytes,
+            mtime,
+            listed_at,
         }
     }
 }
@@ -196,7 +229,13 @@ mod tests {
             storage: StorageKind::Unknown,
             strategy: fx_core::Strategy::for_kind(StorageKind::Unknown, 1),
         };
-        let v = DirView::new(PathBuf::new(), listed, Duration::ZERO);
+        let v = DirView::new(
+            PathBuf::new(),
+            listed,
+            Duration::ZERO,
+            None,
+            SystemTime::now(),
+        );
         assert_eq!((v.files, v.dirs, v.symlinks, v.others), (1, 1, 2, 1));
     }
 
@@ -217,5 +256,32 @@ mod tests {
             .map(|&i| l.name(&l.entries[i as usize]).to_owned())
             .collect();
         assert_eq!(names, ["z.d", "a.rs", "b.TXT", "c.txt"]);
+    }
+
+    #[test]
+    fn relist_decision_handles_changed_and_racy_stamps() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let old = at - Duration::from_secs(60);
+        let recent = at - Duration::from_millis(500);
+        let later = at + Duration::from_secs(5);
+        // unchanged and old: trust the listing
+        assert!(!needs_relist(Some(old), at, Some(old)));
+        // mtime moved either way: relist
+        assert!(needs_relist(Some(old), at, Some(later)));
+        assert!(needs_relist(
+            Some(old),
+            at,
+            Some(old - Duration::from_secs(1))
+        ));
+        // unchanged but within the racy window (or in the future): relist
+        assert!(needs_relist(Some(recent), at, Some(recent)));
+        assert!(needs_relist(Some(later), at, Some(later)));
+        // exactly at the window edge is safe
+        let edge = at - RACY_WINDOW;
+        assert!(!needs_relist(Some(edge), at, Some(edge)));
+        // no mtime support: never poll-relist, but appearing/disappearing stamps do
+        assert!(!needs_relist(None, at, None));
+        assert!(needs_relist(None, at, Some(old)));
+        assert!(needs_relist(Some(old), at, None));
     }
 }

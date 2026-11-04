@@ -23,6 +23,8 @@ pub struct Settings {
     pub tree_single_click: bool,
     /// Open folders in the list with a single click instead of a double click.
     pub list_single_click: bool,
+    /// List the immediate subfolders in the background so entering one paints instantly.
+    pub preload_subfolders: bool,
 }
 
 impl Default for Settings {
@@ -38,6 +40,7 @@ impl Default for Settings {
             show_ext_column: true,
             tree_single_click: true,
             list_single_click: false,
+            preload_subfolders: true,
         }
     }
 }
@@ -160,6 +163,7 @@ mod tests {
             show_ext_column: false,
             tree_single_click: false,
             list_single_click: true,
+            preload_subfolders: false,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -196,6 +200,7 @@ mod tests {
         assert_eq!(loaded.theme, ThemeChoice::Light);
         assert!(loaded.confirm_delete, "missing fields keep their defaults");
         assert!(loaded.use_trash);
+        assert!(loaded.preload_subfolders);
     }
 
     #[test]

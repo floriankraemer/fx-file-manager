@@ -15,6 +15,7 @@ pub struct App {
     dialog: Option<Dialog>,
     toast: Option<Toast>,
     applied_theme: fx_app::ThemeChoice,
+    was_focused: bool,
 }
 
 impl App {
@@ -29,6 +30,7 @@ impl App {
             dialog: None,
             toast: None,
             applied_theme,
+            was_focused: true,
         }
     }
 
@@ -191,6 +193,13 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
+        // Keep polling while idle so background revalidation results show up.
+        ctx.request_repaint_after(fx_app::REVALIDATE_INTERVAL);
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.was_focused {
+            self.explorer.revalidate();
+        }
+        self.was_focused = focused;
         let mut actions = Vec::new();
         self.scroll_to_selection = self.dialog.is_none() && self.handle_keys(ctx, &mut actions);
         for action in actions {

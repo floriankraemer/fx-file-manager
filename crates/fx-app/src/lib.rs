@@ -9,7 +9,7 @@ mod tab;
 mod tree;
 mod view;
 
-pub use explorer::Explorer;
+pub use explorer::{Explorer, REVALIDATE_INTERVAL};
 pub use format::{AgeBucket, age, extension, format_millis, format_size, format_time, stem_chars};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use places::{Place, PlaceGroup, breadcrumbs, places};

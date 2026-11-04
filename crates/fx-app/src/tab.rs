@@ -244,6 +244,10 @@ impl Tab {
         true
     }
 
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// Marks the tab as loading and returns the generation the new result must carry.
     /// The selected names are kept, so a refresh can restore the selection.
     pub(crate) fn begin_load(&mut self) -> u64 {
