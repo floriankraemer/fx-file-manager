@@ -695,10 +695,12 @@ mod unix {
             assert_clean(&copy(&src, &dst, ConflictPolicy::Skip, overrides));
             assert_eq!(fs::read(&src).unwrap(), fs::read(&dst).unwrap());
             if src_blocks * 512 < 32 << 20 {
+                // The filesystem decides how much of the source is allocated (APFS keeps more than
+                // the written block); the copy must not allocate more than that, plus one MiB.
                 let blocks = fs::metadata(&dst).unwrap().blocks();
                 assert!(
-                    blocks * 512 < 4 << 20,
-                    "{blocks} blocks: holes were filled ({method:?})"
+                    blocks <= src_blocks + 2048,
+                    "{blocks} blocks vs {src_blocks} in the source: holes were filled ({method:?})"
                 );
             }
         }
