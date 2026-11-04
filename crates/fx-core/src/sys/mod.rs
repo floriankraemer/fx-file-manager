@@ -6,6 +6,7 @@
 //! /// The backend owns enrichment so it can reuse state from enumeration (Linux: the dirfd).
 //! pub(crate) fn enumerate(dir: &Path, strategy: &Strategy, metadata: bool, out: &mut Listing) -> io::Result<()>;
 //! pub(crate) fn detect_storage(path: &Path) -> StorageKind;
+//! pub(crate) fn volume_info(path: &Path) -> VolumeInfo;
 //! ```
 //!
 //! `hidden` and `inode` are always filled (dotfile / FILE_ATTRIBUTE_HIDDEN / UF_HIDDEN).
@@ -40,5 +41,17 @@ pub(crate) mod fallback {
 
     pub(crate) fn detect_storage(_path: &Path) -> StorageKind {
         StorageKind::Unknown
+    }
+
+    pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
+        #[cfg(unix)]
+        let id =
+            std::fs::symlink_metadata(path).map_or(0, |m| std::os::unix::fs::MetadataExt::dev(&m));
+        #[cfg(not(unix))]
+        let id = {
+            let _ = path;
+            0
+        };
+        crate::VolumeInfo::unknown(id)
     }
 }
