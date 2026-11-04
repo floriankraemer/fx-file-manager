@@ -253,6 +253,8 @@ struct Top {
     kind: EntryKind,
     /// Source and destination are the same entry: copy as `name (2)`.
     keep_both: bool,
+    /// Bytes the item will occupy that are known without walking: a dense top-level file's size.
+    known_bytes: u64,
     src_vol: VolumeInfo,
     dst_vol: VolumeInfo,
     plan: CopyPlan,
@@ -275,6 +277,8 @@ struct Job<'a> {
     renamed: Mutex<HashMap<PathBuf, PathBuf>>,
     /// One destination folder per device written to, each flushed by the move barrier.
     dst_devices: Mutex<HashMap<u64, PathBuf>>,
+    /// Source path of each top-level item of the job, for links whose target lies inside the copied tree.
+    roots: Vec<PathBuf>,
 }
 
 pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
@@ -350,7 +354,8 @@ pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
     let mut kept_sources = Vec::new();
     let plans: Vec<CopyPlan> = groups.iter().map(|g| g.0).collect();
     for (gi, (plan, src_vol, dst_vol, tops)) in groups.iter().enumerate() {
-        let job = Job::new(sh, *plan, dst_vol, req.policy, gi == last, &items, req.op);
+        let mut job = Job::new(sh, *plan, dst_vol, req.policy, gi == last, &items, req.op);
+        job.roots = tops.iter().map(|t| t.src_parent.join(&t.name)).collect();
         match plan.schedule {
             Schedule::Streaming => job.streaming(tops),
             Schedule::TwoPhase { order } => job.two_phase(tops, order, src_vol.id == dst_vol.id),
@@ -492,6 +497,11 @@ fn prepare(
         dst_name: dst_name.to_os_string(),
         kind,
         keep_both: same_entry,
+        known_bytes: if kind == EntryKind::File && !src_meta.sparse {
+            src_meta.size
+        } else {
+            0
+        },
         src_vol,
         dst_vol,
         plan: plan.with(&req.overrides),
@@ -521,6 +531,7 @@ impl<'a> Job<'a> {
             op,
             renamed: Mutex::default(),
             dst_devices: Mutex::default(),
+            roots: Vec::new(),
         }
     }
 
@@ -829,7 +840,7 @@ impl<'a> Job<'a> {
             EntryKind::Symlink => {
                 let meta = src_dir.stat_at(name).at(ErrorOp::Copy)?;
                 let placed = self.place(e, path, &meta, ErrorOp::Copy, |n| {
-                    os::copy_symlink(src_dir, name, &meta, dst_dir, n)
+                    os::copy_symlink(src_dir, name, &meta, dst_dir, n, &self.roots)
                 })?;
                 return Ok((placed_done(placed), 0));
             }
@@ -978,6 +989,7 @@ impl<'a> Job<'a> {
     // ---- Streaming -------------------------------------------------------------------------------
 
     fn streaming(&self, tops: &[Top]) {
+        self.early_space_check(tops);
         copy_pool(self.plan.workers).install(|| {
             rayon::scope(|s| {
                 // Held while top-level items are scheduled, so the walk cannot look complete too early.
@@ -1350,17 +1362,29 @@ impl<'a> Job<'a> {
     }
 
     /// Totals are exact after the TwoPhase walk, so a shortfall is reported before any data moves.
-    /// Streaming learns sizes while copying; there a full disk pauses the job instead.
     fn check_space(&self, dst: &Path) {
-        let p = &self.sh.progress;
-        let needed = p.bytes_total.load(Ordering::Relaxed);
-        if let Some(free) = os::free_space(dst)
-            && needed > free
-        {
-            let e = io::Error::new(
-                io::ErrorKind::StorageFull,
-                format!("{needed} bytes to copy but only {free} bytes free"),
-            );
+        let needed = self.sh.progress.bytes_total.load(Ordering::Relaxed);
+        self.warn_if_short(dst, needed);
+    }
+
+    /// Streaming learns sizes while copying, so only the dense top-level files are known up front.
+    /// That is a lower bound: a shortfall against it is certain, and the job still starts (the user may
+    /// free space, or the files may be hardlinked), with a full disk pausing it later as before.
+    fn early_space_check(&self, tops: &[Top]) {
+        let mut needed: Vec<(&Path, u64)> = Vec::new();
+        for top in tops.iter().filter(|t| t.known_bytes > 0) {
+            match needed.iter_mut().find(|(d, _)| *d == top.dst_parent) {
+                Some((_, bytes)) => *bytes += top.known_bytes,
+                None => needed.push((&top.dst_parent, top.known_bytes)),
+            }
+        }
+        for (dst, bytes) in needed {
+            self.warn_if_short(dst, bytes);
+        }
+    }
+
+    fn warn_if_short(&self, dst: &Path, needed: u64) {
+        if let Some(e) = space_shortfall(needed, os::free_space(dst)) {
             self.sh.record(dst, ErrorOp::Preflight, &e, true);
         }
     }
@@ -1511,7 +1535,10 @@ impl<'a> Job<'a> {
                     // Fails if an entry appeared meanwhile, which then stays with its folder.
                     return Ok(fs::remove_dir(src).is_ok());
                 }
-                EntryKind::Symlink => fs::read_link(src)? == fs::read_link(&dst)?,
+                EntryKind::Symlink => {
+                    fs::read_link(src)? == fs::read_link(&dst)?
+                        || link_rewritten(&self.roots, src, &dst)
+                }
                 EntryKind::File => {
                     let step = u128::from(self.caps.mtime_granularity_ns.max(1));
                     s.size == d.size && s.mtime.nanos_since(d.mtime).unsigned_abs() < step
@@ -1542,6 +1569,26 @@ impl<'a> Job<'a> {
             lock(&self.renamed).insert(src.to_path_buf(), dst.to_path_buf());
         }
     }
+}
+
+/// A Windows junction whose target inside the moved tree was rewritten onto the copy.
+#[cfg(windows)]
+fn link_rewritten(roots: &[PathBuf], src: &Path, dst: &Path) -> bool {
+    os::rewritten_link_matches(roots, src, dst)
+}
+
+#[cfg(not(windows))]
+fn link_rewritten(_roots: &[PathBuf], _src: &Path, _dst: &Path) -> bool {
+    false
+}
+
+/// A `StorageFull` warning when `needed` bytes cannot fit in `free`; `None` when free space is unknown.
+fn space_shortfall(needed: u64, free: Option<u64>) -> Option<io::Error> {
+    let free = free.filter(|&free| needed > free)?;
+    Some(io::Error::new(
+        io::ErrorKind::StorageFull,
+        format!("{needed} bytes to copy but only {free} bytes free"),
+    ))
 }
 
 /// The same file or folder reached by two paths (bind mounts, hardlinks, aliases). Windows reports no
@@ -1597,5 +1644,14 @@ mod tests {
         ] {
             assert!(is_unsupported(&errno.into()), "{errno:?}");
         }
+    }
+
+    #[test]
+    fn space_shortfall_warns_only_when_known_and_too_small() {
+        let e = space_shortfall(100, Some(99)).expect("100 bytes do not fit in 99");
+        assert_eq!(e.kind(), io::ErrorKind::StorageFull);
+        assert!(e.to_string().contains("100 bytes to copy but only 99"));
+        assert!(space_shortfall(100, Some(100)).is_none());
+        assert!(space_shortfall(100, None).is_none());
     }
 }

@@ -756,7 +756,7 @@ mod unix {
     }
 
     #[test]
-    fn fifos_are_recreated_and_sockets_skipped() {
+    fn fifos_are_recreated() {
         let t = tempfile::tempdir().unwrap();
         let src = t.path().join("src");
         fs::create_dir(&src).unwrap();
@@ -770,18 +770,14 @@ mod unix {
             ConflictPolicy::Skip,
             Overrides::default(),
         );
-        if cfg!(target_os = "linux") {
-            assert_clean(&s);
-            use std::os::unix::fs::FileTypeExt;
-            assert!(
-                fs::symlink_metadata(t.path().join("dst/pipe"))
-                    .unwrap()
-                    .file_type()
-                    .is_fifo()
-            );
-        } else {
-            assert_eq!((s.skipped, s.error_count()), (1, 0));
-        }
+        assert_clean(&s);
+        use std::os::unix::fs::FileTypeExt;
+        assert!(
+            fs::symlink_metadata(t.path().join("dst/pipe"))
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -915,5 +911,139 @@ fn verified_copies_are_complete_and_report_no_errors() {
         assert_eq!(s.error_count(), 0);
         assert_same_tree(&src, &dst);
         assert!(s.plans.iter().all(|p| p.verify));
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use std::io::Write;
+    use std::process::Command;
+
+    /// Whether `a` and `b` are names of one file: a write through one shows in the other.
+    fn same_file(a: &Path, b: &Path) -> bool {
+        let before = fs::read(b).unwrap();
+        let mut f = fs::OpenOptions::new().append(true).open(a).unwrap();
+        f.write_all(b"+linked").unwrap();
+        drop(f);
+        let linked = fs::read(b).unwrap() != before;
+        fs::write(a, &before).unwrap();
+        linked
+    }
+
+    #[test]
+    fn hardlink_groups_survive_copy_and_move() {
+        for (op, forced) in [
+            (Op::Copy, Overrides::default()),
+            // A forced method skips the same-volume rename, so the move copies and deletes.
+            (
+                Op::Move,
+                Overrides {
+                    method: Some(Method::ReadWrite),
+                    ..Overrides::default()
+                },
+            ),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            let src = t.path().join("src");
+            fs::create_dir_all(src.join("sub")).unwrap();
+            fs::write(src.join("a.txt"), b"shared").unwrap();
+            fs::hard_link(src.join("a.txt"), src.join("sub/b.txt")).unwrap();
+            fs::hard_link(src.join("a.txt"), src.join("c.txt")).unwrap();
+            fs::write(src.join("alone.txt"), b"shared").unwrap();
+            fs::write(src.join("other.txt"), b"other").unwrap();
+            fs::hard_link(src.join("other.txt"), src.join("other2.txt")).unwrap();
+
+            let dst = t.path().join("dst");
+            let s = run(&request(
+                vec![item(&src, &dst)],
+                op,
+                ConflictPolicy::Skip,
+                forced,
+            ));
+            assert_clean(&s);
+            assert_eq!(s.error_count(), 0, "{:#?}", s.errors);
+            assert!(
+                same_file(&dst.join("a.txt"), &dst.join("sub/b.txt")),
+                "{op:?}"
+            );
+            assert!(same_file(&dst.join("a.txt"), &dst.join("c.txt")), "{op:?}");
+            assert!(same_file(&dst.join("other.txt"), &dst.join("other2.txt")));
+            // Same content, but never linked to the group.
+            assert!(
+                !same_file(&dst.join("a.txt"), &dst.join("alone.txt")),
+                "{op:?}"
+            );
+            assert_eq!(src.exists(), op == Op::Copy);
+        }
+    }
+
+    /// The `dir /AL` line of the reparse point `name` in `parent`: `<JUNCTION> name [target]`.
+    fn listed_link(parent: &Path, name: &str) -> String {
+        let out = Command::new("cmd")
+            .args(["/C", "dir", "/AL"])
+            .arg(parent)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find(|l| l.contains(&format!(" {name} [")))
+            .unwrap_or_else(|| panic!("no link {name} in {}", parent.display()))
+            .to_lowercase()
+    }
+
+    fn junction(link: &Path, target: &Path) {
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success(), "mklink /J failed");
+    }
+
+    #[test]
+    fn junctions_are_recreated_with_targets_inside_the_tree_rewritten() {
+        for op in [Op::Copy, Op::Move] {
+            let t = tempfile::tempdir().unwrap();
+            let root = fs::canonicalize(t.path()).unwrap();
+            let root = root
+                .to_string_lossy()
+                .trim_start_matches(r"\\?\")
+                .to_string();
+            let root = Path::new(&root);
+            let (src, other, dst) = (root.join("src"), root.join("other"), root.join("dst"));
+            fs::create_dir_all(src.join("real")).unwrap();
+            fs::create_dir_all(&other).unwrap();
+            fs::write(src.join("real/file.txt"), b"data").unwrap();
+            junction(&src.join("inside"), &src.join("real"));
+            junction(&src.join("outside"), &other);
+
+            let forced = Overrides {
+                method: Some(Method::ReadWrite),
+                ..Overrides::default()
+            };
+            let s = run(&request(
+                vec![item(&src, &dst)],
+                op,
+                ConflictPolicy::Skip,
+                forced,
+            ));
+            assert_clean(&s);
+            assert_eq!(s.error_count(), 0, "{:#?}", s.errors);
+
+            let inside = listed_link(&dst, "inside");
+            assert!(inside.contains("<junction>"), "{inside}");
+            let moved_real = dst.join("real").to_string_lossy().to_lowercase();
+            assert!(inside.contains(&format!("[{moved_real}]")), "{inside}");
+            let outside = listed_link(&dst, "outside");
+            assert!(outside.contains("<junction>"), "{outside}");
+            let other = other.to_string_lossy().to_lowercase();
+            assert!(outside.contains(&format!("[{other}]")), "{outside}");
+            assert_eq!(fs::read(dst.join("inside/file.txt")).unwrap(), b"data");
+            // A move deletes the source only when every entry, rewritten junction included, matched.
+            assert_eq!(src.exists(), op == Op::Copy, "{op:?}: {:?}", s.kept_sources);
+        }
     }
 }

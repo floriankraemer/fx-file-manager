@@ -3,35 +3,39 @@
 //! `MoveFileExW` no-replace renames and `FlushFileBuffers` durability for moves.
 
 pub(crate) use super::std_copy::{
-    Dir, Src, copy_dir_attrs, copy_special, copy_symlink, hard_link, lstat, open_file,
-    raise_fd_limit, read_all,
+    Dir, Src, copy_dir_attrs, copy_special, hard_link, lstat, raise_fd_limit, read_all,
 };
 
 use super::windows::wide_path;
+use crate::EntryKind;
 use crate::copy::pipeline::{Copied, FileCtx, Meter, is_unsupported};
 use crate::copy::{Meta, Method, progress::cancelled};
 use crate::volume::FsCaps;
-use std::ffi::{OsStr, c_void};
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{FileExt, FileTimesExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::{mem, ptr};
 use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, ERROR_REQUEST_ABORTED, HANDLE};
 use windows_sys::Win32::Storage::FileSystem::{
-    COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS, COPY_FILE_NO_BUFFERING,
-    COPYFILE2_CALLBACK_CHUNK_FINISHED, COPYFILE2_EXTENDED_PARAMETERS, COPYFILE2_MESSAGE,
-    COPYFILE2_MESSAGE_ACTION, COPYFILE2_PROGRESS_CANCEL, COPYFILE2_PROGRESS_CONTINUE, CopyFile2,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_ATTRIBUTES, GetDiskFreeSpaceExW, MoveFileExW,
-    SetFileAttributesW,
+    BY_HANDLE_FILE_INFORMATION, COPY_FILE_COPY_SYMLINK, COPY_FILE_FAIL_IF_EXISTS,
+    COPY_FILE_NO_BUFFERING, COPYFILE2_CALLBACK_CHUNK_FINISHED, COPYFILE2_EXTENDED_PARAMETERS,
+    COPYFILE2_MESSAGE, COPYFILE2_MESSAGE_ACTION, COPYFILE2_PROGRESS_CANCEL,
+    COPYFILE2_PROGRESS_CONTINUE, CopyFile2, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
+    FileIdInfo, GetDiskFreeSpaceExW, GetFileInformationByHandle, GetFileInformationByHandleEx,
+    MoveFileExW, SetFileAttributesW,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
     DUPLICATE_EXTENTS_DATA, FILE_ALLOCATED_RANGE_BUFFER, FSCTL_DUPLICATE_EXTENTS_TO_FILE,
     FSCTL_GET_INTEGRITY_INFORMATION, FSCTL_GET_INTEGRITY_INFORMATION_BUFFER,
-    FSCTL_GET_RETRIEVAL_POINTERS, FSCTL_QUERY_ALLOCATED_RANGES, FSCTL_SET_INTEGRITY_INFORMATION,
-    FSCTL_SET_INTEGRITY_INFORMATION_BUFFER, FSCTL_SET_SPARSE, RETRIEVAL_POINTERS_BUFFER,
+    FSCTL_GET_REPARSE_POINT, FSCTL_GET_RETRIEVAL_POINTERS, FSCTL_QUERY_ALLOCATED_RANGES,
+    FSCTL_SET_INTEGRITY_INFORMATION, FSCTL_SET_INTEGRITY_INFORMATION_BUFFER,
+    FSCTL_SET_REPARSE_POINT, FSCTL_SET_SPARSE, RETRIEVAL_POINTERS_BUFFER,
     STARTING_VCN_INPUT_BUFFER,
 };
 
@@ -42,6 +46,16 @@ const MAX_CLONE_RANGE: u64 = (4 << 30) - (64 << 10);
 /// Files below this size may take the experimental raw path.
 const RAW_SMALL_MAX: u64 = 64 * 1024;
 const CHUNK: usize = 16 * 1024 * 1024;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+const GENERIC_WRITE: u32 = 0x4000_0000;
+const SHARE_ALL: u32 = 0x7;
+/// Header of a `REPARSE_DATA_BUFFER` (tag, data length, reserved) and of its mount-point part
+/// (substitute and print name offset and length), both before the name characters.
+const REPARSE_HEADER: usize = 8;
+const MOUNT_POINT_HEADER: usize = 8;
+const MAX_REPARSE_SIZE: usize = 16 * 1024;
+/// How the NT namespace spells a Win32 path in a reparse point.
+const NT_PREFIX: &str = r"\??\";
 
 /// `DeviceIoControl` with typed in/out buffers. `ERROR_MORE_DATA` counts as success (partial output).
 fn ioctl<I, O>(h: HANDLE, code: u32, input: Option<&I>, output: Option<&mut O>) -> io::Result<u32> {
@@ -497,4 +511,263 @@ pub(crate) fn extent_key(src: &Src) -> Option<u64> {
     .ok()?;
     let lcn = out.Extents[0].Lcn;
     (out.ExtentCount > 0 && lcn >= 0).then_some(lcn as u64)
+}
+
+// ---- Hardlinks -----------------------------------------------------------------------------------
+
+/// Like the portable `open_file`, plus the volume, file ID and link count that let the engine keep
+/// hardlink groups. Windows reports them only through a handle, so each file costs one attribute-only
+/// open; the file ID query that guards against ReFS runs only for files with more than one name.
+pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
+    let mut src = super::std_copy::open_file(dir, name)?;
+    if src.meta.kind == EntryKind::File
+        && let Some((volume, index, links)) = file_identity(&src.path)
+    {
+        src.meta.dev = volume;
+        src.meta.ino = index;
+        src.meta.nlink = links;
+    }
+    Ok(src)
+}
+
+/// `(volume serial, file index, link count)`. A link count above 1 is only reported together with an ID
+/// that is unique on its volume: ReFS IDs need 128 bits, and two files must never be taken for one.
+fn file_identity(path: &Path) -> Option<(u64, u64, u64)> {
+    let f = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .ok()?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `info` is a valid out-buffer and the handle is open.
+    if unsafe { GetFileInformationByHandle(raw(&f), &mut info) } == 0 {
+        return None;
+    }
+    let volume = u64::from(info.dwVolumeSerialNumber);
+    if info.nNumberOfLinks <= 1 {
+        return Some((volume, 0, 1));
+    }
+    let mut id = FILE_ID_INFO::default();
+    // SAFETY: `id` is a valid out-buffer of the size passed and the handle is open.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            raw(&f),
+            FileIdInfo,
+            ptr::from_mut(&mut id).cast(),
+            mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    let (low, high) = id.FileId.Identifier.split_at(8);
+    if ok == 0 || high.iter().any(|&b| b != 0) {
+        return Some((volume, 0, 1));
+    }
+    let index = u64::from_le_bytes(low.try_into().ok()?);
+    Some((id.VolumeSerialNumber, index, u64::from(info.nNumberOfLinks)))
+}
+
+// ---- Junctions -----------------------------------------------------------------------------------
+
+/// The target of a junction (`IO_REPARSE_TAG_MOUNT_POINT`) without the `\??\` prefix; `None` for
+/// anything else, volume mount points (`\??\Volume{...}`) included, which take the portable path.
+fn junction_target(path: &Path) -> Option<PathBuf> {
+    let f = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    let mut buf = [0u8; MAX_REPARSE_SIZE];
+    ioctl::<(), _>(raw(&f), FSCTL_GET_REPARSE_POINT, None, Some(&mut buf)).ok()?;
+    parse_junction(&buf)
+}
+
+fn parse_junction(buf: &[u8]) -> Option<PathBuf> {
+    let u16_at = |at: usize| -> Option<usize> {
+        Some(usize::from(u16::from_le_bytes(
+            buf.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    if u32::from_le_bytes(buf.get(..4)?.try_into().ok()?) != IO_REPARSE_TAG_MOUNT_POINT {
+        return None;
+    }
+    let (offset, len) = (u16_at(REPARSE_HEADER)?, u16_at(REPARSE_HEADER + 2)?);
+    let start = REPARSE_HEADER + MOUNT_POINT_HEADER + offset;
+    let wide: Vec<u16> = buf
+        .get(start..start + len)?
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let name = OsString::from_wide(&wide).into_string().ok()?;
+    let target = name.strip_prefix(NT_PREFIX)?;
+    // Only drive paths are real targets here.
+    (target.as_bytes().get(1) == Some(&b':')).then(|| PathBuf::from(target))
+}
+
+fn junction_buffer(target: &Path) -> Vec<u8> {
+    let print: Vec<u16> = target.as_os_str().encode_wide().collect();
+    let substitute: Vec<u16> = NT_PREFIX
+        .encode_utf16()
+        .chain(print.iter().copied())
+        .collect();
+    let (sub_bytes, print_bytes) = (substitute.len() * 2, print.len() * 2);
+    // Two names, each followed by a NUL character.
+    let data_len = MOUNT_POINT_HEADER + sub_bytes + print_bytes + 4;
+    let mut buf = Vec::with_capacity(REPARSE_HEADER + data_len);
+    buf.extend_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+    buf.extend_from_slice(&(data_len as u16).to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    for field in [0, sub_bytes, sub_bytes + 2, print_bytes] {
+        buf.extend_from_slice(&(field as u16).to_le_bytes());
+    }
+    for unit in substitute.iter().chain(&[0]).chain(&print).chain(&[0]) {
+        buf.extend_from_slice(&unit.to_le_bytes());
+    }
+    buf
+}
+
+/// Creates `link` (which must not exist) as a junction to `target`.
+fn create_junction(link: &Path, target: &Path) -> io::Result<()> {
+    let buf = junction_buffer(target);
+    fs::create_dir(link)?;
+    let result = (|| {
+        let f = OpenOptions::new()
+            .access_mode(GENERIC_WRITE)
+            .share_mode(SHARE_ALL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(link)?;
+        let mut returned = 0u32;
+        // SAFETY: `buf` is valid for its length, the handle is open, and there is no overlapped I/O.
+        let ok = unsafe {
+            DeviceIoControl(
+                raw(&f),
+                FSCTL_SET_REPARSE_POINT,
+                buf.as_ptr().cast(),
+                buf.len() as u32,
+                ptr::null_mut(),
+                0,
+                &mut returned,
+                ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir(link);
+    }
+    result
+}
+
+/// Path components compared the way Windows compares names.
+fn folded(p: &Path) -> Vec<String> {
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .collect()
+}
+
+/// Where a junction in `src_dir` points in the copy at `dst_dir`: a target inside the copied tree
+/// (below the one of the `roots` that holds `src_dir`) follows the tree to its new place; any other
+/// target is kept. The copy's root is derived from `dst_dir`, so a renamed top-level folder
+/// (`name (2)`) is followed too.
+fn rebased_target(roots: &[PathBuf], src_dir: &Path, dst_dir: &Path, target: &Path) -> PathBuf {
+    let absolute = |p: &Path| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let (src_dir, dst_dir) = (absolute(src_dir), absolute(dst_dir));
+    let (dir_names, target_names) = (folded(&src_dir), folded(target));
+    for root in roots {
+        let root_names = folded(&absolute(root));
+        if !dir_names.starts_with(&root_names) || !target_names.starts_with(&root_names) {
+            continue;
+        }
+        let depth = dir_names.len() - root_names.len();
+        let dst: Vec<Component<'_>> = dst_dir.components().collect();
+        let Some(keep) = dst.len().checked_sub(depth) else {
+            continue;
+        };
+        let mut moved: PathBuf = dst[..keep].iter().collect();
+        moved.extend(target.components().skip(root_names.len()));
+        return moved;
+    }
+    target.to_path_buf()
+}
+
+/// Junctions are recreated as junctions, with targets inside the copied tree rebased onto the copy.
+/// Symlinks and volume mount points take the portable path.
+pub(crate) fn copy_symlink(
+    src_dir: &Dir,
+    name: &OsStr,
+    m: &Meta,
+    dst: &Dir,
+    dst_name: &OsStr,
+    roots: &[PathBuf],
+) -> io::Result<()> {
+    let Some(target) = junction_target(&src_dir.path().join(name)) else {
+        return super::std_copy::copy_symlink(src_dir, name, m, dst, dst_name, roots);
+    };
+    let target = rebased_target(roots, src_dir.path(), dst.path(), &target);
+    create_junction(&dst.path().join(dst_name), &target)
+}
+
+/// Whether the junction at `dst` is the (rebased) copy of the junction at `src`.
+pub(crate) fn rewritten_link_matches(roots: &[PathBuf], src: &Path, dst: &Path) -> bool {
+    let (Some(from), Some(to), Some(src_dir), Some(dst_dir)) = (
+        junction_target(src),
+        junction_target(dst),
+        src.parent(),
+        dst.parent(),
+    ) else {
+        return false;
+    };
+    folded(&rebased_target(roots, src_dir, dst_dir, &from)) == folded(&to)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn junction_buffer_round_trips() {
+        let target = Path::new(r"C:\data\tree\sub");
+        assert_eq!(
+            parse_junction(&junction_buffer(target)).as_deref(),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn volume_mount_points_are_not_junction_targets() {
+        let mut buf = junction_buffer(Path::new(r"C:\x"));
+        // Turn the drive letter's colon into another character: not a drive path any more.
+        let at = REPARSE_HEADER + MOUNT_POINT_HEADER + NT_PREFIX.len() * 2;
+        buf[at + 2] = b'_';
+        assert_eq!(parse_junction(&buf), None);
+    }
+
+    #[test]
+    fn targets_inside_the_tree_follow_the_copy() {
+        let roots = [PathBuf::from(r"C:\src\tree")];
+        let rebased = |dir: &str, dst: &str, target: &str| {
+            rebased_target(&roots, Path::new(dir), Path::new(dst), Path::new(target))
+        };
+        // Junction at tree\a\b, copy at D:\out\tree (2)\a\b: the root is read off the copy.
+        assert_eq!(
+            rebased(
+                r"C:\src\tree\a\b",
+                r"D:\out\tree (2)\a\b",
+                r"C:\SRC\tree\x\y"
+            ),
+            Path::new(r"D:\out\tree (2)\x\y")
+        );
+        // Outside the tree, and from a junction outside the tree: unchanged.
+        assert_eq!(
+            rebased(r"C:\src\tree\a", r"D:\out\tree\a", r"C:\elsewhere"),
+            Path::new(r"C:\elsewhere")
+        );
+        assert_eq!(
+            rebased(r"C:\other", r"D:\out", r"C:\src\tree\x"),
+            Path::new(r"C:\src\tree\x")
+        );
+    }
 }

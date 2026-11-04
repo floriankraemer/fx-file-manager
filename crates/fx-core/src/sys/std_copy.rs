@@ -281,6 +281,7 @@ pub(crate) fn copy_symlink(
     _m: &Meta,
     dst: &Dir,
     dst_name: &OsStr,
+    _roots: &[PathBuf],
 ) -> io::Result<()> {
     let src = src_dir.path.join(name);
     let target = fs::read_link(&src)?;
@@ -291,8 +292,7 @@ pub(crate) fn copy_symlink(
     }
     #[cfg(windows)]
     {
-        // ponytail: junctions are recreated as directory symlinks (needs Developer Mode or admin);
-        // a junction-specific reparse point write is the upgrade if users copy junctions.
+        // Junctions never get here on Windows (`windows_copy::copy_symlink` recreates them).
         if fs::metadata(&src).is_ok_and(|m| m.is_dir()) {
             std::os::windows::fs::symlink_dir(target, link)
         } else {
