@@ -8,12 +8,15 @@ use eframe::egui::{self, Context, Key, Modifiers};
 use fx_app::{Explorer, Place, Settings, places};
 use std::path::PathBuf;
 
+const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(100);
+
 pub struct App {
     explorer: Explorer,
     places: Vec<Place>,
     scroll_to_selection: bool,
     dialog: Option<Dialog>,
     toast: Option<Toast>,
+    transfers: views::transfers::State,
     applied_look: (String, Option<String>, f32, f32),
     was_focused: bool,
 }
@@ -38,6 +41,7 @@ impl App {
             scroll_to_selection: false,
             dialog: None,
             toast: None,
+            transfers: views::transfers::State::default(),
             applied_look,
             was_focused: true,
         }
@@ -206,6 +210,13 @@ impl eframe::App for App {
         self.explorer.poll();
         // Keep polling while idle so background revalidation results show up.
         ctx.request_repaint_after(fx_app::REVALIDATE_INTERVAL);
+        if self.explorer.transfers_active() {
+            // Progress is sampled, not pushed: 10 Hz is smooth and costs nothing.
+            ctx.request_repaint_after(TRANSFER_REFRESH);
+        }
+        if self.dialog.is_none() {
+            self.dialog = Dialog::conflict(&self.explorer);
+        }
         let focused = ctx.input(|i| i.focused);
         if focused && !self.was_focused {
             self.explorer.revalidate();
@@ -248,6 +259,11 @@ impl eframe::App for App {
         egui::Panel::bottom("status").show(ui, |ui| {
             views::status::show(ui, &self.explorer);
         });
+        if !self.explorer.transfers().is_empty() {
+            egui::Panel::bottom("transfers").show(ui, |ui| {
+                views::transfers::show(ui, &mut self.explorer, &mut self.transfers);
+            });
+        }
         egui::Panel::left("places")
             .default_size(240.0)
             .show(ui, |ui| {

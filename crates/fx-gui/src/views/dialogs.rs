@@ -1,4 +1,4 @@
-//! Modal dialogs: delete confirmation, rename, new folder, properties, settings.
+//! Modal dialogs: delete confirmation, rename, new folder, properties, settings, paste conflicts.
 
 use super::{about, settings};
 use crate::theme;
@@ -7,7 +7,7 @@ use eframe::egui::{
     text::{CCursor, CCursorRange},
 };
 use fx_app::{EntryDetails, Explorer, format_size, format_time, stem_chars, validate_name};
-use fx_core::EntryKind;
+use fx_core::{Conflict, EntryKind, Resolution};
 use std::path::PathBuf;
 
 const LISTED_NAMES: usize = 5;
@@ -33,6 +33,12 @@ pub enum Dialog {
     Properties(EntryDetails),
     Settings(Box<settings::State>),
     About,
+    /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
+    Conflict {
+        transfer: u64,
+        conflict: Box<Conflict>,
+        apply_to_all: bool,
+    },
 }
 
 impl Dialog {
@@ -73,6 +79,17 @@ impl Dialog {
         explorer.entry_details(row).map(Self::Properties)
     }
 
+    /// The oldest unanswered conflict of any transfer.
+    pub fn conflict(explorer: &Explorer) -> Option<Self> {
+        explorer.transfers().into_iter().find_map(|t| {
+            t.conflict.map(|c| Self::Conflict {
+                transfer: t.id,
+                conflict: Box::new(c),
+                apply_to_all: false,
+            })
+        })
+    }
+
     pub fn settings(explorer: &Explorer) -> Self {
         Self::Settings(Box::new(settings::State::new(explorer.settings())))
     }
@@ -96,7 +113,87 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
         Dialog::Properties(details) => properties(ctx, details),
         Dialog::Settings(state) => settings::show(ctx, explorer, state),
         Dialog::About => about::show(ctx),
+        Dialog::Conflict {
+            transfer,
+            conflict,
+            apply_to_all,
+        } => conflict_dialog(ctx, explorer, *transfer, conflict, apply_to_all),
     }
+}
+
+fn conflict_dialog(
+    ctx: &Context,
+    explorer: &mut Explorer,
+    transfer: u64,
+    c: &Conflict,
+    apply_to_all: &mut bool,
+) -> bool {
+    // Answered elsewhere (apply to all) or the transfer ended: nothing left to ask.
+    let pending = explorer
+        .transfers()
+        .iter()
+        .any(|t| t.id == transfer && t.conflict.as_ref().is_some_and(|p| p.id == c.id));
+    if !pending {
+        return true;
+    }
+    modal(ctx, "conflict-dialog", |ui| {
+        let what = if c.dst_is_dir { "A folder" } else { "A file" };
+        ui.heading(format!(
+            "{what} named \"{}\" already exists",
+            file_name(&c.dst)
+        ));
+        if let Some(parent) = c.dst.parent() {
+            ui.label(RichText::new(format!("in {}", parent.display())).color(theme::dim()));
+        }
+        ui.add_space(6.0);
+        let describe = |is_dir: bool, size: u64, modified: Option<std::time::SystemTime>| {
+            let when = modified.map_or_else(|| "—".to_owned(), format_time);
+            if is_dir {
+                format!("Folder, modified {when}")
+            } else {
+                format!("{}, modified {when}", format_size(size))
+            }
+        };
+        egui::Grid::new("conflict")
+            .num_columns(2)
+            .spacing([12.0, 6.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Existing").color(theme::dim()));
+                ui.label(describe(c.dst_is_dir, c.dst_size, c.dst_modified));
+                ui.end_row();
+                ui.label(RichText::new("New").color(theme::dim()));
+                ui.label(describe(c.src_is_dir, c.src_size, c.src_modified));
+                ui.end_row();
+            });
+        ui.add_space(6.0);
+        ui.checkbox(apply_to_all, "Do this for all remaining conflicts");
+        let mut answer = None;
+        let mut cancel = false;
+        button_row(ui, |ui| {
+            // A file cannot replace a folder (or the reverse): only skip or keep both.
+            let replace = c.src_is_dir == c.dst_is_dir && !c.dst_is_dir;
+            let keep = ui.button("Keep both");
+            if ui.add_enabled(replace, Button::new("Replace")).clicked() {
+                answer = Some(Resolution::Overwrite);
+            }
+            let skip = ui.button("Skip");
+            default_focus(ui, &keep);
+            if keep.clicked() {
+                answer = Some(Resolution::KeepBoth);
+            }
+            if skip.clicked() {
+                answer = Some(Resolution::Skip);
+            }
+            cancel = ui.button("Cancel transfer").clicked();
+        });
+        if let Some(resolution) = answer {
+            explorer.answer_conflict(transfer, c.id, resolution, *apply_to_all);
+        }
+        if cancel {
+            explorer.cancel_transfer(transfer);
+        }
+        answer.is_some() || cancel
+    })
 }
 
 pub(super) fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool {

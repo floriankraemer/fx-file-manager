@@ -12,3 +12,4 @@ pub mod table;
 pub mod tabs;
 pub mod toast;
 pub mod toolbar;
+pub mod transfers;
