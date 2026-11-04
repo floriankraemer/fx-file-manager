@@ -226,7 +226,8 @@ enum Parent {
 
 /// A destination directory waiting for its children before its final mode and times are set.
 struct Node {
-    meta: Meta,
+    /// `None` for a folder that existed already: merged into, its metadata is left alone.
+    meta: Option<Meta>,
     src_path: PathBuf,
     dst_path: PathBuf,
     /// The listing itself plus every child task still running.
@@ -262,6 +263,11 @@ struct Job<'a> {
     dirs_pending: AtomicUsize,
     last_group: bool,
     items: &'a [Arc<ItemState>],
+    op: Op,
+    /// Move sources whose copy got another name (keep both), so verification checks the right file.
+    renamed: Mutex<HashMap<PathBuf, PathBuf>>,
+    /// One destination folder per device written to, each flushed by the move barrier.
+    dst_devices: Mutex<HashMap<u64, PathBuf>>,
 }
 
 pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
@@ -296,7 +302,15 @@ pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
             copies.push(top);
             continue;
         }
-        let job = Job::new(sh, top.plan, &top.dst_vol, req.policy, false, &items);
+        let job = Job::new(
+            sh,
+            top.plan,
+            &top.dst_vol,
+            req.policy,
+            false,
+            &items,
+            req.op,
+        );
         match job.rename_top(&top) {
             Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
                 // Bind mounts and btrfs subvolumes share st_dev semantics only partly: copy instead.
@@ -329,7 +343,7 @@ pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
     let mut kept_sources = Vec::new();
     let plans: Vec<CopyPlan> = groups.iter().map(|g| g.0).collect();
     for (gi, (plan, src_vol, dst_vol, tops)) in groups.iter().enumerate() {
-        let job = Job::new(sh, *plan, dst_vol, req.policy, gi == last, &items);
+        let job = Job::new(sh, *plan, dst_vol, req.policy, gi == last, &items, req.op);
         match plan.schedule {
             Schedule::Streaming => job.streaming(tops),
             Schedule::TwoPhase { order } => job.two_phase(tops, order, src_vol.id == dst_vol.id),
@@ -430,14 +444,20 @@ fn prepare(
     };
     let real_src_parent = parents.canonical(src_parent)?;
     let real_dst_parent = parents.canonical(dst_parent)?;
-    let same_entry = real_src_parent.join(name) == real_dst_parent.join(dst_name);
-    // A duplicate next to itself (`dir (2)`) is not inside itself.
-    if !same_entry
-        && kind == EntryKind::Dir
-        && real_dst_parent
+    let src_meta = os::lstat(src)?;
+    let same_entry = real_src_parent.join(name) == real_dst_parent.join(dst_name)
+        || os::lstat(dst).is_ok_and(|d| same_inode(&src_meta, &d));
+    // A duplicate next to itself (`dir (2)`) is not inside itself. Bind mounts can hide the nesting
+    // from paths, so the destination's ancestors are compared by inode as well.
+    let inside = || {
+        real_dst_parent
             .join(dst_name)
             .starts_with(real_src_parent.join(name))
-    {
+            || real_dst_parent
+                .ancestors()
+                .any(|a| os::lstat(a).is_ok_and(|m| same_inode(&src_meta, &m)))
+    };
+    if !same_entry && kind == EntryKind::Dir && inside() {
         return Err(invalid("a folder cannot be copied into itself"));
     }
     if same_entry && req.op == Op::Move {
@@ -479,6 +499,7 @@ impl<'a> Job<'a> {
         policy: ConflictPolicy,
         last_group: bool,
         items: &'a [Arc<ItemState>],
+        op: Op,
     ) -> Self {
         Self {
             sh,
@@ -490,6 +511,9 @@ impl<'a> Job<'a> {
             dirs_pending: AtomicUsize::new(0),
             last_group,
             items,
+            op,
+            renamed: Mutex::default(),
+            dst_devices: Mutex::default(),
         }
     }
 
@@ -568,8 +592,14 @@ impl<'a> Job<'a> {
             }
             let dst_path = dst_dir.path().join(dst_name);
             let dst_meta = dst_dir.stat_at(dst_name).at(op)?;
-            self.decide(src_path, src_meta, &dst_path, &dst_meta)
-                .at(op)?
+            if same_inode(src_meta, &dst_meta) {
+                // The "existing" item is the source itself: overwriting it would destroy it, and a
+                // move would then delete the only copy.
+                self.same_entry()
+            } else {
+                self.decide(src_path, src_meta, &dst_path, &dst_meta)
+                    .at(op)?
+            }
         };
         match resolution {
             Resolution::Skip => Ok(Placed::Skipped),
@@ -577,7 +607,10 @@ impl<'a> Job<'a> {
                 for n in 2.. {
                     let candidate = keep_both_name(dst_name, n);
                     match create(&candidate) {
-                        Ok(t) => return Ok(Placed::Done(t, candidate)),
+                        Ok(t) => {
+                            self.note_rename(src_path, &dst_dir.path().join(&candidate));
+                            return Ok(Placed::Done(t, candidate));
+                        }
                         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                         Err(e) => return Err(Failure { op, err: e }),
                     }
@@ -595,9 +628,8 @@ impl<'a> Job<'a> {
                     });
                 }
                 // Never truncate the target in place: a failed overwrite keeps the old content.
+                // The temp name is unique, so parallel overwrites of one name never share it.
                 let tmp = temp_name(dst_name);
-                // A leftover from a crash; the `.fx-part` name is ours by convention.
-                let _ = dst_dir.remove_at(&tmp);
                 let t = create(&tmp).at(op)?;
                 if let Err(e) = dst_dir.rename_at(&tmp, dst_name) {
                     let _ = dst_dir.remove_at(&tmp);
@@ -608,7 +640,8 @@ impl<'a> Job<'a> {
         }
     }
 
-    /// Creates (or merges into) the destination directory. `None`: skipped by the conflict policy.
+    /// Creates (or merges into) the destination directory; the flag is true for a new folder.
+    /// `None`: skipped by the conflict policy.
     fn create_dir(
         &self,
         parent: &os::Dir,
@@ -616,23 +649,27 @@ impl<'a> Job<'a> {
         src_path: &Path,
         src_meta: &Meta,
         keep_both: bool,
-    ) -> Result<Option<os::Dir>, Failure> {
+    ) -> Result<Option<(os::Dir, bool)>, Failure> {
         let op = ErrorOp::CreateDir;
+        let mut keep_both = keep_both;
         if !keep_both {
             match parent.create_child(dst_name) {
-                Ok(dir) => return Ok(Some(dir)),
+                Ok(dir) => return Ok(Some((dir, true))),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(Failure { op, err: e }),
             }
             let dst_meta = parent.stat_at(dst_name).at(op)?;
-            if dst_meta.kind == EntryKind::Dir {
-                return parent.open_child(dst_name).map(Some).at(op);
-            }
             let dst_path = parent.path().join(dst_name);
-            match self
-                .decide(src_path, src_meta, &dst_path, &dst_meta)
-                .at(op)?
-            {
+            let resolution = if same_inode(src_meta, &dst_meta) {
+                self.same_entry()
+            } else if dst_meta.kind == EntryKind::Dir {
+                // An existing folder is merged into, and keeps its own mode and times.
+                return parent.open_child(dst_name).map(|d| Some((d, false))).at(op);
+            } else {
+                self.decide(src_path, src_meta, &dst_path, &dst_meta)
+                    .at(op)?
+            };
+            match resolution {
                 Resolution::Skip => return Ok(None),
                 Resolution::Overwrite => {
                     return Err(Failure {
@@ -643,12 +680,17 @@ impl<'a> Job<'a> {
                         ),
                     });
                 }
-                Resolution::KeepBoth => {}
+                Resolution::KeepBoth => keep_both = true,
             }
         }
+        debug_assert!(keep_both);
         for n in 2.. {
-            match parent.create_child(&keep_both_name(dst_name, n)) {
-                Ok(dir) => return Ok(Some(dir)),
+            let candidate = keep_both_name(dst_name, n);
+            match parent.create_child(&candidate) {
+                Ok(dir) => {
+                    self.note_rename(src_path, &parent.path().join(&candidate));
+                    return Ok(Some((dir, true)));
+                }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(Failure { op, err: e }),
             }
@@ -664,7 +706,7 @@ impl<'a> Job<'a> {
         dst_name: &OsStr,
         keep_both: bool,
         item: &ItemState,
-    ) -> Option<(Fds, Meta)> {
+    ) -> Option<(Fds, Option<Meta>)> {
         self.sh.checkpoint().ok()?;
         let src_path = parent.src.path().join(name);
         let opened = parent.src.open_child(name).and_then(|src| {
@@ -679,10 +721,22 @@ impl<'a> Job<'a> {
             }
         };
         match self.create_dir(&parent.dst, dst_name, &src_path, &meta, keep_both) {
-            Ok(Some(dst)) => {
+            Ok(Some((dst, created))) => {
+                if self.plan.durability == Durability::BeforeSourceDelete
+                    && let Ok(m) = dst.stat()
+                {
+                    lock(&self.dst_devices)
+                        .entry(m.dev)
+                        .or_insert_with(|| dst.path().to_path_buf());
+                }
+                // A merged folder keeps its own metadata, except when resuming: then the destination
+                // is an earlier run of this very copy and should end up like the source.
+                if !created && self.policy != ConflictPolicy::SkipIdentical {
+                    return Some((Fds { src, dst }, None));
+                }
                 let warnings = os::copy_dir_attrs(&self.ctx(), &src, &dst, &meta);
                 self.warn(dst.path(), ErrorOp::Metadata, warnings);
-                Some((Fds { src, dst }, meta))
+                Some((Fds { src, dst }, Some(meta)))
             }
             Ok(None) => {
                 self.skip(item);
@@ -864,7 +918,9 @@ impl<'a> Job<'a> {
             if node.pending.fetch_sub(1, Ordering::AcqRel) != 1 {
                 return;
             }
-            if let Err(e) = os::finish_dir(&node.dst_path, &node.meta, &self.caps) {
+            if let Some(meta) = &node.meta
+                && let Err(e) = os::finish_dir(&node.dst_path, meta, &self.caps)
+            {
                 self.sh.record(&node.dst_path, ErrorOp::Metadata, &e, true);
             }
             current = node.parent.clone();
@@ -1148,7 +1204,9 @@ impl<'a> Job<'a> {
                 else {
                     continue;
                 };
-                finals.push((fds.dst.path().to_path_buf(), meta));
+                if let Some(meta) = meta {
+                    finals.push((fds.dst.path().to_path_buf(), meta));
+                }
                 dirs.push((fds.src.path().to_path_buf(), fds.dst.path().to_path_buf()));
                 let di = dirs.len() - 1;
                 let entries = fds.src.entries().unwrap_or_else(|e| {
@@ -1318,6 +1376,10 @@ impl<'a> Job<'a> {
         }
         let src_meta = os::lstat(src)?;
         let dst_meta = os::lstat(dst)?;
+        if same_inode(&src_meta, &dst_meta) {
+            self.skip(&self.items[item]);
+            return Ok(());
+        }
         if src_meta.kind == EntryKind::Dir && dst_meta.kind == EntryKind::Dir {
             for entry in fs::read_dir(src)? {
                 let name = entry?.file_name();
@@ -1379,22 +1441,96 @@ impl<'a> Job<'a> {
                 ok
             })
             .collect();
-        let Some(first) = clean.first() else {
+        if clean.is_empty() {
             return kept;
-        };
-        if let Err(e) = os::barrier(&first.dst_parent) {
-            self.sh.record(&first.dst_parent, ErrorOp::Sync, &e, false);
-            kept.extend(clean.iter().map(|t| items[t.item].src.clone()));
-            return kept;
+        }
+        let mut devices = std::mem::take(&mut *lock(&self.dst_devices));
+        for top in &clean {
+            if let Ok(m) = os::lstat(&top.dst_parent) {
+                devices
+                    .entry(m.dev)
+                    .or_insert_with(|| top.dst_parent.clone());
+            }
+        }
+        for dir in devices.values() {
+            if let Err(e) = os::barrier(dir) {
+                self.sh.record(dir, ErrorOp::Sync, &e, false);
+                kept.extend(clean.iter().map(|t| items[t.item].src.clone()));
+                return kept;
+            }
         }
         for top in clean {
             let src = top.src_parent.join(&top.name);
-            if let Err(e) = remove_source(&src, top.kind) {
-                self.fail(top.item, &src, ErrorOp::Remove, &e);
+            let dst = top.dst_parent.join(&top.dst_name);
+            if !self.remove_verified(top.item, &src, &dst) {
+                kept.push(items[top.item].src.clone());
             }
         }
         kept
     }
+
+    /// Deletes the moved `src` entry by entry, each only where its copy at `dst` matches (kind, size,
+    /// mtime, link target). Entries created or changed after they were copied stay. True if all is gone.
+    fn remove_verified(&self, item: usize, src: &Path, dst: &Path) -> bool {
+        let dst = lock(&self.renamed)
+            .get(src)
+            .cloned()
+            .unwrap_or_else(|| dst.to_path_buf());
+        let result = (|| -> io::Result<bool> {
+            let (s, d) = (os::lstat(src)?, os::lstat(&dst)?);
+            if s.kind != d.kind || same_inode(&s, &d) {
+                return Ok(false);
+            }
+            let matches = match s.kind {
+                EntryKind::Dir => {
+                    let mut all = true;
+                    for entry in fs::read_dir(src)? {
+                        let name = entry?.file_name();
+                        all &= self.remove_verified(item, &src.join(&name), &dst.join(&name));
+                    }
+                    if !all {
+                        return Ok(false);
+                    }
+                    // Fails if an entry appeared meanwhile, which then stays with its folder.
+                    return Ok(fs::remove_dir(src).is_ok());
+                }
+                EntryKind::Symlink => fs::read_link(src)? == fs::read_link(&dst)?,
+                EntryKind::File => {
+                    let step = u128::from(self.caps.mtime_granularity_ns.max(1));
+                    s.size == d.size && s.mtime.nanos_since(d.mtime).unsigned_abs() < step
+                }
+                EntryKind::Other => true,
+            };
+            if matches {
+                remove_source(src, s.kind)?;
+            }
+            Ok(matches)
+        })();
+        result.unwrap_or_else(|e| {
+            self.fail(item, src, ErrorOp::Remove, &e);
+            false
+        })
+    }
+
+    /// How a clash with the source itself resolves: a copy becomes `name (2)`, a move leaves it alone.
+    fn same_entry(&self) -> Resolution {
+        match self.op {
+            Op::Copy => Resolution::KeepBoth,
+            Op::Move => Resolution::Skip,
+        }
+    }
+
+    fn note_rename(&self, src: &Path, dst: &Path) {
+        if self.op == Op::Move {
+            lock(&self.renamed).insert(src.to_path_buf(), dst.to_path_buf());
+        }
+    }
+}
+
+/// The same file or folder reached by two paths (bind mounts, hardlinks, aliases). Windows reports no
+/// inode here, so it relies on the canonical-path comparison in `prepare`.
+fn same_inode(a: &Meta, b: &Meta) -> bool {
+    a.ino != 0 && a.dev == b.dev && a.ino == b.ino
 }
 
 /// The source folder of a directory node, for error messages when its parent cannot be reopened.
@@ -1411,7 +1547,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Never follows a symlink: the link itself is removed.
 fn remove_source(path: &Path, kind: EntryKind) -> io::Result<()> {
     match kind {
-        EntryKind::Dir => fs::remove_dir_all(path),
+        EntryKind::Dir => fs::remove_dir(path),
         // Windows needs remove_dir for links to directories; `metadata` follows the link only to learn its kind.
         EntryKind::Symlink if cfg!(windows) && fs::metadata(path).is_ok_and(|m| m.is_dir()) => {
             fs::remove_dir(path)

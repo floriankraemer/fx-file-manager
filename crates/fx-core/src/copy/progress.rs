@@ -286,7 +286,10 @@ impl Shared {
         if self.state.load(Ordering::Acquire) == RUNNING {
             self.state.store(PAUSED, Ordering::Release);
         }
+        // Never call out with the lock held: a watcher may take a snapshot from inside `notify`.
+        drop(waits);
         (self.notify)();
+        let mut waits = lock(&self.waits);
         while self.state.load(Ordering::Acquire) == PAUSED {
             waits = self.cv.wait(waits).unwrap_or_else(|p| p.into_inner());
         }
@@ -317,7 +320,9 @@ impl Shared {
         waits.next_id += 1;
         conflict.id = id;
         waits.conflicts.push_back(conflict);
+        drop(waits);
         (self.notify)();
+        let mut waits = lock(&self.waits);
         loop {
             if let Some(answer) = waits.answers.remove(&id) {
                 return Ok(answer);

@@ -96,9 +96,18 @@ pub(crate) fn copy_file(
         return super::std_copy::copy_file(ctx, src, src_dir, name, dst, dst_name, prefetched);
     }
     let dst_path = dst.path().join(dst_name);
+    // The methods below open the source before they create the destination, so a source error must
+    // not be mistaken for "we created this file": an existing name is reported, and never cleaned up.
+    if fs::symlink_metadata(&dst_path).is_ok() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
     if src.meta.sparse {
-        // CopyFile2 is not documented to keep holes, so sparse files take the range-aware path.
-        return created(ctx, &dst_path, sparse_copy(ctx, src, &dst_path));
+        // CopyFile2 is not documented to keep holes, so sparse files take the range-aware path;
+        // destinations without sparse support (FAT, exFAT, shares) fall back to the dense chain.
+        match created(ctx, &dst_path, sparse_copy(ctx, src, &dst_path)) {
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => {}
+            other => return other,
+        }
     }
     for &method in ctx.plan.methods {
         if !ctx.cache.enabled(method) {
@@ -128,11 +137,12 @@ pub(crate) fn copy_file(
 }
 
 /// Shared tail of the methods that create `dst` themselves: durability for moves, cleanup on failure.
-/// The destination did not exist before (exclusive create), so on any error but `AlreadyExists` it is ours to remove.
+/// `copy_file` checked that `dst` did not exist, and every method creates it exclusively, so on any
+/// error but `AlreadyExists` whatever is at `dst` is ours to remove.
 fn created(ctx: &FileCtx<'_>, dst: &Path, result: io::Result<bool>) -> io::Result<Copied> {
     let result = result.and_then(|cloned| {
         if ctx.durable {
-            OpenOptions::new().write(true).open(dst)?.sync_all()?;
+            flush(dst)?;
         }
         Ok(Copied {
             cloned,
@@ -142,9 +152,42 @@ fn created(ctx: &FileCtx<'_>, dst: &Path, result: io::Result<bool>) -> io::Resul
     if let Err(e) = &result
         && e.kind() != io::ErrorKind::AlreadyExists
     {
-        let _ = fs::remove_file(dst);
+        let _ = remove_ours(dst);
     }
     result
+}
+
+/// `FlushFileBuffers` needs write access, which the read-only attribute (copied from the source) denies.
+#[allow(clippy::permissions_set_readonly_false)]
+fn flush(path: &Path) -> io::Result<()> {
+    let mut perms = fs::metadata(path)?.permissions();
+    let read_only = perms.readonly();
+    if read_only {
+        perms.set_readonly(false);
+        fs::set_permissions(path, perms.clone())?;
+    }
+    let flushed = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.sync_all());
+    if read_only {
+        perms.set_readonly(true);
+        fs::set_permissions(path, perms)?;
+    }
+    flushed
+}
+
+/// Removes a partial copy, clearing the read-only attribute first.
+#[allow(clippy::permissions_set_readonly_false)]
+fn remove_ours(path: &Path) -> io::Result<()> {
+    if let Ok(md) = fs::symlink_metadata(path)
+        && md.permissions().readonly()
+    {
+        let mut perms = md.permissions();
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+    fs::remove_file(path)
 }
 
 struct Callback<'a, 'b> {
@@ -284,13 +327,15 @@ fn allocated_ranges(f: &File, size: u64) -> io::Result<Vec<(u64, u64)>> {
 
 fn sparse_copy(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
     let (input, out) = create_like(src, dst)?;
-    ioctl::<(), ()>(raw(&out), FSCTL_SET_SPARSE, None, None)?;
+    let unsupported = |e: io::Error| io::Error::new(io::ErrorKind::Unsupported, e);
+    ioctl::<(), ()>(raw(&out), FSCTL_SET_SPARSE, None, None).map_err(unsupported)?;
     let size = src.meta.size;
+    let ranges = allocated_ranges(&input, size).map_err(unsupported)?;
     out.set_len(size)?;
     let mut meter = ctx.meter();
     let result = (|| {
         let mut buf = vec![0u8; CHUNK.min(ctx.plan.buf_size.max(64 << 10))];
-        for (start, end) in allocated_ranges(&input, size)? {
+        for (start, end) in ranges {
             let mut off = start;
             while off < end {
                 ctx.shared.checkpoint()?;

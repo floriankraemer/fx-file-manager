@@ -576,6 +576,39 @@ fn copied_move_deletes_the_source_only_when_complete() {
     assert!(src2.join("d00/sub0/f1.bin").is_file() && src2.join("top.txt").is_file());
 }
 
+#[test]
+fn keep_both_move_verifies_the_renamed_copy_and_keeps_the_existing_file() {
+    let t = tempfile::tempdir().unwrap();
+    let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&dst).unwrap();
+    // Same size and mtime as the source, different content: only the name (2) copy may justify deleting.
+    fs::write(src.join("x"), b"new!").unwrap();
+    fs::write(dst.join("x"), b"old!").unwrap();
+    let when = fs::metadata(src.join("x")).unwrap().modified().unwrap();
+    fs::File::options()
+        .write(true)
+        .open(dst.join("x"))
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    let forced = Overrides {
+        method: Some(Method::ReadWrite),
+        ..Overrides::default()
+    };
+    let s = run(&request(
+        vec![item(&src, &dst)],
+        Op::Move,
+        ConflictPolicy::KeepBoth,
+        forced,
+    ));
+    assert_clean(&s);
+    assert!(s.kept_sources.is_empty(), "{:?}", s.kept_sources);
+    assert!(!src.exists());
+    assert_eq!(fs::read(dst.join("x")).unwrap(), b"old!");
+    assert_eq!(fs::read(dst.join("x (2)")).unwrap(), b"new!");
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
@@ -621,6 +654,26 @@ mod unix {
         for d in [&ro, &ro_copy] {
             fs::set_permissions(d, fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    #[test]
+    fn merged_folders_keep_their_own_mode() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+        fs::create_dir_all(src.join("d")).unwrap();
+        fs::write(src.join("d/f"), b"x").unwrap();
+        fs::set_permissions(src.join("d"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir_all(dst.join("d")).unwrap();
+        fs::set_permissions(dst.join("d"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert_clean(&copy(
+            &src,
+            &dst,
+            ConflictPolicy::Skip,
+            Overrides::default(),
+        ));
+        assert_eq!(fs::read(dst.join("d/f")).unwrap(), b"x");
+        let mode = fs::metadata(dst.join("d")).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "an existing folder is not changed by a merge");
     }
 
     #[test]

@@ -103,10 +103,17 @@ pub fn keep_both_name(name: &OsStr, n: u32) -> OsString {
 }
 
 /// Where an overwrite stages new content before renaming it over `name`, in the same directory.
+/// Unique per process and call, so concurrent overwrites never touch each other's file.
 pub(crate) fn temp_name(name: &OsStr) -> OsString {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut out = OsString::from(".");
     out.push(name);
-    out.push(".fx-part");
+    out.push(format!(
+        ".{}-{}.fx-part",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     out
 }
 
@@ -175,6 +182,9 @@ mod tests {
         assert_eq!(keep_both_name("t.tar.gz".as_ref(), 2), "t.tar (2).gz");
         assert_eq!(keep_both_name("sub".as_ref(), 3), "sub (3)");
         assert_eq!(keep_both_name(".bashrc".as_ref(), 2), ".bashrc (2)");
-        assert_eq!(temp_name("a.txt".as_ref()), ".a.txt.fx-part");
+        let (a, b) = (temp_name("a.txt".as_ref()), temp_name("a.txt".as_ref()));
+        assert_ne!(a, b);
+        let a = a.to_string_lossy();
+        assert!(a.starts_with(".a.txt.") && a.ends_with(".fx-part"), "{a}");
     }
 }
