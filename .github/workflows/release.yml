@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.id.outputs.version }}
+      git_hash: ${{ steps.id.outputs.git_hash }}
+      build_date: ${{ steps.id.outputs.build_date }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +28,8 @@ jobs:
           set -eu
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "git_hash=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
@@ -37,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.meta.outputs.version }}
+      FX_GIT_HASH: ${{ needs.meta.outputs.git_hash }}
+      FX_BUILD_DATE: ${{ needs.meta.outputs.build_date }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,11 +52,18 @@ jobs:
         run: |
           docker buildx build \
             --target linux-artifact \
+            --build-arg FX_GIT_HASH --build-arg FX_BUILD_DATE \
             -f docker/Dockerfile \
             --output type=local,dest=dist/ \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             .
+
+      - name: Check build info is embedded
+        run: |
+          set -eu
+          test -n "$FX_GIT_HASH" && [ "$FX_GIT_HASH" != unknown ]
+          grep -qa "$FX_GIT_HASH" dist/linux/fx-gui
 
       - name: Package tarball
         run: |
@@ -118,6 +131,8 @@ jobs:
     continue-on-error: true
     env:
       VERSION: ${{ needs.meta.outputs.version }}
+      FX_GIT_HASH: ${{ needs.meta.outputs.git_hash }}
+      FX_BUILD_DATE: ${{ needs.meta.outputs.build_date }}
     steps:
       - uses: actions/checkout@v4
 
@@ -127,6 +142,7 @@ jobs:
         run: |
           docker buildx build \
             --target windows-artifact \
+            --build-arg FX_GIT_HASH --build-arg FX_BUILD_DATE \
             -f docker/Dockerfile \
             --output type=local,dest=dist/ \
             --cache-from type=gha,scope=windows \
@@ -158,6 +174,8 @@ jobs:
     continue-on-error: true
     env:
       VERSION: ${{ needs.meta.outputs.version }}
+      FX_GIT_HASH: ${{ needs.meta.outputs.git_hash }}
+      FX_BUILD_DATE: ${{ needs.meta.outputs.build_date }}
     steps:
       - uses: actions/checkout@v4
 

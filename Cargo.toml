@@ -6,6 +6,9 @@ resolver = "3"
 edition = "2024"
 version = "0.1.0"
 publish = false
+authors = ["Florian Krämer"]
+repository = "https://github.com/floriankraemer/fx-file-manager"
+license = "MIT"
 rust-version = "1.95"
 
 [profile.release]

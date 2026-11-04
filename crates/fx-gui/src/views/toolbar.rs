@@ -1,8 +1,9 @@
+use crate::action::Action;
 use crate::theme;
 use eframe::egui::{CursorIcon, Layout, RichText, Sense, Stroke, TextStyle, Ui, vec2};
 use fx_app::{Explorer, breadcrumbs};
 
-pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
+pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     let (can_back, can_forward, can_up) = {
         let tab = explorer.active();
         (tab.can_back(), tab.can_forward(), tab.can_up())
@@ -36,6 +37,9 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("ⓘ").on_hover_text("About fx (F1)").clicked() {
+                actions.push(Action::OpenAbout);
+            }
             let tab = explorer.active_mut();
             let mut filter = tab.filter().to_owned();
             let edit = egui::TextEdit::singleline(&mut filter)

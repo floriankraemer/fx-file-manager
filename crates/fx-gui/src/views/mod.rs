@@ -1,5 +1,6 @@
 //! One module per screen region. Each renders `fx-app` state and calls its methods.
 
+pub mod about;
 pub mod commandbar;
 pub mod dialogs;
 pub mod icons;

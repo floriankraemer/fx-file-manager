@@ -11,6 +11,7 @@ pub enum Action {
     SelectAll,
     Properties,
     OpenSettings,
+    OpenAbout,
     Refresh,
     /// Row of the active tab.
     Open(usize),

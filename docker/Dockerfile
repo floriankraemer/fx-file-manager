@@ -66,6 +66,9 @@ ENV CARGO_TARGET_DIR=/workspace/target
 FROM linux-builder AS linux-build
 
 COPY . .
+ARG FX_GIT_HASH
+ARG FX_BUILD_DATE
+ENV FX_GIT_HASH=$FX_GIT_HASH FX_BUILD_DATE=$FX_BUILD_DATE
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/sccache \
     cargo build --release -p fx-gui -p fx-cli \
@@ -87,6 +90,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 
 COPY . .
+ARG FX_GIT_HASH
+ARG FX_BUILD_DATE
+ENV FX_GIT_HASH=$FX_GIT_HASH FX_BUILD_DATE=$FX_BUILD_DATE
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/sccache \
     cargo build --release --target x86_64-pc-windows-gnu -p fx-gui -p fx-cli \
