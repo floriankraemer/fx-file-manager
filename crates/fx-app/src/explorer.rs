@@ -1122,7 +1122,9 @@ mod tests {
         explorer.copy_to_clipboard(&[row_of(&explorer, "src")], false);
         explorer.paste(Some(root.join("dst")));
         settle(&mut explorer);
-        assert_eq!(last_notice(&mut explorer).text, "Copied 1 item");
+        // APFS, btrfs and XFS clone the file: "Copied 1 item (1 cloned)".
+        let text = last_notice(&mut explorer).text;
+        assert!(text.starts_with("Copied 1 item"), "{text}");
         assert_eq!(fs::read(root.join("dst/src/sub/f.txt")).unwrap(), b"x");
         assert!(explorer.can_paste(), "a copy clipboard can be pasted again");
 
