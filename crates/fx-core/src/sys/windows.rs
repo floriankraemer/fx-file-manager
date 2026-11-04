@@ -51,7 +51,7 @@ fn last_error() -> io::Error {
 
 /// NUL-terminated UTF-16. Paths of MAX_PATH or more get the `\\?\` prefix, which switches off
 /// Win32 normalization, so the path is made absolute and normalized (`/`, `.`, `..`) first.
-fn wide_path(path: &Path) -> Vec<u16> {
+pub(crate) fn wide_path(path: &Path) -> Vec<u16> {
     let normalized = std::path::absolute(path);
     let mut w: Vec<u16> = normalized
         .as_deref()

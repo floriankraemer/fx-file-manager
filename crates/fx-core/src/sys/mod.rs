@@ -13,6 +13,21 @@
 
 pub(crate) mod std_fs;
 
+/// Copy backend: same functions on every OS, see `copy::pipeline` for how they are used.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) mod unix_copy;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use unix_copy as copy;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) mod std_copy;
+#[cfg(windows)]
+pub(crate) mod windows_copy;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub(crate) use std_copy as copy;
+#[cfg(windows)]
+pub(crate) use windows_copy as copy;
+
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
 #[cfg(target_os = "linux")]
