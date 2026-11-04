@@ -5,7 +5,7 @@
 
 use crate::storage::StorageKind;
 use crate::volume::{FsKind, VolumeInfo};
-use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
 
 const KIB: usize = 1024;
 const MIB: usize = 1024 * KIB;
@@ -66,10 +66,18 @@ pub enum Method {
     DuplicateExtents,
     /// Portable user-space buffer; always last.
     ReadWrite,
+    /// Experimental, Linux with the `uring` feature: linked `READ` -> `WRITE` in one submission, files up to 1 MiB.
+    IoUring,
+    /// Experimental, Linux: 64 MiB ranges of files of 1 GiB and more copied by up to 4 workers.
+    ParallelRanged,
+    /// Experimental, Windows: `ReadFile`/`WriteFile` for files under 64 KiB, no `CopyFile2`.
+    RawSmall,
+    /// Experimental, Linux: `O_DIRECT` read/write for files of 1 GiB and more.
+    ODirect,
 }
 
 impl Method {
-    pub const ALL: [Method; 8] = [
+    pub const ALL: [Method; 12] = [
         Method::Rename,
         Method::Ficlone,
         Method::CopyFileRange,
@@ -78,6 +86,18 @@ impl Method {
         Method::CopyFile2,
         Method::DuplicateExtents,
         Method::ReadWrite,
+        Method::IoUring,
+        Method::ParallelRanged,
+        Method::RawSmall,
+        Method::ODirect,
+    ];
+
+    /// Opt-in only: [`CopyPlan::for_pair`] never selects these, pending the benchmark gates of issue #22.
+    pub const EXPERIMENTAL: [Method; 4] = [
+        Method::IoUring,
+        Method::ParallelRanged,
+        Method::RawSmall,
+        Method::ODirect,
     ];
 
     pub fn name(self) -> &'static str {
@@ -90,6 +110,10 @@ impl Method {
             Method::CopyFile2 => "copyfile2",
             Method::DuplicateExtents => "duplicate-extents",
             Method::ReadWrite => "read-write",
+            Method::IoUring => "uring",
+            Method::ParallelRanged => "parallel",
+            Method::RawSmall => "raw-small",
+            Method::ODirect => "o-direct",
         }
     }
 
@@ -108,6 +132,10 @@ impl Method {
             Method::CopyFile2 => &[Method::CopyFile2],
             Method::DuplicateExtents => &[Method::DuplicateExtents],
             Method::ReadWrite => &[Method::ReadWrite],
+            Method::IoUring => &[Method::IoUring],
+            Method::ParallelRanged => &[Method::ParallelRanged],
+            Method::RawSmall => &[Method::RawSmall],
+            Method::ODirect => &[Method::ODirect],
         }
     }
 
@@ -174,6 +202,11 @@ pub struct CopyPlan {
     /// Bypass the page cache above this size.
     pub uncached_from: Option<u64>,
     pub durability: Durability,
+    /// An experimental method tried before `methods`; files it does not apply to, or an OS that lacks it,
+    /// fall through to the chain. Only set by [`Overrides::experiment`].
+    pub experiment: Option<Method>,
+    /// Re-read every copied file and compare its xxh3 hash with the source's.
+    pub verify: bool,
 }
 
 /// Benchmark and settings overrides; `None` keeps the planned value.
@@ -185,6 +218,9 @@ pub struct Overrides {
     /// Forces a single-method chain; on a move this also skips the rename.
     pub method: Option<Method>,
     pub schedule: Option<Schedule>,
+    /// Tries this experimental method first, keeping the planned chain as fallback.
+    pub experiment: Option<Method>,
+    pub verify: bool,
 }
 
 impl CopyPlan {
@@ -204,6 +240,8 @@ impl CopyPlan {
                 large_file: LARGE_FILE,
                 uncached_from: None,
                 durability: Durability::None,
+                experiment: None,
+                verify: false,
             };
         }
         let mut plan = copy_plan(os, src, dst, cores);
@@ -228,6 +266,8 @@ impl CopyPlan {
         if let Some(method) = o.method {
             self.methods = method.only();
         }
+        self.experiment = o.experiment;
+        self.verify = o.verify;
         if let Some(schedule) = o.schedule {
             self.schedule = schedule;
             // TwoPhase copies with one data worker by design.
@@ -236,6 +276,13 @@ impl CopyPlan {
             }
         }
         self
+    }
+
+    /// The methods to try per file, in order: the experiment, then the planned chain.
+    pub(crate) fn chain(&self) -> impl Iterator<Item = Method> {
+        self.experiment
+            .into_iter()
+            .chain(self.methods.iter().copied())
     }
 
     pub fn renames(&self) -> bool {
@@ -264,6 +311,8 @@ fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPl
         large_file,
         uncached_from,
         durability: Durability::None,
+        experiment: None,
+        verify: false,
     };
     let slow_buf = if either(StorageKind::Hdd) {
         8 * MIB
@@ -350,7 +399,7 @@ fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPl
 
 /// Methods that failed as unsupported for one volume pair, as a lock-free bitset.
 #[derive(Debug, Default)]
-pub(crate) struct MethodCache(AtomicU8);
+pub(crate) struct MethodCache(AtomicU16);
 
 impl MethodCache {
     pub(crate) fn enabled(&self, m: Method) -> bool {
@@ -495,11 +544,38 @@ mod tests {
             workers: Some(0),
             method: Some(ReadWrite),
             schedule: Some(TWO_PHASE),
-            storage: None,
+            ..Overrides::default()
         });
         assert_eq!(
             (plan.workers, plan.methods, plan.schedule),
             (1, &[ReadWrite][..], TWO_PHASE)
+        );
+    }
+
+    #[test]
+    fn experiments_are_never_planned_and_only_prepend() {
+        let a = vol(1, F::Ext4, S::Ssd);
+        let b = vol(2, F::Ext4, S::Ssd);
+        for os in [Os::Linux, Os::Macos, Os::Windows] {
+            for op in [Op::Copy, Op::Move] {
+                let plan = CopyPlan::for_pair_on(os, &a, &b, op, 8);
+                assert!(plan.experiment.is_none() && !plan.verify);
+                assert!(
+                    plan.methods
+                        .iter()
+                        .all(|m| !Method::EXPERIMENTAL.contains(m))
+                );
+            }
+        }
+        let plan = CopyPlan::for_pair_on(Os::Linux, &a, &b, Op::Copy, 8).with(&Overrides {
+            experiment: Some(IoUring),
+            verify: true,
+            ..Overrides::default()
+        });
+        assert!(plan.verify);
+        assert_eq!(
+            plan.chain().collect::<Vec<_>>(),
+            [IoUring, CopyFileRange, Sendfile, ReadWrite]
         );
     }
 

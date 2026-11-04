@@ -20,6 +20,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+#[cfg(target_os = "linux")]
+mod experimental;
+
 /// Bounds cancel latency and progress granularity of in-kernel copies.
 const CHUNK: usize = 16 * 1024 * 1024;
 
@@ -321,14 +324,19 @@ fn write_data(
     let uncached = ctx.plan.uncached_from.is_some_and(|limit| size >= limit);
     let mut prepared = false;
     let mut tried = false;
-    for &method in ctx.plan.methods {
+    for method in ctx.plan.chain() {
         let native = match method {
             Method::ReadWrite => true,
-            Method::Ficlone | Method::CopyFileRange | Method::Sendfile => cfg!(target_os = "linux"),
+            Method::Ficlone
+            | Method::CopyFileRange
+            | Method::Sendfile
+            | Method::IoUring
+            | Method::ParallelRanged
+            | Method::ODirect => cfg!(target_os = "linux"),
             // CloneFileAt runs before the destination is created (`macos::try_clone`).
             _ => false,
         };
-        if !native || !ctx.cache.enabled(method) {
+        if !native || !ctx.cache.enabled(method) || !applies(method, src, uncached) {
             continue;
         }
         if tried {
@@ -368,6 +376,20 @@ fn write_data(
                 linux::Kind::Sendfile,
                 uncached,
             ),
+            #[cfg(all(target_os = "linux", feature = "uring"))]
+            Method::IoUring => experimental::uring_copy(ctx, src, out, meter),
+            #[cfg(target_os = "linux")]
+            Method::ParallelRanged => experimental::parallel_copy(
+                ctx,
+                src,
+                out,
+                size,
+                meter,
+                experimental::RANGE,
+                experimental::RANGE_WORKERS,
+            ),
+            #[cfg(target_os = "linux")]
+            Method::ODirect => experimental::direct_copy(ctx, src, out, meter),
             _ => read_write(ctx, src, out, &regions, meter),
         };
         match result {
@@ -388,6 +410,25 @@ fn write_data(
         io::ErrorKind::Unsupported,
         "no copy method of the plan works for this file",
     ))
+}
+
+/// Whether `method` suits this file; a method that does not is skipped without being disabled.
+/// Only the experimental methods are picky: `uring` wants small files, the others very large dense ones
+/// (the plan's `uncached_from`, 1 GiB on Linux).
+fn applies(method: Method, src: &Src, uncached: bool) -> bool {
+    match method {
+        #[cfg(target_os = "linux")]
+        Method::IoUring => {
+            cfg!(feature = "uring")
+                && !src.meta.sparse
+                && src.meta.size <= experimental::URING_MAX_FILE
+        }
+        Method::ParallelRanged | Method::ODirect => uncached && !src.meta.sparse,
+        _ => {
+            let _ = (src, uncached);
+            true
+        }
+    }
 }
 
 /// Preallocation surfaces ENOSPC before any data moves and cuts fragmentation.
@@ -950,6 +991,8 @@ mod tests {
             large_file: 1,
             uncached_from: Some(1),
             durability: Durability::BeforeSourceDelete,
+            experiment: None,
+            verify: false,
         }
     }
 
@@ -1032,6 +1075,115 @@ mod tests {
         assert!(is_cancelled(&err));
         assert!(!t.path().join("out/a").exists());
         assert_eq!(sh.snapshot().bytes_done, 0);
+    }
+
+    /// Copies `data` with `experiment` first and the plain chain as fallback; returns the copy's bytes.
+    #[cfg(target_os = "linux")]
+    fn copy_with(experiment: Method, data: &[u8]) -> Vec<u8> {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("out")).unwrap();
+        let sh = Shared::new(Box::new(|| {}));
+        let cache = MethodCache::default();
+        let plan = CopyPlan {
+            experiment: Some(experiment),
+            ..plan(&[Method::CopyFileRange, Method::ReadWrite])
+        };
+        let ctx = FileCtx {
+            plan: &plan,
+            cache: &cache,
+            shared: &sh,
+            caps: FsCaps::for_fs(FsKind::Ext4),
+            durable: false,
+        };
+        copy_one(&ctx, t.path(), "a", data).unwrap();
+        assert_eq!(sh.snapshot().bytes_done, data.len() as u64);
+        std::fs::read(t.path().join("out/a")).unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i * 7 % 251) as u8).collect()
+    }
+
+    #[cfg(all(target_os = "linux", feature = "uring"))]
+    #[test]
+    fn uring_copies_small_files_exactly() {
+        for len in [0, 1, 4095, 4096, 100_000, 1 << 20] {
+            let data = pattern(len);
+            assert_eq!(copy_with(Method::IoUring, &data), data, "{len} bytes");
+        }
+        // Larger than the uring limit: skipped, the plain chain copies it.
+        let big = pattern((1 << 20) + 1);
+        assert_eq!(copy_with(Method::IoUring, &big), big);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "uring"))]
+    #[test]
+    fn uring_reports_an_unavailable_ring_as_unsupported() {
+        // Where io_uring is blocked the error must be `Unsupported`, which makes the chain fall back.
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a"), pattern(1000)).unwrap();
+        let dir = Dir::open(t.path()).unwrap();
+        let src = open_file(&dir, "a".as_ref()).unwrap();
+        let out = std::fs::File::create(t.path().join("b")).unwrap();
+        let sh = Shared::new(Box::new(|| {}));
+        let cache = MethodCache::default();
+        let plan = plan(&[Method::ReadWrite]);
+        let ctx = FileCtx {
+            plan: &plan,
+            cache: &cache,
+            shared: &sh,
+            caps: FsCaps::for_fs(FsKind::Ext4),
+            durable: false,
+        };
+        match experimental::uring_copy(&ctx, &src, out.as_fd(), &mut ctx.meter()) {
+            Ok(()) => assert_eq!(std::fs::read(t.path().join("b")).unwrap(), pattern(1000)),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::Unsupported, "{e}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parallel_ranges_assemble_the_file_and_meter_each_byte_once() {
+        let t = tempfile::tempdir().unwrap();
+        let data = pattern(5 * (1 << 20) + 333);
+        std::fs::write(t.path().join("a"), &data).unwrap();
+        let dir = Dir::open(t.path()).unwrap();
+        let src = open_file(&dir, "a".as_ref()).unwrap();
+        let out = std::fs::File::create(t.path().join("b")).unwrap();
+        let sh = Shared::new(Box::new(|| {}));
+        let cache = MethodCache::default();
+        let plan = plan(&[Method::ReadWrite]);
+        let ctx = FileCtx {
+            plan: &plan,
+            cache: &cache,
+            shared: &sh,
+            caps: FsCaps::for_fs(FsKind::Ext4),
+            durable: false,
+        };
+        let mut meter = ctx.meter();
+        let size = data.len() as u64;
+        // 1 MiB ranges over 3 workers: six ranges, the last one ragged.
+        experimental::parallel_copy(&ctx, &src, out.as_fd(), size, &mut meter, 1 << 20, 3).unwrap();
+        assert_eq!(std::fs::read(t.path().join("b")).unwrap(), data);
+        assert_eq!(sh.snapshot().bytes_done, size);
+        meter.rollback();
+        assert_eq!(
+            sh.snapshot().bytes_done,
+            0,
+            "a rollback takes back every worker's bytes"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parallel_and_direct_copy_a_large_file_exactly() {
+        // The test plan marks every file as "uncached", so both methods apply; ODirect falls back to
+        // the plain chain on filesystems that reject the flag.
+        let data = pattern(2 * (8 << 20) + 1234);
+        for method in [Method::ParallelRanged, Method::ODirect] {
+            assert_eq!(copy_with(method, &data), data, "{}", method.name());
+        }
     }
 
     #[test]

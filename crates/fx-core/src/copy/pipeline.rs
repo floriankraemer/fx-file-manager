@@ -4,6 +4,7 @@
 use super::conflict::{self, Conflict, ConflictPolicy, Resolution, keep_both_name, temp_name};
 use super::plan::{CopyPlan, Durability, MethodCache, Op, Order, Os, Schedule};
 use super::progress::{DiskFull, ErrorOp, Progress, Shared, is_cancelled};
+use super::verify;
 use super::{Meta, Request, Summary};
 use crate::EntryKind;
 use crate::pool::copy_pool;
@@ -67,6 +68,12 @@ impl Meter<'_> {
     pub(crate) fn add(&mut self, n: u64) {
         self.added += n;
         Progress::add(&self.progress.bytes_done, n);
+    }
+
+    /// Takes over the count of another meter whose bytes are already in the progress.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn adopt(&mut self, other: Meter<'_>) {
+        self.added += other.added;
     }
 
     /// Forgets the bytes of an attempt that will be redone or abandoned.
@@ -886,6 +893,16 @@ impl<'a> Job<'a> {
             Placed::Skipped => Ok((Done::Skipped, 0)),
             Placed::Done(copied, final_name) => {
                 let dst_path = dst_dir.path().join(&final_name);
+                if self.plan.verify
+                    && let Err(err) = verify::check(self.sh, path, &dst_path)
+                {
+                    // A copy that cannot be trusted is not left behind (a cancel included).
+                    let _ = dst_dir.remove_at(&final_name);
+                    return Err(Failure {
+                        op: ErrorOp::Verify,
+                        err,
+                    });
+                }
                 if let Some(key) = link_key {
                     lock(&self.links)
                         .entry(key)

@@ -52,9 +52,17 @@ struct TransferArgs {
     #[arg(long)]
     workers: Option<usize>,
     /// Force one data method (no fallback): ficlone, copy-file-range, sendfile, clonefileat,
-    /// copyfile2, duplicate-extents, read-write.
+    /// copyfile2, duplicate-extents, read-write, or an experimental one (see `--experimental`).
     #[arg(long, value_parser = parse_method)]
     method: Option<Method>,
+    /// Try an experimental method first and fall back to the planned chain where it does not apply:
+    /// uring (needs a build with `--features uring`), parallel (Linux, files >= 1 GiB), o-direct (Linux,
+    /// files >= 1 GiB), raw-small (Windows, files < 64 KiB). Never used unless asked for.
+    #[arg(long, value_parser = parse_experiment)]
+    experimental: Option<Method>,
+    /// Read every copied file again and compare xxh3 checksums; a mismatch is an error for that item.
+    #[arg(long)]
+    verify: bool,
     /// Override the planned schedule.
     #[arg(long, value_enum)]
     schedule: Option<ScheduleArg>,
@@ -86,6 +94,12 @@ fn parse_method(name: &str) -> Result<Method, String> {
         Some(Method::Rename) | None => Err(format!("unknown data method `{name}`")),
         Some(m) => Ok(m),
     }
+}
+
+fn parse_experiment(name: &str) -> Result<Method, String> {
+    Method::from_name(name)
+        .filter(|m| Method::EXPERIMENTAL.contains(m))
+        .ok_or_else(|| format!("unknown experimental method `{name}`"))
 }
 
 impl From<ConflictArg> for ConflictPolicy {
@@ -315,8 +329,15 @@ fn run_transfer(args: &TransferArgs, op: Op) -> Result<(), Box<dyn std::error::E
             workers: args.workers,
             method: args.method,
             schedule: args.schedule.map(Into::into),
+            experiment: args.experimental,
+            verify: args.verify,
         },
     };
+    if args.experimental == Some(Method::IoUring) && !cfg!(feature = "uring") {
+        eprintln!(
+            "fx: this build has no io_uring support (rebuild with --features uring); using the default methods"
+        );
+    }
     let handle = TransferHandle::new(|| {});
     let show = !args.quiet && io::stderr().is_terminal();
     let done = AtomicBool::new(false);
@@ -367,7 +388,12 @@ fn report(s: &Summary) {
         .plans
         .iter()
         .map(|p| {
-            let methods: Vec<&str> = p.methods.iter().map(|m| m.name()).collect();
+            let methods: Vec<&str> = p
+                .experiment
+                .iter()
+                .chain(p.methods)
+                .map(|m| m.name())
+                .collect();
             let schedule = match p.schedule {
                 Schedule::Streaming => "streaming",
                 Schedule::TwoPhase { .. } => "two-phase",
@@ -577,6 +603,8 @@ mod tests {
         assert_eq!(fmt_bytes(1536), "1.5 KiB");
         assert!(parse_method("rename").is_err());
         assert_eq!(parse_method("read-write"), Ok(Method::ReadWrite));
+        assert_eq!(parse_experiment("uring"), Ok(Method::IoUring));
+        assert!(parse_experiment("read-write").is_err());
     }
 
     #[test]

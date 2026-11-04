@@ -9,6 +9,10 @@ rust-version.workspace = true
 name = "fx"
 path = "src/main.rs"
 
+[features]
+# Experimental io_uring small-file copy: `fx cp --experimental uring`.
+uring = ["fx-core/uring"]
+
 [dependencies]
 fx-core = { path = "../fx-core" }
 clap = { version = "4", features = ["derive"] }
