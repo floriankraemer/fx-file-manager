@@ -1,6 +1,6 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, settings.
 
-use super::settings;
+use super::{about, settings};
 use crate::theme;
 use eframe::egui::{
     self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
@@ -32,6 +32,7 @@ pub enum Dialog {
     },
     Properties(EntryDetails),
     Settings(Box<settings::State>),
+    About,
 }
 
 impl Dialog {
@@ -94,10 +95,11 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
         Dialog::NewFolder { text, fresh } => new_folder(ctx, explorer, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
         Dialog::Settings(state) => settings::show(ctx, explorer, state),
+        Dialog::About => about::show(ctx),
     }
 }
 
-fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool {
+pub(super) fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool {
     let response = Modal::new(Id::unique(id)).show(ctx, |ui| {
         ui.set_width(WIDTH);
         content(ui)
@@ -106,7 +108,7 @@ fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool
 }
 
 /// Right-aligned button row; the closure adds buttons in right-to-left order (primary first).
-fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+pub(super) fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
     ui.with_layout(Layout::right_to_left(Align::Center), add);
 }

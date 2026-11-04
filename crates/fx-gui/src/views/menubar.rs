@@ -14,6 +14,12 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
             }
         });
         ui.menu_button("View", |ui| view_menu(ui, explorer, actions));
+        ui.menu_button("Help", |ui| {
+            if menu_item(ui, "About fx", "F1", true) {
+                actions.push(Action::OpenAbout);
+                ui.close();
+            }
+        });
     });
 }
 

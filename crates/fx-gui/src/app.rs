@@ -86,6 +86,7 @@ impl App {
                 let dialog = Dialog::settings(ex);
                 self.open_dialog(Some(dialog));
             }
+            Action::OpenAbout => self.open_dialog(Some(Dialog::About)),
             Action::SelectAll => ex.active_mut().select_all(),
             Action::Refresh => ex.refresh(),
             Action::Open(row) => ex.activate(row),
@@ -183,6 +184,7 @@ impl App {
                 ),
                 (Modifiers::ALT, Key::Enter, Action::Properties),
                 (Modifiers::CTRL, Key::Comma, Action::OpenSettings),
+                (Modifiers::NONE, Key::F1, Action::OpenAbout),
             ];
             for (modifiers, key, action) in bindings {
                 if i.consume_key(modifiers, key) {
@@ -238,7 +240,7 @@ impl eframe::App for App {
             views::tabs::show(ui, &mut self.explorer);
         });
         egui::Panel::top("toolbar").show(ui, |ui| {
-            views::toolbar::show(ui, &mut self.explorer);
+            views::toolbar::show(ui, &mut self.explorer, &mut actions);
         });
         egui::Panel::top("commands").show(ui, |ui| {
             views::commandbar::show(ui, &self.explorer, &mut actions);
