@@ -8,8 +8,8 @@ use eframe::egui::{
     Ui,
 };
 use fx_app::{
-    Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings,
-    open_with_system, t,
+    ConflictChoice, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE, MIN_FONT_SIZE,
+    Settings, open_with_system, t,
 };
 use std::path::PathBuf;
 
@@ -20,15 +20,20 @@ pub enum Category {
     Fonts,
     Listing,
     Behavior,
+    Transfers,
 }
 
+/// The worker override goes up to robocopy's `/MT` maximum.
+const MAX_COPY_WORKERS: u32 = 128;
+
 impl Category {
-    pub const ALL: [Category; 5] = [
+    pub const ALL: [Category; 6] = [
         Category::General,
         Category::Appearance,
         Category::Fonts,
         Category::Listing,
         Category::Behavior,
+        Category::Transfers,
     ];
 
     pub fn label(self) -> &'static str {
@@ -38,6 +43,7 @@ impl Category {
             Category::Fonts => t("settings.cat.fonts"),
             Category::Listing => t("settings.cat.listing"),
             Category::Behavior => t("settings.cat.behavior"),
+            Category::Transfers => t("settings.cat.transfers"),
         }
     }
 }
@@ -217,6 +223,46 @@ const ROWS: &[Row] = &[
                         .color(theme::dim()),
                 );
             }
+        },
+    },
+    Row {
+        category: Category::Transfers,
+        label: "settings.conflict_policy",
+        show: |ui, f, l| {
+            ui.label(l);
+            let policy = &mut f.draft.conflict_policy;
+            egui::ComboBox::from_id_salt("conflict-policy")
+                .selected_text(policy.label())
+                .show_ui(ui, |ui| {
+                    for choice in ConflictChoice::ALL {
+                        ui.selectable_value(policy, choice, choice.label());
+                    }
+                });
+        },
+    },
+    Row {
+        category: Category::Transfers,
+        label: "settings.copy_workers",
+        show: |ui, f, l| {
+            ui.label(l);
+            ui.add(
+                egui::DragValue::new(&mut f.draft.copy_workers)
+                    .range(0..=MAX_COPY_WORKERS)
+                    .custom_formatter(|n, _| {
+                        if n == 0.0 {
+                            t("settings.copy_workers_auto").to_owned()
+                        } else {
+                            format!("{n}")
+                        }
+                    }),
+            );
+            ui.label(
+                RichText::new(
+                    "Automatic picks the count per storage type (SSD, HDD, USB, network).",
+                )
+                .small()
+                .color(theme::dim()),
+            );
         },
     },
 ];

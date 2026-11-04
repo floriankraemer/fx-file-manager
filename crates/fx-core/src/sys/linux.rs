@@ -1,7 +1,7 @@
 //! Linux backend: getdents64 via `RawDir`, dirfd-relative statx, statfs + sysfs storage detection.
 
 use crate::pool::pool;
-use crate::{EntryKind, Listing, StorageKind, Strategy};
+use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 use rayon::prelude::*;
 use rustix::fs::{
     AtFlags, CWD, FileType, Mode, OFlags, RawDir, StatxFlags, major, minor, openat, statfs, statx,
@@ -170,17 +170,74 @@ fn kind_from_fs_magic(magic: u64) -> Option<StorageKind> {
         .then_some(StorageKind::Network)
 }
 
-fn rotational_kind(major: u32, minor: u32) -> StorageKind {
+/// Reads `rel` of the block device, falling back to its parent disk: a partition has no
+/// `queue/`, `device/` or `removable` of its own.
+fn block_attr(major: u32, minor: u32, rel: &str) -> Option<String> {
     let base = format!("/sys/dev/block/{major}:{minor}");
-    // A partition has no queue/ or device/ of its own; its parent disk does.
-    let read = |rel: &str| {
-        [format!("{base}/{rel}"), format!("{base}/../{rel}")]
-            .iter()
-            .find_map(|p| std::fs::read_to_string(p).ok())
-    };
-    let rotational = read("queue/rotational");
-    let model = read("device/model").unwrap_or_default();
+    [format!("{base}/{rel}"), format!("{base}/../{rel}")]
+        .iter()
+        .find_map(|p| std::fs::read_to_string(p).ok())
+}
+
+fn rotational_kind(major: u32, minor: u32) -> StorageKind {
+    let rotational = block_attr(major, minor, "queue/rotational");
+    let model = block_attr(major, minor, "device/model").unwrap_or_default();
     kind_from_block_info(rotational.as_deref(), &model)
+}
+
+/// One `stat` and one `statfs`; block-device storage adds a few small sysfs reads.
+pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
+    let Ok(st) = rustix::fs::stat(path) else {
+        return VolumeInfo::unknown(0);
+    };
+    let id = st.st_dev;
+    let Ok(fs) = statfs(path) else {
+        return VolumeInfo::unknown(id);
+    };
+    let magic = fs.f_type as u64 & 0xFFFF_FFFF;
+    let kind = fs_kind_from_magic(magic);
+    let storage = kind_from_fs_magic(magic).unwrap_or_else(|| {
+        let (major, minor) = (major(id), minor(id));
+        let device = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok();
+        let flag = block_attr(major, minor, "removable");
+        if is_removable(flag.as_deref(), device.as_deref().and_then(Path::to_str)) {
+            StorageKind::Removable
+        } else {
+            rotational_kind(major, minor)
+        }
+    });
+    VolumeInfo {
+        id,
+        fs: kind,
+        storage,
+        caps: FsCaps::for_fs(kind),
+    }
+}
+
+/// `removable` is the sysfs flag; `device` the resolved `/sys/dev/block/M:m` path,
+/// which runs through `.../usbN/...` for USB disks that do not set the flag (most USB SSDs).
+fn is_removable(removable: Option<&str>, device: Option<&str>) -> bool {
+    removable.map(str::trim) == Some("1")
+        || device.is_some_and(|d| d.split('/').any(|part| part.starts_with("usb")))
+}
+
+fn fs_kind_from_magic(magic: u64) -> FsKind {
+    match magic {
+        0x9123_683E => FsKind::Btrfs,
+        0x5846_5342 => FsKind::Xfs,
+        0xEF53 => FsKind::Ext4,
+        0xCA45_1A4E => FsKind::Bcachefs,
+        0x2FC1_2FC1 => FsKind::Zfs,
+        0xF2F5_2010 => FsKind::F2fs,
+        0x0102_1994 => FsKind::Tmpfs,
+        0x4D44 => FsKind::Fat,
+        0x2011_BAB0 => FsKind::Exfat,
+        0x7366_746E | 0x5346_544E => FsKind::Ntfs,
+        0x6969 => FsKind::Nfs,
+        0xFF53_4D42 | 0xFE53_4D42 | 0x517B => FsKind::Smb,
+        0x6573_5546 => FsKind::Fuse,
+        _ => FsKind::Other,
+    }
 }
 
 /// Hypervisor disks (Hyper-V/WSL2, QEMU, VirtualBox, VMware) report `rotational=1`
@@ -222,6 +279,52 @@ mod tests {
             StorageKind::Ssd
         );
         assert_eq!(kind_from_block_info(None, ""), StorageKind::Unknown);
+    }
+
+    #[test]
+    fn fs_magics_map_to_kinds() {
+        for (magic, kind) in [
+            (0x9123_683E, FsKind::Btrfs),
+            (0x5846_5342, FsKind::Xfs),
+            (0xEF53, FsKind::Ext4),
+            (0xCA45_1A4E, FsKind::Bcachefs),
+            (0x2FC1_2FC1, FsKind::Zfs),
+            (0xF2F5_2010, FsKind::F2fs),
+            (0x0102_1994, FsKind::Tmpfs),
+            (0x4D44, FsKind::Fat),
+            (0x2011_BAB0, FsKind::Exfat),
+            (0x7366_746E, FsKind::Ntfs),
+            (0x6969, FsKind::Nfs),
+            (0xFF53_4D42, FsKind::Smb),
+            (0x6573_5546, FsKind::Fuse),
+            (0x0102_1997, FsKind::Other),
+        ] {
+            assert_eq!(fs_kind_from_magic(magic), kind, "{magic:#x}");
+        }
+    }
+
+    #[test]
+    fn removable_by_flag_or_usb_path() {
+        assert!(is_removable(Some("1\n"), None));
+        assert!(is_removable(
+            Some("0\n"),
+            Some(
+                "/sys/devices/pci0000:00/0000:00:14.0/usb2/2-1/2-1:1.0/host6/target6:0:0/6:0:0:0/block/sdb"
+            )
+        ));
+        assert!(!is_removable(
+            Some("0"),
+            Some("/sys/devices/pci0000:00/0000:00:1d.0/0000:3d:00.0/nvme/nvme0/nvme0n1")
+        ));
+        assert!(!is_removable(None, None));
+    }
+
+    #[test]
+    fn volume_info_of_a_temp_dir_is_sane() {
+        let dir = tempfile::tempdir().unwrap();
+        let info = volume_info(dir.path());
+        assert_eq!(info.id, rustix::fs::stat(dir.path()).unwrap().st_dev);
+        assert_eq!(info.caps, FsCaps::for_fs(info.fs));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use crate::i18n::Language;
 use crate::places::home_dir;
+use fx_core::ConflictPolicy;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -42,6 +43,10 @@ pub struct Settings {
     pub folder_order: FolderOrder,
     /// UI language; `system` follows the OS.
     pub language: Language,
+    /// What a paste does when an item with the same name exists.
+    pub conflict_policy: ConflictChoice,
+    /// Copy workers per transfer; `0` lets the copy planner decide per storage type.
+    pub copy_workers: u32,
 }
 
 impl Default for Settings {
@@ -63,6 +68,8 @@ impl Default for Settings {
             tree_font_size: 13.5,
             folder_order: FolderOrder::default(),
             language: Language::default(),
+            conflict_policy: ConflictChoice::default(),
+            copy_workers: 0,
         }
     }
 }
@@ -94,6 +101,55 @@ pub enum FolderOrder {
     Top,
     Mixed,
     Bottom,
+}
+
+/// Persisted form of [`ConflictPolicy`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConflictChoice {
+    #[default]
+    Ask,
+    Skip,
+    Overwrite,
+    KeepBoth,
+    OverwriteIfNewer,
+    SkipIdentical,
+}
+
+impl ConflictChoice {
+    pub const ALL: [ConflictChoice; 6] = [
+        ConflictChoice::Ask,
+        ConflictChoice::Skip,
+        ConflictChoice::Overwrite,
+        ConflictChoice::KeepBoth,
+        ConflictChoice::OverwriteIfNewer,
+        ConflictChoice::SkipIdentical,
+    ];
+
+    /// In the current UI language.
+    pub fn label(self) -> &'static str {
+        crate::t(match self {
+            ConflictChoice::Ask => "conflict_policy.ask",
+            ConflictChoice::Skip => "conflict_policy.skip",
+            ConflictChoice::Overwrite => "conflict_policy.overwrite",
+            ConflictChoice::KeepBoth => "conflict_policy.keep_both",
+            ConflictChoice::OverwriteIfNewer => "conflict_policy.overwrite_if_newer",
+            ConflictChoice::SkipIdentical => "conflict_policy.skip_identical",
+        })
+    }
+}
+
+impl From<ConflictChoice> for ConflictPolicy {
+    fn from(c: ConflictChoice) -> Self {
+        match c {
+            ConflictChoice::Ask => ConflictPolicy::Ask,
+            ConflictChoice::Skip => ConflictPolicy::Skip,
+            ConflictChoice::Overwrite => ConflictPolicy::Overwrite,
+            ConflictChoice::KeepBoth => ConflictPolicy::KeepBoth,
+            ConflictChoice::OverwriteIfNewer => ConflictPolicy::OverwriteIfNewer,
+            ConflictChoice::SkipIdentical => ConflictPolicy::SkipIdentical,
+        }
+    }
 }
 
 impl Settings {
@@ -226,6 +282,8 @@ mod tests {
             tree_font_size: 10.5,
             folder_order: FolderOrder::Bottom,
             language: Language::Uk,
+            conflict_policy: ConflictChoice::OverwriteIfNewer,
+            copy_workers: 6,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

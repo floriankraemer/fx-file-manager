@@ -1430,7 +1430,6 @@ name = "fx-app"
 version = "0.1.0"
 dependencies = [
  "fx-core",
- "rustix 1.1.6",
  "serde",
  "sys-locale",
  "tempfile",

@@ -6,11 +6,27 @@
 //! /// The backend owns enrichment so it can reuse state from enumeration (Linux: the dirfd).
 //! pub(crate) fn enumerate(dir: &Path, strategy: &Strategy, metadata: bool, out: &mut Listing) -> io::Result<()>;
 //! pub(crate) fn detect_storage(path: &Path) -> StorageKind;
+//! pub(crate) fn volume_info(path: &Path) -> VolumeInfo;
 //! ```
 //!
 //! `hidden` and `inode` are always filled (dotfile / FILE_ATTRIBUTE_HIDDEN / UF_HIDDEN).
 
 pub(crate) mod std_fs;
+
+/// Copy backend: same functions on every OS, see `copy::pipeline` for how they are used.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) mod unix_copy;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use unix_copy as copy;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) mod std_copy;
+#[cfg(windows)]
+pub(crate) mod windows_copy;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub(crate) use std_copy as copy;
+#[cfg(windows)]
+pub(crate) use windows_copy as copy;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
@@ -40,5 +56,17 @@ pub(crate) mod fallback {
 
     pub(crate) fn detect_storage(_path: &Path) -> StorageKind {
         StorageKind::Unknown
+    }
+
+    pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
+        #[cfg(unix)]
+        let id =
+            std::fs::symlink_metadata(path).map_or(0, |m| std::os::unix::fs::MetadataExt::dev(&m));
+        #[cfg(not(unix))]
+        let id = {
+            let _ = path;
+            0
+        };
+        crate::VolumeInfo::unknown(id)
     }
 }

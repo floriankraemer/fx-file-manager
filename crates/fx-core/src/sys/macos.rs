@@ -255,23 +255,49 @@ const NETWORK_FS: [&[u8]; 6] = [
     b"smbfs", b"nfs", b"afpfs", b"webdav", b"macfuse", b"osxfuse",
 ];
 
-pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    let Ok(cpath) = cstring(path) else {
-        return StorageKind::Unknown;
-    };
+fn fs_type_name(path: &Path) -> Option<std::ffi::CString> {
+    let cpath = cstring(path).ok()?;
     // SAFETY: valid C string and out-pointer; the struct is read only on success.
-    let fstype = unsafe {
+    unsafe {
         let mut sfs: libc::statfs = std::mem::zeroed();
         if libc::statfs(cpath.as_ptr(), &mut sfs) != 0 {
-            return StorageKind::Unknown;
+            return None;
         }
-        std::ffi::CStr::from_ptr(sfs.f_fstypename.as_ptr()).to_owned()
-    };
+        Some(std::ffi::CStr::from_ptr(sfs.f_fstypename.as_ptr()).to_owned())
+    }
+}
+
+fn storage_of(fstype: &std::ffi::CStr) -> StorageKind {
     if NETWORK_FS.contains(&fstype.to_bytes()) {
         StorageKind::Network
     } else {
         // ponytail: macs ship SSD; IOKit rotational probe if external HDD speed matters.
         StorageKind::Ssd
+    }
+}
+
+pub(crate) fn detect_storage(path: &Path) -> StorageKind {
+    fs_type_name(path).map_or(StorageKind::Unknown, |t| storage_of(&t))
+}
+
+/// Clone support comes from the filesystem type: every APFS volume supports `clonefile`.
+// ponytail: no getattrlist(VOL_CAP_INT_CLONE) probe; the per-pair method cache already
+// falls back on the first ENOTSUP, so a probe would only save one failed call per job.
+// Removable media stay `Ssd` until a DiskArbitration probe is justified.
+pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
+    let id = std::fs::symlink_metadata(path).map_or(0, |m| {
+        use std::os::unix::fs::MetadataExt;
+        m.dev()
+    });
+    let Some(fstype) = fs_type_name(path) else {
+        return crate::VolumeInfo::unknown(id);
+    };
+    let fs = crate::FsKind::from_name(&fstype.to_string_lossy());
+    crate::VolumeInfo {
+        id,
+        fs,
+        storage: storage_of(&fstype),
+        caps: crate::FsCaps::for_fs(fs),
     }
 }
 

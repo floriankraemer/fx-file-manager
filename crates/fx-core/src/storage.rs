@@ -5,6 +5,8 @@ pub enum StorageKind {
     Ssd,
     Hdd,
     Network,
+    /// USB sticks and other hot-pluggable media.
+    Removable,
     Unknown,
 }
 
@@ -14,6 +16,7 @@ impl std::fmt::Display for StorageKind {
             Self::Ssd => "ssd",
             Self::Hdd => "hdd",
             Self::Network => "network",
+            Self::Removable => "removable",
             Self::Unknown => "unknown",
         })
     }
@@ -23,6 +26,8 @@ const KIB: usize = 1024;
 /// In-flight requests that hide network latency without overloading the server.
 const NETWORK_IN_FLIGHT: usize = 8;
 const HDD_WALK_THREADS: usize = 2;
+/// USB flash has little internal parallelism; more requests only queue up.
+const REMOVABLE_THREADS: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Strategy {
@@ -48,6 +53,12 @@ impl Strategy {
                 stat_threads: 1,
                 walk_threads: HDD_WALK_THREADS,
                 inode_order: true,
+                buf_size: 64 * KIB,
+            },
+            StorageKind::Removable => Self {
+                stat_threads: REMOVABLE_THREADS,
+                walk_threads: REMOVABLE_THREADS,
+                inode_order: false,
                 buf_size: 64 * KIB,
             },
             StorageKind::Network => Self {
@@ -81,6 +92,9 @@ mod tests {
 
         let net = Strategy::for_kind(StorageKind::Network, 16);
         assert_eq!((net.stat_threads, net.buf_size), (8, 256 * 1024));
+
+        let usb = Strategy::for_kind(StorageKind::Removable, 16);
+        assert_eq!((usb.stat_threads, usb.walk_threads), (2, 2));
     }
 
     #[test]

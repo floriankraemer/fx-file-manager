@@ -2,19 +2,22 @@
 
 use clap::{Parser, ValueEnum};
 use fx_core::{
-    Backend, Entry, EntryKind, ListOptions, Listing, StorageKind, Strategy, WalkOptions, list_dir,
-    walk,
+    Backend, ConflictPolicy, Entry, EntryKind, Item, ListOptions, Listing, Method, Op, Order,
+    Overrides, Request, Schedule, StorageKind, Strategy, Summary, TransferHandle, WalkOptions,
+    list_dir, walk,
 };
+use std::io::IsTerminal;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
 #[command(
     name = "fx",
-    about = "Fast directory listing",
+    about = "Fast directory listing, copying and moving",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -28,6 +31,87 @@ struct Cli {
 enum Cmd {
     /// Recursively count (and optionally print) everything below a directory.
     Walk(WalkArgs),
+    /// Copy files and folders (like `cp -a`): `fx cp SRC... DIR` or `fx cp SRC NEW_NAME`.
+    Cp(TransferArgs),
+    /// Move files and folders: same-volume moves rename, others copy, flush, then delete.
+    Mv(TransferArgs),
+}
+
+#[derive(clap::Args)]
+struct TransferArgs {
+    /// Sources, then the destination.
+    #[arg(required = true, num_args = 2..)]
+    paths: Vec<PathBuf>,
+    /// What to do when a destination entry exists. Folders always merge.
+    #[arg(long, value_enum, default_value = "skip")]
+    conflict: ConflictArg,
+    /// Override storage detection on both sides.
+    #[arg(long, value_enum)]
+    storage: Option<StorageArg>,
+    /// Override the planned worker count.
+    #[arg(long)]
+    workers: Option<usize>,
+    /// Force one data method (no fallback): ficlone, copy-file-range, sendfile, clonefileat,
+    /// copyfile2, duplicate-extents, read-write.
+    #[arg(long, value_parser = parse_method)]
+    method: Option<Method>,
+    /// Override the planned schedule.
+    #[arg(long, value_enum)]
+    schedule: Option<ScheduleArg>,
+    /// No progress line.
+    #[arg(long)]
+    quiet: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ConflictArg {
+    Skip,
+    Overwrite,
+    KeepBoth,
+    OverwriteIfNewer,
+    SkipIdentical,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ScheduleArg {
+    Streaming,
+    /// Disk order by first extent.
+    TwoPhase,
+    /// Disk order approximated by inode number.
+    TwoPhaseInode,
+}
+
+fn parse_method(name: &str) -> Result<Method, String> {
+    match Method::from_name(name) {
+        Some(Method::Rename) | None => Err(format!("unknown data method `{name}`")),
+        Some(m) => Ok(m),
+    }
+}
+
+impl From<ConflictArg> for ConflictPolicy {
+    fn from(c: ConflictArg) -> Self {
+        match c {
+            ConflictArg::Skip => ConflictPolicy::Skip,
+            ConflictArg::Overwrite => ConflictPolicy::Overwrite,
+            ConflictArg::KeepBoth => ConflictPolicy::KeepBoth,
+            ConflictArg::OverwriteIfNewer => ConflictPolicy::OverwriteIfNewer,
+            ConflictArg::SkipIdentical => ConflictPolicy::SkipIdentical,
+        }
+    }
+}
+
+impl From<ScheduleArg> for Schedule {
+    fn from(s: ScheduleArg) -> Self {
+        match s {
+            ScheduleArg::Streaming => Schedule::Streaming,
+            ScheduleArg::TwoPhase => Schedule::TwoPhase {
+                order: Order::Extent,
+            },
+            ScheduleArg::TwoPhaseInode => Schedule::TwoPhase {
+                order: Order::Inode,
+            },
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -80,6 +164,7 @@ enum StorageArg {
     Ssd,
     Hdd,
     Network,
+    Removable,
 }
 
 impl From<BackendArg> for Backend {
@@ -97,6 +182,7 @@ impl From<StorageArg> for StorageKind {
             StorageArg::Ssd => StorageKind::Ssd,
             StorageArg::Hdd => StorageKind::Hdd,
             StorageArg::Network => StorageKind::Network,
+            StorageArg::Removable => StorageKind::Removable,
         }
     }
 }
@@ -105,6 +191,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.cmd {
         Some(Cmd::Walk(args)) => run_walk(args),
+        Some(Cmd::Cp(args)) => run_transfer(args, Op::Copy),
+        Some(Cmd::Mv(args)) => run_transfer(args, Op::Move),
         None => run_list(&cli.list),
     };
     match result {
@@ -194,6 +282,125 @@ fn run_walk(args: &WalkArgs) -> Result<(), Box<dyn std::error::Error>> {
         fmt_env(walked.storage, &walked.strategy),
     );
     Ok(())
+}
+
+/// `fx cp a b dir/` copies into `dir`; `fx cp a b` with no existing `b` creates `b` (like `cp`).
+fn transfer_items(paths: &[PathBuf]) -> Result<Vec<Item>, String> {
+    let (dest, sources) = paths.split_last().ok_or("missing destination")?;
+    if dest.is_dir() {
+        return Ok(sources
+            .iter()
+            .map(|src| Item {
+                src: src.clone(),
+                dst: dest.join(src.file_name().unwrap_or(src.as_os_str())),
+            })
+            .collect());
+    }
+    match sources {
+        [src] => Ok(vec![Item {
+            src: src.clone(),
+            dst: dest.clone(),
+        }]),
+        _ => Err(format!("{}: not a directory", dest.display())),
+    }
+}
+
+fn run_transfer(args: &TransferArgs, op: Op) -> Result<(), Box<dyn std::error::Error>> {
+    let req = Request {
+        items: transfer_items(&args.paths)?,
+        op,
+        policy: args.conflict.into(),
+        overrides: Overrides {
+            storage: args.storage.map(Into::into),
+            workers: args.workers,
+            method: args.method,
+            schedule: args.schedule.map(Into::into),
+        },
+    };
+    let handle = TransferHandle::new(|| {});
+    let show = !args.quiet && io::stderr().is_terminal();
+    let done = AtomicBool::new(false);
+    let summary = std::thread::scope(|s| {
+        if show {
+            s.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    let p = handle.snapshot();
+                    let more = if p.walk_complete { "" } else { "+" };
+                    let secs = p.elapsed.as_secs_f64().max(1e-3);
+                    eprint!(
+                        "\r{}/{}{more} files · {} · {}/s\x1b[K",
+                        p.files_done,
+                        p.files_total,
+                        fmt_bytes(p.bytes_done),
+                        fmt_bytes((p.bytes_done as f64 / secs) as u64),
+                    );
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                eprint!("\r\x1b[K");
+            });
+        }
+        let summary = handle.run(&req);
+        done.store(true, Ordering::Relaxed);
+        summary
+    });
+    report(&summary);
+    if summary.error_count() > 0 || summary.cancelled {
+        return Err(format!("{} errors", summary.error_count()).into());
+    }
+    Ok(())
+}
+
+fn report(s: &Summary) {
+    for e in s.errors.iter().filter(|e| !e.warning) {
+        eprintln!("fx: {e}");
+    }
+    let warnings = s.errors.iter().filter(|e| e.warning).count();
+    let counts = [
+        Some(plural(s.files, "file", "files")),
+        Some(fmt_bytes(s.bytes)),
+        (s.cloned > 0).then(|| format!("{} cloned", s.cloned)),
+        (s.skipped > 0).then(|| format!("{} skipped", s.skipped)),
+        (warnings > 0).then(|| plural(warnings as u64, "warning", "warnings")),
+        (!s.kept_sources.is_empty()).then(|| format!("{} sources kept", s.kept_sources.len())),
+    ];
+    let plans: Vec<String> = s
+        .plans
+        .iter()
+        .map(|p| {
+            let methods: Vec<&str> = p.methods.iter().map(|m| m.name()).collect();
+            let schedule = match p.schedule {
+                Schedule::Streaming => "streaming",
+                Schedule::TwoPhase { .. } => "two-phase",
+            };
+            format!("{} workers, {schedule}, {}", p.workers, methods.join(" > "))
+        })
+        .collect();
+    eprintln!(
+        "{} · {} · {}",
+        counts.into_iter().flatten().collect::<Vec<_>>().join(", "),
+        fmt_duration(s.elapsed),
+        if plans.is_empty() {
+            "rename".to_owned()
+        } else {
+            plans.join("; ")
+        },
+    );
+}
+
+/// `1.5 MiB`-style sizes for the progress line.
+fn fmt_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = n as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
 }
 
 fn plural(n: u64, one: &str, many: &str) -> String {
@@ -347,6 +554,29 @@ mod tests {
         let mut v = Vec::new();
         push_mtime(&mut v, Some(UNIX_EPOCH - Duration::from_secs(60)));
         assert_eq!(v, b"1969-12-31 23:59");
+    }
+
+    #[test]
+    fn transfer_targets_follow_cp() {
+        let dir = std::env::temp_dir();
+        let items =
+            transfer_items(&[PathBuf::from("/x/a"), PathBuf::from("/y/b"), dir.clone()]).unwrap();
+        assert_eq!(items[1].dst, dir.join("b"));
+        let items =
+            transfer_items(&[PathBuf::from("/x/a"), PathBuf::from("/no/such/new")]).unwrap();
+        assert_eq!(items[0].dst, PathBuf::from("/no/such/new"));
+        assert!(
+            transfer_items(&[
+                PathBuf::from("a"),
+                PathBuf::from("b"),
+                PathBuf::from("/no/such")
+            ])
+            .is_err()
+        );
+        assert_eq!(fmt_bytes(512), "512 B");
+        assert_eq!(fmt_bytes(1536), "1.5 KiB");
+        assert!(parse_method("rename").is_err());
+        assert_eq!(parse_method("read-write"), Ok(Method::ReadWrite));
     }
 
     #[test]

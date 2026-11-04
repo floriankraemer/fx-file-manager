@@ -1,4 +1,5 @@
-//! Rayon pools cached per thread count (spawning threads per call costs ~100us+).
+//! Rayon pools: cached per thread count for listing (spawning threads per call costs ~100us+),
+//! and one fresh pool per transfer for copying.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,4 +22,14 @@ pub(crate) fn pool(threads: usize) -> Arc<rayon::ThreadPool> {
             )
         })
         .clone()
+}
+
+/// A pool owned by one transfer. Not cached: copy workers can block for long (a conflict waiting for the
+/// user, a full disk, a paused job), and that must never stall listing or another transfer.
+pub(crate) fn copy_pool(threads: usize) -> rayon::ThreadPool {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.max(1))
+        .thread_name(|i| format!("fx-copy-{i}"))
+        .build()
+        .expect("failed to build copy pool")
 }
