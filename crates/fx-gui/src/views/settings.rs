@@ -2,10 +2,11 @@
 //!
 //! Every option is declared once in [`ROWS`]; pages and search both derive from that registry.
 
+use crate::command::{self, COMMANDS, Command, Def, Shortcut};
 use crate::theme;
 use eframe::egui::{
-    self, Align, Context, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense, TextEdit,
-    Ui,
+    self, Align, Context, Event, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense,
+    TextEdit, Ui,
 };
 use fx_app::{
     ConflictChoice, DateFormat, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE,
@@ -21,19 +22,21 @@ pub enum Category {
     Listing,
     Behavior,
     Transfers,
+    Keyboard,
 }
 
 /// The worker override goes up to robocopy's `/MT` maximum.
 const MAX_COPY_WORKERS: u32 = 128;
 
 impl Category {
-    pub const ALL: [Category; 6] = [
+    pub const ALL: [Category; 7] = [
         Category::General,
         Category::Appearance,
         Category::Fonts,
         Category::Listing,
         Category::Behavior,
         Category::Transfers,
+        Category::Keyboard,
     ];
 
     pub fn label(self) -> &'static str {
@@ -44,6 +47,7 @@ impl Category {
             Category::Listing => t("settings.cat.listing"),
             Category::Behavior => t("settings.cat.behavior"),
             Category::Transfers => t("settings.cat.transfers"),
+            Category::Keyboard => t("settings.cat.keyboard"),
         }
     }
 }
@@ -369,6 +373,106 @@ fn font_combo(ui: &mut Ui, family: &mut Option<String>) {
         });
 }
 
+/// A key combination pressed this frame: `Some(None)` for a bare Esc (cancel). The key events are consumed.
+fn capture(ctx: &Context) -> Option<Option<Shortcut>> {
+    ctx.input_mut(|i| {
+        let (key, m) = i.events.iter().find_map(|e| match e {
+            Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => Some((*key, *modifiers)),
+            _ => None,
+        })?;
+        i.events.retain(|e| !matches!(e, Event::Key { .. }));
+        if key == Key::Escape && !(m.ctrl || m.shift || m.alt) {
+            return Some(None);
+        }
+        let mut modifiers = Modifiers::NONE;
+        modifiers.ctrl = m.ctrl;
+        modifiers.shift = m.shift;
+        modifiers.alt = m.alt;
+        Some(Some(Shortcut { modifiers, key }))
+    })
+}
+
+/// One row per command: current shortcuts, Record, Unbind, Reset and a conflict warning.
+fn keyboard_section(ui: &mut Ui, st: &mut State, commands: &[&Def], with_header: bool) {
+    if with_header {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(Category::Keyboard.label())
+                .strong()
+                .color(theme::accent()),
+        );
+        ui.separator();
+    } else {
+        ui.label(
+            RichText::new(t("settings.keyboard_note"))
+                .small()
+                .color(theme::dim()),
+        );
+    }
+    if let Some(command) = st.recording
+        && let Some(captured) = capture(ui.ctx())
+    {
+        if let Some(shortcut) = captured {
+            st.draft
+                .keymap
+                .insert(command.def().id.to_owned(), vec![shortcut.id()]);
+        }
+        st.recording = None;
+    }
+    for d in commands {
+        let shortcuts = command::shortcuts(d.command, &st.draft.keymap);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_sized([200.0, 20.0], egui::Label::new(t(d.title)).truncate());
+            if st.recording == Some(d.command) {
+                ui.colored_label(theme::accent(), t("settings.keyboard_press"));
+                return;
+            }
+            if shortcuts.is_empty() {
+                ui.label(RichText::new(t("settings.keyboard_none")).color(theme::dim()));
+            } else {
+                let text: Vec<String> = shortcuts.iter().map(Shortcut::display).collect();
+                ui.label(text.join(", "));
+            }
+            if ui.button(t("settings.keyboard_record")).clicked() {
+                st.recording = Some(d.command);
+            }
+            if ui
+                .add_enabled(
+                    !shortcuts.is_empty(),
+                    egui::Button::new(t("settings.keyboard_unbind")),
+                )
+                .clicked()
+            {
+                st.draft.keymap.insert(d.id.to_owned(), Vec::new());
+            }
+            if ui
+                .add_enabled(
+                    st.draft.keymap.contains_key(d.id),
+                    egui::Button::new(t("settings.keyboard_reset")),
+                )
+                .clicked()
+            {
+                st.draft.keymap.remove(d.id);
+            }
+            let others: Vec<&str> = command::conflicts(d.command, &st.draft.keymap)
+                .into_iter()
+                .map(|c| t(c.def().title))
+                .collect();
+            if !others.is_empty() {
+                ui.colored_label(
+                    theme::error(),
+                    fx_app::tr("settings.keyboard_also", &[("others", &others.join(", "))]),
+                );
+            }
+        });
+    }
+}
+
 /// Rows whose label or category label contains `query` (case-insensitive substring).
 fn search(query: &str) -> Vec<&'static Row> {
     let q = query.trim().to_lowercase();
@@ -387,6 +491,8 @@ pub struct State {
     pub start_text: String,
     pub category: Category,
     pub query: String,
+    /// The command whose next key combination is being captured.
+    recording: Option<Command>,
     /// What the live preview last applied.
     previewed: Settings,
 }
@@ -401,6 +507,7 @@ impl State {
                 .map_or_else(String::new, |p| p.display().to_string()),
             category: Category::General,
             query: String::new(),
+            recording: None,
             previewed: saved.clone(),
         }
     }
@@ -474,7 +581,21 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
                     } else {
                         search(&st.query)
                     };
-                    if rows.is_empty() {
+                    let query = st.query.trim().to_lowercase();
+                    let keyboard_page = query.is_empty() && st.category == Category::Keyboard;
+                    let commands: Vec<&Def> = COMMANDS
+                        .iter()
+                        .filter(|d| {
+                            keyboard_page
+                                || (!query.is_empty()
+                                    && (t(d.title).to_lowercase().contains(&query)
+                                        || Category::Keyboard
+                                            .label()
+                                            .to_lowercase()
+                                            .contains(&query)))
+                        })
+                        .collect();
+                    if rows.is_empty() && commands.is_empty() {
                         ui.label(RichText::new(t("settings.none")).color(theme::dim()));
                     }
                     let mut last = None;
@@ -490,6 +611,9 @@ pub fn show(ctx: &Context, explorer: &mut Explorer, st: &mut State) -> bool {
                         }
                         last = Some(r.category);
                         ui.horizontal_wrapped(|ui| (r.show)(ui, &mut form, t(r.label)));
+                    }
+                    if !commands.is_empty() {
+                        keyboard_section(ui, st, &commands, !keyboard_page);
                     }
                 });
         });
@@ -543,7 +667,11 @@ mod tests {
 
     #[test]
     fn every_category_has_rows() {
-        for c in Category::ALL {
+        // The Keyboard page is generated from the command table, not from ROWS.
+        for c in Category::ALL
+            .into_iter()
+            .filter(|c| *c != Category::Keyboard)
+        {
             assert!(ROWS.iter().any(|r| r.category == c));
         }
     }

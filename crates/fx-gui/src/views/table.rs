@@ -1,4 +1,5 @@
 use super::commandbar::menu_item;
+use crate::command::{Command, hint};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
@@ -275,42 +276,47 @@ fn row_menu(
         actions.push(Action::OpenInNewTab(row));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.cut"), "Ctrl+X", true) {
+    if menu_item(ui, t("cmd.cut"), &hint(Command::Cut), true) {
         actions.push(Action::Cut);
     }
-    if menu_item(ui, t("cmd.copy"), "Ctrl+C", true) {
+    if menu_item(ui, t("cmd.copy"), &hint(Command::Copy), true) {
         actions.push(Action::Copy);
     }
     if is_dir && menu_item(ui, t("cmd.paste_into"), "", can_paste) {
         actions.push(Action::PasteInto(row));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.rename"), "F2", selected == 1) {
+    if menu_item(ui, t("cmd.rename"), &hint(Command::Rename), selected == 1) {
         actions.push(Action::Rename);
     }
-    if menu_item(ui, t("cmd.delete"), "Del", true) {
+    if menu_item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
         actions.push(Action::Delete { permanent: false });
     }
     ui.separator();
     if menu_item(ui, t("cmd.copy_path"), "", true) {
         actions.push(Action::CopyPath);
     }
-    if menu_item(ui, t("cmd.properties"), "Alt+Enter", selected == 1) {
+    if menu_item(
+        ui,
+        t("cmd.properties"),
+        &hint(Command::Properties),
+        selected == 1,
+    ) {
         actions.push(Action::Properties);
     }
 }
 
 fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mut Vec<Action>) {
-    if menu_item(ui, t("cmd.new_folder"), "Ctrl+Shift+N", true) {
+    if menu_item(ui, t("cmd.new_folder"), &hint(Command::NewFolder), true) {
         actions.push(Action::NewFolder);
     }
-    if menu_item(ui, t("cmd.paste"), "Ctrl+V", can_paste) {
+    if menu_item(ui, t("cmd.paste"), &hint(Command::Paste), can_paste) {
         actions.push(Action::Paste);
     }
-    if menu_item(ui, t("cmd.refresh"), "F5", true) {
+    if menu_item(ui, t("cmd.refresh"), &hint(Command::Refresh), true) {
         actions.push(Action::Refresh);
     }
-    if menu_item(ui, t("cmd.select_all"), "Ctrl+A", true) {
+    if menu_item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
         actions.push(Action::SelectAll);
     }
     ui.separator();
@@ -322,7 +328,7 @@ fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mu
         actions.push(Action::SetShowHidden(hidden));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.settings"), "Ctrl+,", true) {
+    if menu_item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
         actions.push(Action::OpenSettings);
     }
 }

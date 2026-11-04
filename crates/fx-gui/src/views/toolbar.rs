@@ -1,4 +1,5 @@
 use crate::action::Action;
+use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::{CursorIcon, Layout, RichText, Sense, Stroke, TextStyle, Ui, vec2};
 use fx_app::{Explorer, breadcrumbs, t};
@@ -12,32 +13,40 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         if ui
             .add_enabled(can_back, egui::Button::new("←"))
-            .on_hover_text(t("tip.back"))
+            .on_hover_text(tip("tip.back", Command::Back))
             .clicked()
         {
             explorer.back();
         }
         if ui
             .add_enabled(can_forward, egui::Button::new("→"))
-            .on_hover_text(t("tip.forward"))
+            .on_hover_text(tip("tip.forward", Command::Forward))
             .clicked()
         {
             explorer.forward();
         }
         if ui
             .add_enabled(can_up, egui::Button::new("↑"))
-            .on_hover_text(t("tip.up"))
+            .on_hover_text(tip("tip.up", Command::Up))
             .clicked()
         {
             explorer.up();
         }
-        if ui.button("⟳").on_hover_text(t("tip.refresh")).clicked() {
+        if ui
+            .button("⟳")
+            .on_hover_text(tip("tip.refresh", Command::Refresh))
+            .clicked()
+        {
             explorer.refresh();
         }
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("ⓘ").on_hover_text(t("tip.about")).clicked() {
+            if ui
+                .button("ⓘ")
+                .on_hover_text(tip("tip.about", Command::About))
+                .clicked()
+            {
                 actions.push(Action::OpenAbout);
             }
             let tab = explorer.active_mut();

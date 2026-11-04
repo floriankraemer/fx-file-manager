@@ -4,6 +4,7 @@ use crate::i18n::Language;
 use crate::places::home_dir;
 use fx_core::ConflictPolicy;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -51,6 +52,9 @@ pub struct Settings {
     pub copy_workers: u32,
     /// Read every copied file back and compare checksums.
     pub verify_copies: bool,
+    /// Shortcut overrides: command id to shortcut strings such as `"ctrl+shift+n"`. An empty list unbinds.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub keymap: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Settings {
@@ -76,6 +80,7 @@ impl Default for Settings {
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
             verify_copies: false,
+            keymap: BTreeMap::new(),
         }
     }
 }
@@ -300,6 +305,13 @@ mod tests {
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
             verify_copies: true,
+            keymap: BTreeMap::from([
+                (
+                    "rename".to_owned(),
+                    vec!["f2".to_owned(), "ctrl+r".to_owned()],
+                ),
+                ("open_settings".to_owned(), vec![]),
+            ]),
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

@@ -1,6 +1,7 @@
+use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::{Sense, Ui};
-use fx_app::{Explorer, t};
+use fx_app::Explorer;
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
     let mut activate = None;
@@ -39,7 +40,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                         }));
                         if ui
                             .small_button("×")
-                            .on_hover_text(t("tip.close_tab"))
+                            .on_hover_text(tip("tip.close_tab", Command::CloseTab))
                             .clicked()
                         {
                             close = Some(i);
@@ -55,7 +56,11 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                 close = Some(i);
             }
         }
-        if ui.button("+").on_hover_text(t("tip.new_tab")).clicked() {
+        if ui
+            .button("+")
+            .on_hover_text(tip("tip.new_tab", Command::NewTab))
+            .clicked()
+        {
             add = true;
         }
     });
