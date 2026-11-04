@@ -396,8 +396,14 @@ mod tests {
 
     #[test]
     fn plain_strips_os_error_suffix() {
-        let err = io::Error::from_raw_os_error(13);
-        assert_eq!(plain(&err), "Permission denied");
+        // EACCES; Windows numbers its errors differently and words them in the system language.
+        let err = io::Error::from_raw_os_error(if cfg!(windows) { 5 } else { 13 });
+        let text = plain(&err);
+        assert!(!text.contains("os error") && !text.is_empty(), "{text}");
+        assert!(err.to_string().starts_with(&text));
+        if cfg!(unix) {
+            assert_eq!(text, "Permission denied");
+        }
     }
 
     fn run(job: Job) -> Outcome {

@@ -826,6 +826,14 @@ mod tests {
     use fx_core::EntryKind;
     use std::time::Duration;
 
+    /// Makes a dotfile hidden on Windows too, where only the hidden attribute counts.
+    fn hide(path: &Path) {
+        if cfg!(windows) {
+            let ok = Command::new("attrib").arg("+h").arg(path).status().unwrap();
+            assert!(ok.success(), "attrib +h {}", path.display());
+        }
+    }
+
     /// Waits until no file operation runs and no tab is loading.
     fn settle(explorer: &mut Explorer) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -902,6 +910,7 @@ mod tests {
         fs::write(root.join("big.bin"), vec![0u8; 2048]).unwrap();
         fs::write(root.join("small.txt"), b"x").unwrap();
         fs::write(root.join(".hidden"), b"").unwrap();
+        hide(&root.join(".hidden"));
         fs::write(root.join("alpha").join("inner.md"), b"").unwrap();
 
         let mut explorer = Explorer::new(root.clone(), || {});
@@ -1329,6 +1338,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::write(root.join(".hidden"), b"").unwrap();
+        hide(&root.join(".hidden"));
         let mut explorer = Explorer::with_settings(root.to_path_buf(), Settings::default(), || {});
         explorer.settings_path = Some(root.join("cfg").join("settings.toml"));
         settle(&mut explorer);
@@ -1391,6 +1401,7 @@ mod tests {
             fs::create_dir(root.join(name)).unwrap();
         }
         fs::write(root.join("file.txt"), b"").unwrap();
+        hide(&root.join(".hid"));
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(root.join("d2"), root.join("linkdir")).unwrap();
@@ -1431,6 +1442,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::create_dir(root.join(".hid")).unwrap();
+        hide(&root.join(".hid"));
         fs::create_dir(root.join("vis")).unwrap();
         let mut explorer = explorer_in(root);
         let cfg = tempfile::tempdir().unwrap();
