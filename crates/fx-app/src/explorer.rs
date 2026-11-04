@@ -1,13 +1,15 @@
 //! Owns the tabs and the background loader. Navigation goes through here because only Explorer can start loads.
 
 use crate::ops::{
-    EntryDetails, Job, Notice, NoticeKind, Outcome, details, unique_name, validate_name,
+    EntryDetails, Job, Notice, NoticeKind, Outcome, details, display_name, items, unique_name,
+    validate_name,
 };
 use crate::settings::Settings;
 use crate::tab::{LoadState, Tab};
+use crate::transfers::{TransferInfo, Transfers};
 use crate::tree::{Children, FolderTree, TreeNode, list_children};
 use crate::view::{DirView, needs_relist};
-use fx_core::{EntryKind, ListError, ListOptions, StorageKind, list_dir};
+use fx_core::{EntryKind, ListError, ListOptions, Op, Request, Resolution, StorageKind, list_dir};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
@@ -67,9 +69,11 @@ pub struct Explorer {
     rx: Receiver<Completed>,
     job_tx: Sender<Outcome>,
     job_rx: Receiver<Outcome>,
-    /// One file operation at a time: a second request is refused while this is set.
+    /// One delete/rename/create at a time: a second request is refused while this is set.
     // ponytail: serial jobs; add a queue if users need to chain operations while one runs
     job_in_flight: bool,
+    /// Copies and moves: several at once, queued per HDD/removable volume.
+    transfers: Transfers,
     tree: FolderTree,
     tree_tx: Sender<TreeLoaded>,
     tree_rx: Receiver<TreeLoaded>,
@@ -123,6 +127,7 @@ impl Explorer {
             job_tx,
             job_rx,
             job_in_flight: false,
+            transfers: Transfers::default(),
             tree: FolderTree::default(),
             tree_tx,
             tree_rx,
@@ -376,16 +381,84 @@ impl Explorer {
         self.clipboard.is_some()
     }
 
-    /// Pastes the clipboard into `folder` (default: the active tab's folder). A cut clipboard is spent afterwards.
+    /// Pastes the clipboard into `folder` (default: the active tab's folder) as a background transfer.
+    /// A cut clipboard is spent; cutting into the item's own folder does nothing.
     pub fn paste(&mut self, folder: Option<PathBuf>) {
         let Some((sources, cut)) = self.clipboard.clone() else {
             return;
         };
         let dest = folder.unwrap_or_else(|| self.active().path().to_path_buf());
-        self.submit(Job::Paste { sources, dest, cut });
-        if cut && self.job_in_flight {
+        if cut {
             self.clipboard = None;
         }
+        let sources: Vec<PathBuf> = sources
+            .into_iter()
+            .filter(|src| !(cut && src.parent() == Some(dest.as_path())))
+            .collect();
+        if sources.is_empty() {
+            return;
+        }
+        let op = if cut { Op::Move } else { Op::Copy };
+        let mut req = Request::into_dir(&sources, &dest, op, self.settings.conflict_policy.into());
+        if self.settings.copy_workers > 0 {
+            req.overrides.workers = Some(self.settings.copy_workers as usize);
+        }
+        let verb = if cut { "Moving" } else { "Copying" };
+        let label = format!("{verb} {} to {}", items(sources.len()), display_name(&dest));
+        self.transfers.submit(req, label);
+        self.poll_transfers();
+    }
+
+    /// Copy and move jobs for a transfer panel, oldest first.
+    pub fn transfers(&self) -> Vec<TransferInfo> {
+        self.transfers.infos()
+    }
+
+    /// True while a transfer runs or waits; a UI should then poll about ten times a second.
+    pub fn transfers_active(&self) -> bool {
+        self.transfers.active()
+    }
+
+    pub fn pause_transfer(&self, id: u64) {
+        self.transfers.pause(id);
+    }
+
+    /// Also answers "disk full" with retry.
+    pub fn resume_transfer(&self, id: u64) {
+        self.transfers.resume(id);
+    }
+
+    pub fn cancel_transfer(&mut self, id: u64) {
+        self.transfers.cancel(id);
+    }
+
+    /// Answers "disk full" with skip: files that do not fit fail instead of pausing.
+    pub fn skip_disk_full(&self, id: u64) {
+        self.transfers.skip_disk_full(id);
+    }
+
+    pub fn answer_conflict(
+        &self,
+        id: u64,
+        conflict: u64,
+        resolution: Resolution,
+        apply_to_all: bool,
+    ) {
+        self.transfers
+            .answer(id, conflict, resolution, apply_to_all);
+    }
+
+    /// Removes a finished transfer (with errors) from the panel.
+    pub fn dismiss_transfer(&mut self, id: u64) {
+        self.transfers.dismiss(id);
+    }
+
+    fn poll_transfers(&mut self) -> bool {
+        let (outcomes, changed) = self.transfers.poll(&self.wake);
+        for outcome in outcomes {
+            self.apply_outcome(outcome);
+        }
+        changed
     }
 
     /// Renames the entry at `row` in place. The name must be a single valid component and must not exist yet.
@@ -440,9 +513,9 @@ impl Explorer {
         details(&self.entry_path(row)?)
     }
 
-    /// True while a file operation is running.
+    /// True while a file operation or transfer is running.
     pub fn busy(&self) -> bool {
-        self.job_in_flight
+        self.job_in_flight || self.transfers.active()
     }
 
     /// The oldest pending notice, if any.
@@ -506,14 +579,16 @@ impl Explorer {
             }
         }
         while let Ok(outcome) = self.job_rx.try_recv() {
-            self.finish_job(outcome);
+            self.job_in_flight = false;
+            self.apply_outcome(outcome);
             changed = true;
         }
+        changed |= self.poll_transfers();
         changed
     }
 
-    fn finish_job(&mut self, outcome: Outcome) {
-        self.job_in_flight = false;
+    /// Shows the notice and reloads every listing the operation touched.
+    fn apply_outcome(&mut self, outcome: Outcome) {
         self.preload_gen.fetch_add(1, Ordering::AcqRel);
         self.preload_parent = None;
         self.preloaded.retain(|cached, _| {
@@ -1026,6 +1101,87 @@ mod tests {
         settle(&mut explorer);
         assert!(!root.join("keep").exists());
         assert!(!root.join("second").exists(), "refused create is not run");
+    }
+
+    #[test]
+    fn paste_copies_and_cut_paste_moves_in_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/sub")).unwrap();
+        fs::write(root.join("src/sub/f.txt"), b"x").unwrap();
+        fs::create_dir(root.join("dst")).unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.copy_to_clipboard(&[row_of(&explorer, "src")], false);
+        explorer.paste(Some(root.join("dst")));
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).text, "Copied 1 item");
+        assert_eq!(fs::read(root.join("dst/src/sub/f.txt")).unwrap(), b"x");
+        assert!(explorer.can_paste(), "a copy clipboard can be pasted again");
+
+        explorer.copy_to_clipboard(&[row_of(&explorer, "src")], true);
+        explorer.paste(Some(root.to_path_buf()));
+        assert!(!explorer.can_paste(), "a cut clipboard is spent");
+        assert!(
+            explorer.transfers().is_empty(),
+            "cutting into its own folder does nothing"
+        );
+        assert!(root.join("src").exists());
+
+        fs::create_dir(root.join("moved")).unwrap();
+        explorer.copy_to_clipboard(&[row_of(&explorer, "src")], true);
+        explorer.paste(Some(root.join("moved")));
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).text, "Moved 1 item");
+        assert!(!root.join("src").exists());
+        assert_eq!(fs::read(root.join("moved/src/sub/f.txt")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn paste_conflicts_wait_for_an_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("f.txt"), b"new").unwrap();
+        fs::create_dir(root.join("dst")).unwrap();
+        fs::write(root.join("dst/f.txt"), b"old").unwrap();
+        let mut explorer = explorer_in(root);
+        assert_eq!(
+            explorer.settings().conflict_policy,
+            crate::ConflictChoice::Ask
+        );
+
+        explorer.copy_to_clipboard(&[row_of(&explorer, "f.txt")], false);
+        explorer.paste(Some(root.join("dst")));
+        wait_for(&mut explorer, "a conflict", |e| {
+            e.transfers().first().is_some_and(|t| t.conflict.is_some())
+        });
+        let t = explorer.transfers().remove(0);
+        let conflict = t.conflict.unwrap();
+        assert_eq!(conflict.dst, root.join("dst/f.txt"));
+        explorer.answer_conflict(t.id, conflict.id, Resolution::KeepBoth, false);
+        settle(&mut explorer);
+        assert_eq!(fs::read(root.join("dst/f.txt")).unwrap(), b"old");
+        assert_eq!(fs::read(root.join("dst/f (2).txt")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn failed_transfers_stay_in_the_panel_until_dismissed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("d")).unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.copy_to_clipboard(&[row_of(&explorer, "d")], false);
+        explorer.paste(Some(root.join("d")));
+        settle(&mut explorer);
+        let notice = last_notice(&mut explorer);
+        assert_eq!(notice.kind, NoticeKind::Error);
+        assert!(notice.text.contains("into itself"), "{}", notice.text);
+        let transfers = explorer.transfers();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].state, crate::TransferState::Finished);
+        assert_eq!(transfers[0].errors.len(), 1);
+        explorer.dismiss_transfer(transfers[0].id);
+        assert!(explorer.transfers().is_empty());
     }
 
     /// Uses the real OS trash, so it leaves the file in the user's trash on purpose.
