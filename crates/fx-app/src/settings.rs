@@ -18,7 +18,9 @@ pub struct Settings {
     /// `None` starts in the home directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_folder: Option<PathBuf>,
-    pub theme: ThemeChoice,
+    /// Theme id, e.g. `nord-dark`. Legacy `dark` and `light` are migrated on load.
+    #[serde(deserialize_with = "theme_id")]
+    pub theme: String,
     pub density: Density,
     pub show_age_column: bool,
     pub show_ext_column: bool,
@@ -46,7 +48,7 @@ impl Default for Settings {
             confirm_delete: true,
             use_trash: true,
             start_folder: None,
-            theme: ThemeChoice::default(),
+            theme: DEFAULT_THEME.to_owned(),
             density: Density::default(),
             show_age_column: true,
             show_ext_column: true,
@@ -61,12 +63,16 @@ impl Default for Settings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThemeChoice {
-    #[default]
-    Dark,
-    Light,
+pub const DEFAULT_THEME: &str = "nord-dark";
+
+/// Maps the pre-theming values `dark` and `light` to their Nord themes.
+fn theme_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let id = String::deserialize(d)?;
+    Ok(match id.as_str() {
+        "dark" => "nord-dark".to_owned(),
+        "light" => "nord-light".to_owned(),
+        _ => id,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +146,11 @@ impl Settings {
         fs::rename(&tmp, path)
     }
 
+    /// `<config dir>/fx/themes`, where user theme files live.
+    pub fn themes_dir() -> Option<PathBuf> {
+        config_dir().map(|dir| dir.join("fx").join("themes"))
+    }
+
     /// `<config dir>/fx/settings.toml`, or `None` when the platform has no config directory.
     pub fn path() -> Option<PathBuf> {
         config_dir().map(|dir| dir.join("fx").join("settings.toml"))
@@ -199,7 +210,7 @@ mod tests {
             confirm_delete: false,
             use_trash: false,
             start_folder: Some(dir.path().to_path_buf()),
-            theme: ThemeChoice::Light,
+            theme: "solarized-dark".to_owned(),
             density: Density::Comfortable,
             show_age_column: false,
             show_ext_column: false,
@@ -214,6 +225,21 @@ mod tests {
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
         assert!(!path.with_extension("toml.tmp").exists());
+    }
+
+    #[test]
+    fn legacy_theme_values_are_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        for (old, new) in [
+            ("dark", "nord-dark"),
+            ("light", "nord-light"),
+            ("dracula", "dracula"),
+        ] {
+            write(&path, &format!("theme = \"{old}\"\n"));
+            assert_eq!(Settings::load_from(&path).theme, new);
+        }
+        assert_eq!(Settings::default().theme, DEFAULT_THEME);
     }
 
     #[test]
@@ -243,7 +269,7 @@ mod tests {
         );
         let loaded = Settings::load_from(&path);
         assert!(loaded.show_hidden);
-        assert_eq!(loaded.theme, ThemeChoice::Light);
+        assert_eq!(loaded.theme, "nord-light");
         assert!(loaded.confirm_delete, "missing fields keep their defaults");
         assert!(loaded.use_trash);
         assert!(loaded.preload_subfolders);

@@ -6,6 +6,7 @@ A performance optimized cross platform file manager written in Rust.
 
 - [Layout](docs/layout.md)
 - [Settings](docs/settings.md)
+- [Themes](docs/themes.md)
 - [Console app](docs/console.md)
 - [Development, builds and releases](docs/development.md)
 

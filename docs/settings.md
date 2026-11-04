@@ -10,6 +10,12 @@ A missing file means defaults.
 The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing and Behavior.
 A search box filters the settings by name.
 
+## Appearance
+
+- `theme` (default `"nord-dark"`): id of the active theme.
+  See [themes](themes.md) for the built-in themes and the format of user themes.
+  The old values `"dark"` and `"light"` are still read and map to `nord-dark` and `nord-light`.
+
 ## Fonts
 
 - `font_family` (optional string): name of a system font used for the whole UI.
@@ -35,4 +41,5 @@ font_family = "Noto Sans"
 list_font_size = 14.0
 tree_font_size = 12.0
 folder_order = "top"
+theme = "nord-dark"
 ```

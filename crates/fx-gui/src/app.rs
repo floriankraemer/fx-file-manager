@@ -14,13 +14,13 @@ pub struct App {
     scroll_to_selection: bool,
     dialog: Option<Dialog>,
     toast: Option<Toast>,
-    applied_look: (fx_app::ThemeChoice, Option<String>, f32, f32),
+    applied_look: (String, Option<String>, f32, f32),
     was_focused: bool,
 }
 
-fn look(s: &Settings) -> (fx_app::ThemeChoice, Option<String>, f32, f32) {
+fn look(s: &Settings) -> (String, Option<String>, f32, f32) {
     (
-        s.theme,
+        s.theme.clone(),
         s.font_family.clone(),
         s.list_font_size,
         s.tree_font_size,

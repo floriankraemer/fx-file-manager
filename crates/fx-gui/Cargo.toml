@@ -13,3 +13,5 @@ fontdb = "0.23"
 fx-app = { path = "../fx-app" }
 fx-core = { path = "../fx-core" }
 icon-theme = { path = "../icon-theme" }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
