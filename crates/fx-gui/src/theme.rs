@@ -235,6 +235,7 @@ macro_rules! colors {
 colors!(
     bg,
     panel_hi,
+    selection_bg,
     border,
     text,
     dim,
@@ -359,6 +360,38 @@ pub fn display_name(theme: &Theme) -> String {
         .map_or_else(|| theme.name.clone(), str::to_owned)
 }
 
+/// Text color for a fill painted in the accent color (primary buttons).
+pub fn on_accent() -> Color32 {
+    let p = palette();
+    ink_on(p.accent, p.bg, p.text)
+}
+
+/// Whichever of the theme's text, its background, black and white contrasts most with `fill`.
+fn ink_on(fill: Color32, bg: Color32, text: Color32) -> Color32 {
+    [bg, text, Color32::BLACK, Color32::WHITE]
+        .into_iter()
+        .max_by(|a, b| contrast(fill, *a).total_cmp(&contrast(fill, *b)))
+        .unwrap_or(text)
+}
+
+fn luminance(c: Color32) -> f64 {
+    let lin = |v: u8| {
+        let v = f64::from(v) / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+}
+
+/// WCAG contrast ratio of two colors.
+fn contrast(a: Color32, b: Color32) -> f64 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
 pub fn apply(ctx: &egui::Context, settings: &Settings) {
     apply_font(
         ctx,
@@ -383,8 +416,10 @@ pub fn apply(ctx: &egui::Context, settings: &Settings) {
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(6.0, 3.0);
-    style.spacing.button_padding = egui::vec2(6.0, 2.0);
+    // Buttons and menu items follow the IDE's metrics: 12 px side padding, about 26 px tall.
+    style.spacing.button_padding = egui::vec2(12.0, 4.0);
     style.spacing.interact_size.y = 20.0;
+    style.spacing.menu_margin = egui::Margin::same(4);
 
     let v = &mut style.visuals;
     *v = base;
@@ -397,7 +432,9 @@ pub fn apply(ctx: &egui::Context, settings: &Settings) {
     v.selection.bg_fill = p.selection_bg;
     v.selection.stroke = Stroke::new(1.0, p.accent);
     v.window_stroke = Stroke::new(1.0, p.border);
-    let radius = CornerRadius::same(3);
+    v.window_corner_radius = CornerRadius::same(8);
+    v.menu_corner_radius = CornerRadius::same(6);
+    let radius = CornerRadius::same(6);
     for w in [
         &mut v.widgets.noninteractive,
         &mut v.widgets.inactive,
@@ -424,23 +461,6 @@ pub fn apply(ctx: &egui::Context, settings: &Settings) {
 mod tests {
     use super::*;
 
-    fn luminance(c: Color32) -> f64 {
-        let lin = |v: u8| {
-            let v = f64::from(v) / 255.0;
-            if v <= 0.03928 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
-    }
-
-    fn contrast(a: Color32, b: Color32) -> f64 {
-        let (x, y) = (luminance(a), luminance(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
     #[test]
     fn row_height_grows_with_font() {
         assert_eq!(row_height(20.0, 13.0), 20.0);
@@ -457,6 +477,8 @@ mod tests {
             assert!(contrast(p.text, p.bg) >= 4.5, "{} text/bg", t.id);
             assert!(contrast(p.text, p.panel) >= 4.5, "{} text/panel", t.id);
             assert!(contrast(p.dim, p.bg) >= 3.0, "{} dim/bg", t.id);
+            let ink = ink_on(p.accent, p.bg, p.text);
+            assert!(contrast(ink, p.accent) >= 4.5, "{} primary button", t.id);
         }
     }
 

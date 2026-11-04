@@ -187,6 +187,22 @@ behavior = "Comportamiento"
 transfers = "Copiar y mover"
 keyboard = "Teclado"
 
+[settings.group]
+interface = "Interfaz"
+startup = "Inicio"
+files = "Archivos"
+theme = "Tema"
+columns = "Columnas de la lista de archivos"
+font = "Fuente"
+sizes = "Tamaños de fuente"
+sorting = "Ordenación"
+display = "Visualización"
+performance = "Rendimiento"
+clicks = "Clics"
+deleting = "Eliminación"
+conflicts = "Conflictos"
+safety = "Seguridad"
+
 [folder_order]
 top = "Carpetas primero"
 mixed = "Carpetas mezcladas con archivos"

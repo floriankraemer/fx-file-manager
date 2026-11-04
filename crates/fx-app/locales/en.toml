@@ -188,6 +188,22 @@ behavior = "Behavior"
 transfers = "Copy and move"
 keyboard = "Keyboard"
 
+[settings.group]
+interface = "Interface"
+startup = "Startup"
+files = "Files"
+theme = "Theme"
+columns = "File list columns"
+font = "Font"
+sizes = "Font sizes"
+sorting = "Sorting"
+display = "Display"
+performance = "Performance"
+clicks = "Clicks"
+deleting = "Deleting"
+conflicts = "Conflicts"
+safety = "Safety"
+
 [folder_order]
 top = "Folders on top"
 mixed = "Folders mixed with files"
