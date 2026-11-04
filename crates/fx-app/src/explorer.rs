@@ -724,7 +724,7 @@ fn absolute(path: PathBuf) -> PathBuf {
 
 /// Spawns the OS opener and does not wait for it. The child is not reaped; a waiter thread would be needed if opens become frequent.
 // ponytail: unreaped child per open; add a reaper thread if opens get frequent
-fn open_with_system(path: &Path) -> io::Result<()> {
+pub fn open_with_system(path: &Path) -> io::Result<()> {
     Command::new(OPENER)
         .arg(path)
         .stdin(Stdio::null())

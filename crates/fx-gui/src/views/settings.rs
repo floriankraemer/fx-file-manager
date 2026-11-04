@@ -4,9 +4,12 @@
 
 use crate::theme;
 use eframe::egui::{
-    self, Align, Context, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, TextEdit, Ui,
+    self, Align, Context, Id, Key, Layout, Modal, Modifiers, RichText, ScrollArea, Sense, TextEdit,
+    Ui,
 };
-use fx_app::{Density, Explorer, FolderOrder, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, ThemeChoice};
+use fx_app::{
+    Density, Explorer, FolderOrder, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, open_with_system,
+};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,8 +82,18 @@ const ROWS: &[Row] = &[
         label: "Theme",
         show: |ui, f, l| {
             ui.label(l);
-            ui.radio_value(&mut f.draft.theme, ThemeChoice::Dark, "Dark");
-            ui.radio_value(&mut f.draft.theme, ThemeChoice::Light, "Light");
+            theme_picker(ui, &mut f.draft.theme);
+            if ui.button("Open themes folder").clicked()
+                && let Some(dir) = Settings::themes_dir()
+                && let Err(err) =
+                    std::fs::create_dir_all(&dir).and_then(|()| open_with_system(&dir))
+            {
+                eprintln!("fx: cannot open {}: {err}", dir.display());
+            }
+            if ui.button("Reload themes").clicked() {
+                theme::reload();
+                theme::apply(ui.ctx(), f.draft);
+            }
         },
     },
     Row {
@@ -194,6 +207,29 @@ const ROWS: &[Row] = &[
     },
 ];
 
+/// Combo box of all themes, each with a strip of swatches.
+fn theme_picker(ui: &mut Ui, id: &mut String) {
+    let themes = theme::themes();
+    let selected = themes
+        .iter()
+        .find(|t| t.id == *id)
+        .map_or(id.as_str(), |t| t.name.as_str());
+    egui::ComboBox::from_id_salt("theme")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for t in &themes {
+                ui.horizontal(|ui| {
+                    let p = &t.palette;
+                    for c in [p.bg, p.panel_hi, p.text, p.accent, p.error] {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
+                        ui.painter().rect_filled(r, 2.0, c);
+                    }
+                    ui.selectable_value(id, t.id.clone(), &t.name);
+                });
+            }
+        });
+}
+
 fn font_size(ui: &mut Ui, size: &mut f32) {
     ui.add(
         egui::DragValue::new(size)
@@ -229,7 +265,10 @@ fn search(query: &str) -> Vec<&'static Row> {
     let q = query.trim().to_lowercase();
     ROWS.iter()
         .filter(|r| {
-            r.label.to_lowercase().contains(&q) || r.category.label().to_lowercase().contains(&q)
+            r.label.to_lowercase().contains(&q)
+                || r.category.label().to_lowercase().contains(&q)
+                || (r.label == "Theme"
+                    && ["color", "colour", "dark", "light"].contains(&q.as_str()))
         })
         .collect()
 }

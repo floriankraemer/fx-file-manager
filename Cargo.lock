@@ -1467,6 +1467,8 @@ dependencies = [
  "fx-app",
  "fx-core",
  "icon-theme",
+ "serde",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
