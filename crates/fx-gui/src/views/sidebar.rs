@@ -2,12 +2,11 @@ use super::commandbar::menu_item;
 use super::icons::{self, Glyph};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
-use eframe::egui::{Color32, Rect, RichText, ScrollArea, Sense, TextStyle, Ui, pos2, vec2};
+use eframe::egui::{Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
 use fx_app::{Children, Explorer, Place, PlaceGroup};
 use std::path::{Path, PathBuf};
 
 const GROUPS: [PlaceGroup; 2] = [PlaceGroup::Places, PlaceGroup::Drives];
-const ROW_H: f32 = 22.0;
 const INDENT: f32 = 16.0;
 const CHEVRON_W: f32 = 12.0;
 
@@ -98,7 +97,8 @@ fn node(
         Some(Children::Failed(_)) => false,
     };
 
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let row_h = theme::row_height(22.0, explorer.settings().tree_font_size);
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
     let selected = path == current;
     if selected && scroll {
         resp.scroll_to_me(None);
@@ -114,7 +114,7 @@ fn node(
     painter.rect_filled(rect, 6.0, fill);
 
     let x0 = rect.left() + 4.0 + depth as f32 * INDENT;
-    let chevron = Rect::from_min_size(pos2(x0, rect.top()), vec2(CHEVRON_W, ROW_H));
+    let chevron = Rect::from_min_size(pos2(x0, rect.top()), vec2(CHEVRON_W, row_h));
     if has_chevron {
         let g = if expanded {
             Glyph::Chevron
@@ -137,7 +137,7 @@ fn node(
     let text_x = icon_x + 16.0 + 6.0;
     let mut job = LayoutJob::simple_singleline(
         label.to_owned(),
-        TextStyle::Body.resolve(ui.style()),
+        theme::tree_style().resolve(ui.style()),
         theme::text(),
     );
     job.wrap = TextWrapping::truncate_at_width((rect.right() - 4.0 - text_x).max(0.0));

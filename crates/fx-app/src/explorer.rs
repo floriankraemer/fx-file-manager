@@ -155,7 +155,12 @@ impl Explorer {
     pub fn set_settings(&mut self, settings: Settings) {
         let hidden_changed = settings.show_hidden != self.settings.show_hidden;
         for tab in &mut self.tabs {
-            tab.set_show_hidden(settings.show_hidden);
+            if tab.show_hidden() != settings.show_hidden {
+                tab.set_show_hidden(settings.show_hidden);
+            }
+            if tab.folder_order() != settings.folder_order {
+                tab.set_folder_order(settings.folder_order);
+            }
         }
         let preload_changed = settings.preload_subfolders != self.settings.preload_subfolders;
         self.settings = settings;
@@ -249,8 +254,12 @@ impl Explorer {
     pub fn new_tab(&mut self, path: PathBuf) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        self.tabs
-            .push(Tab::new(id, absolute(path), self.settings.show_hidden));
+        self.tabs.push(Tab::new(
+            id,
+            absolute(path),
+            self.settings.show_hidden,
+            self.settings.folder_order,
+        ));
         self.active = self.tabs.len() - 1;
         self.start_load(self.active);
     }

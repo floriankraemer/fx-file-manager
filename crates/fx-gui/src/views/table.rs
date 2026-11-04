@@ -117,75 +117,93 @@ pub fn show(
             }
         })
         .body(|body| {
-            body.rows(row_height(settings.density), order.len(), |mut row| {
-                let i = row.index();
-                let entry = &view.listing.entries[order[i] as usize];
-                let name = view.listing.name(entry).to_string_lossy();
-                row.set_selected(selection.binary_search(&i).is_ok());
-                row.col(|ui| {
-                    super::icons::entry(ui, entry.kind, &name);
-                    ui.add(egui::Label::new(name.as_ref()).truncate());
-                });
-                if settings.show_ext_column {
+            body.rows(
+                theme::row_height(row_height(settings.density), settings.list_font_size),
+                order.len(),
+                |mut row| {
+                    let i = row.index();
+                    let entry = &view.listing.entries[order[i] as usize];
+                    let name = view.listing.name(entry).to_string_lossy();
+                    row.set_selected(selection.binary_search(&i).is_ok());
                     row.col(|ui| {
-                        if entry.kind != EntryKind::Dir {
-                            ui.colored_label(theme::dim(), extension(&name));
-                        }
+                        super::icons::entry(ui, entry.kind, &name);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(name.as_ref()).text_style(theme::list_style()),
+                            )
+                            .truncate(),
+                        );
                     });
-                }
-                row.col(|ui| {
-                    if entry.kind != EntryKind::Dir
-                        && let Some(size) = entry.size
-                    {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(format_size(size));
+                    if settings.show_ext_column {
+                        row.col(|ui| {
+                            if entry.kind != EntryKind::Dir {
+                                ui.colored_label(
+                                    theme::dim(),
+                                    RichText::new(extension(&name)).text_style(theme::list_style()),
+                                );
+                            }
                         });
                     }
-                });
-                row.col(|ui| {
-                    if let Some(time) = entry.modified {
-                        ui.colored_label(theme::dim(), format_time(time));
-                    }
-                });
-                if settings.show_age_column {
                     row.col(|ui| {
-                        let (bucket, text) = age(entry.modified, now);
-                        if !text.is_empty() {
-                            age_badge(ui, &text, theme::age_color(bucket));
+                        if entry.kind != EntryKind::Dir
+                            && let Some(size) = entry.size
+                        {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(format_size(size))
+                                        .text_style(theme::list_style()),
+                                );
+                            });
                         }
                     });
-                }
-                let resp = row.response();
-                if resp.secondary_clicked() && selection.binary_search(&i).is_err() {
-                    right_clicked = Some(i);
-                }
-                let selected_count = if selection.binary_search(&i).is_ok() {
-                    selection.len()
-                } else {
-                    1
-                };
-                resp.context_menu(|ui| {
-                    row_menu(
-                        ui,
-                        i,
-                        entry.kind == EntryKind::Dir,
-                        selected_count,
-                        can_paste,
-                        actions,
-                    );
-                });
-                if resp.clicked() {
-                    select = Some(i);
-                }
-                let is_dir = entry.kind == EntryKind::Dir;
-                if if is_dir && settings.list_single_click {
-                    resp.clicked()
-                } else {
-                    resp.double_clicked()
-                } {
-                    activate = Some(i);
-                }
-            });
+                    row.col(|ui| {
+                        if let Some(time) = entry.modified {
+                            ui.colored_label(
+                                theme::dim(),
+                                RichText::new(format_time(time)).text_style(theme::list_style()),
+                            );
+                        }
+                    });
+                    if settings.show_age_column {
+                        row.col(|ui| {
+                            let (bucket, text) = age(entry.modified, now);
+                            if !text.is_empty() {
+                                age_badge(ui, &text, theme::age_color(bucket));
+                            }
+                        });
+                    }
+                    let resp = row.response();
+                    if resp.secondary_clicked() && selection.binary_search(&i).is_err() {
+                        right_clicked = Some(i);
+                    }
+                    let selected_count = if selection.binary_search(&i).is_ok() {
+                        selection.len()
+                    } else {
+                        1
+                    };
+                    resp.context_menu(|ui| {
+                        row_menu(
+                            ui,
+                            i,
+                            entry.kind == EntryKind::Dir,
+                            selected_count,
+                            can_paste,
+                            actions,
+                        );
+                    });
+                    if resp.clicked() {
+                        select = Some(i);
+                    }
+                    let is_dir = entry.kind == EntryKind::Dir;
+                    if if is_dir && settings.list_single_click {
+                        resp.clicked()
+                    } else {
+                        resp.double_clicked()
+                    } {
+                        activate = Some(i);
+                    }
+                },
+            );
         });
 
     // The space below the last row; `body` reports the scroll area, so rows keep their own clicks.

@@ -1,6 +1,7 @@
 //! One loaded directory (immutable, shared) and the pure rules that turn it into a visible, sorted row order.
 
 use crate::format::extension;
+use crate::settings::FolderOrder;
 use fx_core::{Entry, EntryKind, Listed, Listing, StorageKind, natural_cmp};
 use std::cmp::Ordering;
 use std::path::PathBuf;
@@ -113,10 +114,11 @@ impl Default for SortSpec {
 }
 
 /// Indices into `listing.entries` that pass the hidden and name filters, sorted by `sort`.
-/// Directories always come first; `sort.ascending` applies within each group.
+/// `folders` places directories; `sort.ascending` applies within each group and never moves the groups.
 pub(crate) fn build_order(
     listing: &Listing,
     show_hidden: bool,
+    folders: FolderOrder,
     filter: &str,
     sort: SortSpec,
 ) -> Vec<u32> {
@@ -142,12 +144,19 @@ pub(crate) fn build_order(
             &listing.entries[a as usize],
             &listing.entries[b as usize],
             sort,
+            folders,
         )
     });
     order
 }
 
-fn compare(listing: &Listing, a: &Entry, b: &Entry, sort: SortSpec) -> Ordering {
+fn compare(
+    listing: &Listing,
+    a: &Entry,
+    b: &Entry,
+    sort: SortSpec,
+    folders: FolderOrder,
+) -> Ordering {
     let is_dir = |e: &Entry| e.kind == EntryKind::Dir;
     let by_column = match sort.column {
         SortColumn::Name => directed(name_cmp(listing, a, b), sort.ascending),
@@ -162,7 +171,12 @@ fn compare(listing: &Listing, a: &Entry, b: &Entry, sort: SortSpec) -> Ordering 
             none_last(a.modified, b.modified, sort.ascending).then_with(|| name_cmp(listing, a, b))
         }
     };
-    is_dir(b).cmp(&is_dir(a)).then(by_column)
+    let group = match folders {
+        FolderOrder::Top => is_dir(b).cmp(&is_dir(a)),
+        FolderOrder::Bottom => is_dir(a).cmp(&is_dir(b)),
+        FolderOrder::Mixed => Ordering::Equal,
+    };
+    group.then(by_column)
 }
 
 fn name_cmp(listing: &Listing, a: &Entry, b: &Entry) -> Ordering {
@@ -251,11 +265,65 @@ mod tests {
             column: SortColumn::Ext,
             ascending: true,
         };
-        let names: Vec<_> = build_order(&l, false, "", sort)
+        let names: Vec<_> = build_order(&l, false, FolderOrder::Top, "", sort)
             .iter()
             .map(|&i| l.name(&l.entries[i as usize]).to_owned())
             .collect();
         assert_eq!(names, ["z.d", "a.rs", "b.TXT", "c.txt"]);
+    }
+
+    #[test]
+    fn folder_order_modes_by_column_and_direction() {
+        use FolderOrder::{Bottom, Mixed, Top};
+        let mut l = listing_of(&[
+            ("a", EntryKind::File),
+            ("b", EntryKind::Dir),
+            ("c", EntryKind::File),
+            ("d", EntryKind::Dir),
+            ("e", EntryKind::File),
+        ]);
+        let at = |s| SystemTime::UNIX_EPOCH + Duration::from_secs(s);
+        for (e, (size, secs)) in l.entries.iter_mut().zip([
+            (Some(30), 30),
+            (None, 25),
+            (Some(10), 10),
+            (None, 5),
+            (Some(20), 20),
+        ]) {
+            (e.size, e.modified) = (size, Some(at(secs)));
+        }
+        let cases = [
+            (SortColumn::Name, true, Top, "bdace"),
+            (SortColumn::Name, true, Bottom, "acebd"),
+            (SortColumn::Name, true, Mixed, "abcde"),
+            (SortColumn::Name, false, Top, "dbeca"),
+            (SortColumn::Name, false, Bottom, "ecadb"),
+            (SortColumn::Name, false, Mixed, "edcba"),
+            (SortColumn::Modified, true, Top, "dbcea"),
+            (SortColumn::Modified, true, Bottom, "ceadb"),
+            (SortColumn::Modified, true, Mixed, "dceba"),
+            (SortColumn::Modified, false, Top, "bdaec"),
+            (SortColumn::Modified, false, Bottom, "aecbd"),
+            (SortColumn::Modified, false, Mixed, "abecd"),
+            (SortColumn::Size, true, Top, "bdcea"),
+            (SortColumn::Size, true, Bottom, "ceabd"),
+            (SortColumn::Size, true, Mixed, "ceabd"),
+            (SortColumn::Size, false, Top, "bdaec"),
+            (SortColumn::Size, false, Bottom, "aecbd"),
+            (SortColumn::Size, false, Mixed, "aecbd"),
+        ];
+        for (column, ascending, folders, want) in cases {
+            let sort = SortSpec { column, ascending };
+            let got: String = build_order(&l, false, folders, "", sort)
+                .iter()
+                .map(|&i| {
+                    l.name(&l.entries[i as usize])
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            assert_eq!(got, want, "{column:?} asc={ascending} {folders:?}");
+        }
     }
 
     #[test]

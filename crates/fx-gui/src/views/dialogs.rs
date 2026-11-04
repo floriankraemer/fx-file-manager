@@ -1,14 +1,12 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, settings.
 
+use super::settings;
 use crate::theme;
 use eframe::egui::{
     self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
     text::{CCursor, CCursorRange},
 };
-use fx_app::{
-    Density, EntryDetails, Explorer, Settings, ThemeChoice, format_size, format_time, stem_chars,
-    validate_name,
-};
+use fx_app::{EntryDetails, Explorer, format_size, format_time, stem_chars, validate_name};
 use fx_core::EntryKind;
 use std::path::PathBuf;
 
@@ -33,10 +31,7 @@ pub enum Dialog {
         fresh: bool,
     },
     Properties(EntryDetails),
-    Settings {
-        draft: Settings,
-        start_text: String,
-    },
+    Settings(Box<settings::State>),
 }
 
 impl Dialog {
@@ -78,12 +73,7 @@ impl Dialog {
     }
 
     pub fn settings(explorer: &Explorer) -> Self {
-        let draft = explorer.settings().clone();
-        let start_text = draft
-            .start_folder
-            .as_ref()
-            .map_or_else(String::new, |p| p.display().to_string());
-        Self::Settings { draft, start_text }
+        Self::Settings(Box::new(settings::State::new(explorer.settings())))
     }
 }
 
@@ -103,7 +93,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
         } => rename(ctx, explorer, *row, path, text, fresh),
         Dialog::NewFolder { text, fresh } => new_folder(ctx, explorer, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
-        Dialog::Settings { draft, start_text } => settings(ctx, explorer, draft, start_text),
+        Dialog::Settings(state) => settings::show(ctx, explorer, state),
     }
 }
 
@@ -316,103 +306,6 @@ fn properties(ctx: &Context, details: &EntryDetails) -> bool {
         });
         close
     })
-}
-
-fn settings(
-    ctx: &Context,
-    explorer: &mut Explorer,
-    draft: &mut Settings,
-    start_text: &mut String,
-) -> bool {
-    modal(ctx, "settings-dialog", |ui| {
-        ui.heading("Settings");
-
-        section(ui, "General");
-        ui.horizontal(|ui| {
-            ui.label("Start folder");
-            ui.add(
-                TextEdit::singleline(start_text)
-                    .hint_text("Home folder")
-                    .desired_width(160.0),
-            );
-            if ui.button("Use current folder").clicked() {
-                *start_text = explorer.active().path().display().to_string();
-            }
-        });
-        ui.checkbox(&mut draft.show_hidden, "Show hidden items");
-
-        section(ui, "Opening folders");
-        ui.checkbox(
-            &mut draft.tree_single_click,
-            "Single click in the folder tree",
-        );
-        ui.checkbox(
-            &mut draft.list_single_click,
-            "Single click in the file list",
-        );
-
-        section(ui, "Deleting");
-        ui.checkbox(&mut draft.use_trash, "Move deleted items to Trash");
-        ui.checkbox(&mut draft.confirm_delete, "Confirm before deleting");
-        if !draft.use_trash {
-            ui.label(
-                RichText::new("Without Trash, deleting is permanent and always asks first.")
-                    .small()
-                    .color(theme::dim()),
-            );
-        }
-
-        section(ui, "Performance");
-        ui.checkbox(
-            &mut draft.preload_subfolders,
-            "Preload subfolders in the background",
-        );
-        ui.label(
-            RichText::new("Opens subfolders instantly; listings are always re-checked.")
-                .small()
-                .color(theme::dim()),
-        );
-
-        section(ui, "Appearance");
-        ui.horizontal(|ui| {
-            ui.label("Theme");
-            ui.radio_value(&mut draft.theme, ThemeChoice::Dark, "Dark");
-            ui.radio_value(&mut draft.theme, ThemeChoice::Light, "Light");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Density");
-            ui.radio_value(&mut draft.density, Density::Compact, "Compact");
-            ui.radio_value(&mut draft.density, Density::Comfortable, "Comfortable");
-        });
-        ui.checkbox(&mut draft.show_ext_column, "Show Ext column");
-        ui.checkbox(&mut draft.show_age_column, "Show Age column");
-
-        let mut apply = |draft: &mut Settings| {
-            let folder = start_text.trim();
-            draft.start_folder = (!folder.is_empty()).then(|| PathBuf::from(folder));
-            explorer.set_settings(draft.clone());
-        };
-        let mut close = false;
-        button_row(ui, |ui| {
-            if ui.button("Apply").clicked() {
-                apply(draft);
-            }
-            if ui.button("Cancel").clicked() {
-                close = true;
-            }
-            if ui.button("OK").clicked() {
-                apply(draft);
-                close = true;
-            }
-        });
-        close
-    })
-}
-
-fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(10.0);
-    ui.label(RichText::new(title).strong().color(theme::accent()));
-    ui.separator();
 }
 
 fn file_name(path: &std::path::Path) -> String {

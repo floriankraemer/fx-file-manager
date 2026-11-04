@@ -13,7 +13,9 @@ pub use explorer::{Explorer, REVALIDATE_INTERVAL};
 pub use format::{AgeBucket, age, extension, format_millis, format_size, format_time, stem_chars};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use places::{Place, PlaceGroup, breadcrumbs, places};
-pub use settings::{Density, Settings, ThemeChoice, start_dir};
+pub use settings::{
+    Density, FolderOrder, MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, ThemeChoice, start_dir,
+};
 pub use tab::{LoadState, Tab};
 pub use tree::{Children, FolderTree, TreeNode};
 pub use view::{DirView, SortColumn, SortSpec};

@@ -1,5 +1,6 @@
 //! One explorer tab: location, history, load state, the visible row order, and the selection.
 
+use crate::settings::FolderOrder;
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -31,13 +32,19 @@ pub struct Tab {
     focus_name: Option<OsString>,
     sort: SortSpec,
     show_hidden: bool,
+    folder_order: FolderOrder,
     filter: String,
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
 }
 
 impl Tab {
-    pub(crate) fn new(id: u64, path: PathBuf, show_hidden: bool) -> Self {
+    pub(crate) fn new(
+        id: u64,
+        path: PathBuf,
+        show_hidden: bool,
+        folder_order: FolderOrder,
+    ) -> Self {
         Self {
             id,
             path,
@@ -50,6 +57,7 @@ impl Tab {
             focus_name: None,
             sort: SortSpec::default(),
             show_hidden,
+            folder_order,
             filter: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
@@ -191,6 +199,15 @@ impl Tab {
         self.rebuild_order();
     }
 
+    pub fn folder_order(&self) -> FolderOrder {
+        self.folder_order
+    }
+
+    pub fn set_folder_order(&mut self, order: FolderOrder) {
+        self.folder_order = order;
+        self.rebuild_order();
+    }
+
     pub fn filter(&self) -> &str {
         &self.filter
     }
@@ -303,9 +320,13 @@ impl Tab {
     fn rebuild_order(&mut self) {
         let previous_focus = self.focus;
         self.order = match &self.state {
-            LoadState::Loaded(view) => {
-                build_order(&view.listing, self.show_hidden, &self.filter, self.sort)
-            }
+            LoadState::Loaded(view) => build_order(
+                &view.listing,
+                self.show_hidden,
+                self.folder_order,
+                &self.filter,
+                self.sort,
+            ),
             LoadState::Loading | LoadState::Failed(_) => Vec::new(),
         };
         let rows = (0..self.order.len())

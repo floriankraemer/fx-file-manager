@@ -2,8 +2,9 @@
 //! Colors are functions because they follow the active theme.
 
 use eframe::egui::{self, Color32, CornerRadius, FontId, Stroke, TextStyle};
-use fx_app::{AgeBucket, ThemeChoice};
+use fx_app::{AgeBucket, Settings, ThemeChoice};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 struct Palette {
     bg: Color32,
@@ -101,8 +102,71 @@ pub fn age_color(bucket: AgeBucket) -> Color32 {
     }
 }
 
-pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
-    let light = choice == ThemeChoice::Light;
+pub fn list_style() -> TextStyle {
+    TextStyle::Name("List".into())
+}
+
+pub fn tree_style() -> TextStyle {
+    TextStyle::Name("Tree".into())
+}
+
+/// Row height for a text size: at least `min`, and the font size plus padding.
+pub fn row_height(min: f32, font_size: f32) -> f32 {
+    min.max(font_size + 6.0)
+}
+
+/// Sorted, deduplicated installed font family names (scanned once).
+pub fn system_font_families() -> &'static [String] {
+    static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let mut names: Vec<String> = db
+            .faces()
+            .flat_map(|f| f.families.iter().map(|(n, _)| n.clone()))
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup();
+        names
+    })
+}
+
+fn load_font(family: &str) -> Option<egui::FontData> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(family)],
+        ..Default::default()
+    };
+    let id = db.query(&query)?;
+    db.with_face_data(id, |data, index| {
+        let mut font = egui::FontData::from_owned(data.to_vec());
+        font.index = index;
+        font
+    })
+}
+
+/// Installs `family` as the first proportional font; only touches egui when it changed.
+fn apply_font(ctx: &egui::Context, family: Option<&str>) {
+    static LAST: Mutex<Option<String>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_deref() == family {
+        return;
+    }
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(data) = family.and_then(load_font) {
+        fonts.font_data.insert("user".to_owned(), data.into());
+        if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            list.insert(0, "user".to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
+    *last = family.map(str::to_owned);
+}
+
+pub fn apply(ctx: &egui::Context, settings: &Settings) {
+    apply_font(ctx, settings.font_family.as_deref());
+    let light = settings.theme == ThemeChoice::Light;
     LIGHT_ACTIVE.store(light, Ordering::Relaxed);
     let (theme, p, base) = if light {
         (egui::Theme::Light, &LIGHT, egui::Visuals::light())
@@ -116,6 +180,8 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
         (TextStyle::Button, FontId::proportional(13.5)),
         (TextStyle::Heading, FontId::proportional(16.0)),
         (TextStyle::Monospace, FontId::monospace(13.0)),
+        (list_style(), FontId::proportional(settings.list_font_size)),
+        (tree_style(), FontId::proportional(settings.tree_font_size)),
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(6.0, 3.0);
@@ -153,4 +219,16 @@ pub fn apply(ctx: &egui::Context, choice: ThemeChoice) {
     v.widgets.open.weak_bg_fill = p.border;
     ctx.set_theme(theme);
     ctx.set_style_of(theme, style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::row_height;
+
+    #[test]
+    fn row_height_grows_with_font() {
+        assert_eq!(row_height(20.0, 13.0), 20.0);
+        assert_eq!(row_height(20.0, 32.0), 38.0);
+        assert_eq!(row_height(28.0, 22.0), 28.0);
+    }
 }

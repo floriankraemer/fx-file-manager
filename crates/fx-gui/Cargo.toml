@@ -9,6 +9,7 @@ rust-version.workspace = true
 eframe = "0.37.0"
 egui = "0.37.0"
 egui_extras = "0.37.0"
+fontdb = "0.23"
 fx-app = { path = "../fx-app" }
 fx-core = { path = "../fx-core" }
 icon-theme = { path = "../icon-theme" }

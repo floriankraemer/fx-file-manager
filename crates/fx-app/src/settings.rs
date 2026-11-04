@@ -6,6 +6,9 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+pub const MIN_FONT_SIZE: f32 = 8.0;
+pub const MAX_FONT_SIZE: f32 = 32.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -25,6 +28,15 @@ pub struct Settings {
     pub list_single_click: bool,
     /// List the immediate subfolders in the background so entering one paints instantly.
     pub preload_subfolders: bool,
+    /// `None` keeps the built-in font.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// Font size of list rows, clamped to `MIN_FONT_SIZE..=MAX_FONT_SIZE` on load.
+    pub list_font_size: f32,
+    /// Font size of tree rows, clamped to `MIN_FONT_SIZE..=MAX_FONT_SIZE` on load.
+    pub tree_font_size: f32,
+    /// Where folders sort relative to files.
+    pub folder_order: FolderOrder,
 }
 
 impl Default for Settings {
@@ -41,6 +53,10 @@ impl Default for Settings {
             tree_single_click: true,
             list_single_click: false,
             preload_subfolders: true,
+            font_family: None,
+            list_font_size: 13.5,
+            tree_font_size: 13.5,
+            folder_order: FolderOrder::default(),
         }
     }
 }
@@ -61,6 +77,15 @@ pub enum Density {
     Comfortable,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderOrder {
+    #[default]
+    Top,
+    Mixed,
+    Bottom,
+}
+
 impl Settings {
     /// Loads from [`Settings::path`]. A missing or unreadable file yields defaults; a corrupt one also logs to stderr.
     pub fn load() -> Self {
@@ -71,7 +96,7 @@ impl Settings {
     }
 
     pub fn load_from(path: &Path) -> Self {
-        match fs::read_to_string(path) {
+        let mut settings = match fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
                 eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
                 Self::default()
@@ -81,7 +106,16 @@ impl Settings {
                 eprintln!("fx: cannot read settings {}: {err}", path.display());
                 Self::default()
             }
-        }
+        };
+        settings.clamp_font_sizes();
+        settings
+    }
+
+    /// Keeps font sizes within `MIN_FONT_SIZE..=MAX_FONT_SIZE`; NaN falls back to the default.
+    fn clamp_font_sizes(&mut self) {
+        let defaults = Self::default();
+        self.list_font_size = clamp_font_size(self.list_font_size, defaults.list_font_size);
+        self.tree_font_size = clamp_font_size(self.tree_font_size, defaults.tree_font_size);
     }
 
     /// Saves to [`Settings::path`]. Fails if there is no config directory.
@@ -109,6 +143,14 @@ impl Settings {
     /// `<config dir>/fx/settings.toml`, or `None` when the platform has no config directory.
     pub fn path() -> Option<PathBuf> {
         config_dir().map(|dir| dir.join("fx").join("settings.toml"))
+    }
+}
+
+fn clamp_font_size(size: f32, default: f32) -> f32 {
+    if size.is_nan() {
+        default
+    } else {
+        size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
 }
 
@@ -164,6 +206,10 @@ mod tests {
             tree_single_click: false,
             list_single_click: true,
             preload_subfolders: false,
+            font_family: Some("Inter".to_string()),
+            list_font_size: 16.0,
+            tree_font_size: 10.5,
+            folder_order: FolderOrder::Bottom,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
@@ -214,6 +260,33 @@ mod tests {
         };
         changed.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), changed);
+    }
+
+    #[test]
+    fn file_without_new_keys_gets_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "show_hidden = true\ntheme = \"light\"\n");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.font_family, None);
+        assert_eq!(loaded.list_font_size, 13.5);
+        assert_eq!(loaded.tree_font_size, 13.5);
+        assert_eq!(loaded.folder_order, FolderOrder::Top);
+    }
+
+    #[test]
+    fn font_sizes_are_clamped_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "list_font_size = 2.0\ntree_font_size = 99.0\n");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.list_font_size, MIN_FONT_SIZE);
+        assert_eq!(loaded.tree_font_size, MAX_FONT_SIZE);
+
+        write(&path, "list_font_size = nan\ntree_font_size = 20.0\n");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.list_font_size, Settings::default().list_font_size);
+        assert_eq!(loaded.tree_font_size, 20.0);
     }
 
     #[test]

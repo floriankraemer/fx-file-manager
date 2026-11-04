@@ -14,14 +14,23 @@ pub struct App {
     scroll_to_selection: bool,
     dialog: Option<Dialog>,
     toast: Option<Toast>,
-    applied_theme: fx_app::ThemeChoice,
+    applied_look: (fx_app::ThemeChoice, Option<String>, f32, f32),
     was_focused: bool,
+}
+
+fn look(s: &Settings) -> (fx_app::ThemeChoice, Option<String>, f32, f32) {
+    (
+        s.theme,
+        s.font_family.clone(),
+        s.list_font_size,
+        s.tree_font_size,
+    )
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf, settings: Settings) -> Self {
-        let applied_theme = settings.theme;
-        theme::apply(&cc.egui_ctx, applied_theme);
+        let applied_look = look(&settings);
+        theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
         Self {
             explorer: Explorer::with_settings(start, settings, move || ctx.request_repaint()),
@@ -29,7 +38,7 @@ impl App {
             scroll_to_selection: false,
             dialog: None,
             toast: None,
-            applied_theme,
+            applied_look,
             was_focused: true,
         }
     }
@@ -205,10 +214,10 @@ impl eframe::App for App {
         for action in actions {
             self.dispatch(ctx, action);
         }
-        let theme = self.explorer.settings().theme;
-        if theme != self.applied_theme {
-            theme::apply(ctx, theme);
-            self.applied_theme = theme;
+        let current = look(self.explorer.settings());
+        if current != self.applied_look {
+            theme::apply(ctx, self.explorer.settings());
+            self.applied_look = current;
         }
         if self.toast.is_none() {
             self.toast = self.explorer.take_notice().map(Toast::new);
