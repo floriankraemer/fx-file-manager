@@ -1,11 +1,13 @@
 //! eframe::App: polls the explorer, maps input to its methods, lays out the views.
 
 use crate::action::Action;
+use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
-use eframe::egui::{self, Context, Key, Modifiers};
-use fx_app::{Explorer, Language, Place, Settings, i18n, places};
+use eframe::egui::{self, Context};
+use fx_app::{Explorer, Language, Notice, NoticeKind, Place, Settings, i18n, places};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(100);
@@ -19,6 +21,9 @@ pub struct App {
     transfers: views::transfers::State,
     applied_look: Look,
     was_focused: bool,
+    keymap: command::Keymap,
+    /// The `[keymap]` overrides `keymap` was resolved from.
+    applied_keymap: BTreeMap<String, Vec<String>>,
 }
 
 /// What `theme::apply` and the translated texts depend on; a change re-applies them.
@@ -41,7 +46,7 @@ impl App {
         let applied_look = look(&settings);
         theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
-        Self {
+        let mut app = Self {
             explorer: Explorer::with_settings(start, settings, move || ctx.request_repaint()),
             places: places(),
             scroll_to_selection: false,
@@ -50,7 +55,11 @@ impl App {
             transfers: views::transfers::State::default(),
             applied_look,
             was_focused: true,
-        }
+            keymap: command::Keymap::default(),
+            applied_keymap: BTreeMap::new(),
+        };
+        app.apply_keymap();
+        app
     }
 
     fn update_settings(&mut self, change: impl FnOnce(&mut Settings)) {
@@ -126,87 +135,84 @@ impl App {
         }
     }
 
-    /// Maps shortcuts to explorer calls or actions. Returns true if the selection moved.
-    fn handle_keys(&mut self, ctx: &Context, actions: &mut Vec<Action>) -> bool {
-        let typing = ctx.egui_wants_keyboard_input();
-        let mut moved = false;
-        ctx.input_mut(|i| {
-            let ex = &mut self.explorer;
-            if i.consume_key(Modifiers::CTRL, Key::T) {
-                ex.new_tab(ex.active().path().to_path_buf());
-            }
-            if i.consume_key(Modifiers::CTRL, Key::W) {
-                ex.close_tab(ex.active_index());
-            }
-            if i.consume_key(Modifiers::CTRL, Key::Tab) {
-                ex.set_active((ex.active_index() + 1) % ex.tabs().len());
-            }
-            if i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab) {
+    /// Rebuilds the resolved keymap and the shortcut hints. Entries that cannot be used raise a notice.
+    fn apply_keymap(&mut self) {
+        let overrides = &self.explorer.settings().keymap;
+        let (keymap, problems) = command::resolve(overrides);
+        command::install_hints(overrides);
+        self.keymap = keymap;
+        self.applied_keymap = overrides.clone();
+        if !problems.is_empty() {
+            let text = fx_app::tr("notice.keymap_ignored", &[("entry", &problems.join(", "))]);
+            self.toast = Some(Toast::new(Notice {
+                kind: NoticeKind::Error,
+                text,
+            }));
+        }
+    }
+
+    /// Runs `command`. Returns true if the selection moved.
+    fn run(&mut self, command: Command, actions: &mut Vec<Action>) -> bool {
+        let ex = &mut self.explorer;
+        match command {
+            Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
+            Command::CloseTab => ex.close_tab(ex.active_index()),
+            Command::NextTab => ex.set_active((ex.active_index() + 1) % ex.tabs().len()),
+            Command::PrevTab => {
                 let n = ex.tabs().len();
                 ex.set_active((ex.active_index() + n - 1) % n);
             }
-            if i.consume_key(Modifiers::NONE, Key::F5) {
-                ex.refresh();
-            }
-            if i.consume_key(Modifiers::ALT, Key::ArrowLeft) {
-                ex.back();
-            }
-            if i.consume_key(Modifiers::ALT, Key::ArrowRight) {
-                ex.forward();
-            }
-            if i.consume_key(Modifiers::ALT, Key::ArrowUp) {
-                ex.up();
-            }
-            if typing {
-                return;
-            }
-            if i.consume_key(Modifiers::NONE, Key::Backspace) {
-                ex.back();
-            }
-            if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
+            Command::Refresh => ex.refresh(),
+            Command::Back => ex.back(),
+            Command::Forward => ex.forward(),
+            Command::Up => ex.up(),
+            Command::MoveDown => {
                 ex.active_mut().move_selection(1);
-                moved = true;
+                return true;
             }
-            if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
+            Command::MoveUp => {
                 ex.active_mut().move_selection(-1);
-                moved = true;
+                return true;
             }
-            let bindings = [
-                (Modifiers::NONE, Key::F2, Action::Rename),
-                (
-                    Modifiers::SHIFT,
-                    Key::Delete,
-                    Action::Delete { permanent: true },
-                ),
-                (
-                    Modifiers::NONE,
-                    Key::Delete,
-                    Action::Delete { permanent: false },
-                ),
-                (Modifiers::CTRL, Key::A, Action::SelectAll),
-                (Modifiers::CTRL, Key::C, Action::Copy),
-                (Modifiers::CTRL, Key::X, Action::Cut),
-                (Modifiers::CTRL, Key::V, Action::Paste),
-                (
-                    Modifiers::CTRL | Modifiers::SHIFT,
-                    Key::N,
-                    Action::NewFolder,
-                ),
-                (Modifiers::ALT, Key::Enter, Action::Properties),
-                (Modifiers::CTRL, Key::Comma, Action::OpenSettings),
-                (Modifiers::NONE, Key::F1, Action::OpenAbout),
-            ];
-            for (modifiers, key, action) in bindings {
-                if i.consume_key(modifiers, key) {
-                    actions.push(action);
+            Command::OpenSelected => {
+                if let Some(row) = ex.active().selected() {
+                    ex.activate(row);
                 }
             }
-            if i.consume_key(Modifiers::NONE, Key::Enter)
-                && let Some(row) = ex.active().selected()
-            {
-                ex.activate(row);
-            }
+            Command::Rename => actions.push(Action::Rename),
+            Command::Delete => actions.push(Action::Delete { permanent: false }),
+            Command::DeletePermanent => actions.push(Action::Delete { permanent: true }),
+            Command::SelectAll => actions.push(Action::SelectAll),
+            Command::Copy => actions.push(Action::Copy),
+            Command::Cut => actions.push(Action::Cut),
+            Command::Paste => actions.push(Action::Paste),
+            Command::NewFolder => actions.push(Action::NewFolder),
+            Command::Properties => actions.push(Action::Properties),
+            Command::OpenSettings => actions.push(Action::OpenSettings),
+            Command::About => actions.push(Action::OpenAbout),
+        }
+        false
+    }
+
+    /// Consumes the bound shortcuts and runs their commands. Returns true if the selection moved.
+    fn handle_keys(&mut self, ctx: &Context, actions: &mut Vec<Action>) -> bool {
+        let typing = ctx.egui_wants_keyboard_input();
+        let fired: Vec<Command> = ctx.input_mut(|i| {
+            self.keymap
+                .bindings
+                .iter()
+                .filter(|b| {
+                    let m = b.shortcut.modifiers;
+                    !typing || (b.command.def().while_typing && (m.ctrl || m.alt))
+                })
+                .filter(|b| i.consume_key(b.shortcut.modifiers, b.shortcut.key))
+                .map(|b| b.command)
+                .collect()
         });
+        let mut moved = false;
+        for command in fired {
+            moved |= self.run(command, actions);
+        }
         moved
     }
 }
@@ -234,6 +240,9 @@ impl eframe::App for App {
             self.dispatch(ctx, action);
         }
         fx_app::set_date_format(self.explorer.settings().date_format);
+        if self.explorer.settings().keymap != self.applied_keymap {
+            self.apply_keymap();
+        }
         let current = look(self.explorer.settings());
         if current != self.applied_look {
             if current.4 != self.applied_look.4 {

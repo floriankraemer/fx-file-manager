@@ -1,5 +1,6 @@
 use super::commandbar::menu_item;
 use super::icons::{self, Glyph};
+use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{Color32, Rect, RichText, ScrollArea, Sense, Ui, pos2, vec2};
@@ -176,7 +177,12 @@ fn node(
             *action = Some(Action::OpenInNewTab(path.to_path_buf()));
         }
         ui.separator();
-        if menu_item(ui, t("cmd.paste"), "Ctrl+V", explorer.can_paste()) {
+        if menu_item(
+            ui,
+            t("cmd.paste"),
+            &hint(Command::Paste),
+            explorer.can_paste(),
+        ) {
             *action = Some(Action::PasteInto(path.to_path_buf()));
         }
         if menu_item(ui, t("cmd.copy_path"), "", true) {

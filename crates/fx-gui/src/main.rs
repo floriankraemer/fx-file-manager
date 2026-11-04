@@ -3,6 +3,7 @@
 
 mod action;
 mod app;
+mod command;
 mod theme;
 mod views;
 

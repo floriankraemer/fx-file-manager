@@ -2,20 +2,21 @@
 
 use super::commandbar::menu_item;
 use crate::action::Action;
+use crate::command::{Command, hint};
 use eframe::egui::{self, Ui};
 use fx_app::{Density, Explorer, t};
 
 pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(t("menu.file"), |ui| {
-            if menu_item(ui, t("cmd.settings"), "Ctrl+,", true) {
+            if menu_item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
                 actions.push(Action::OpenSettings);
                 ui.close();
             }
         });
         ui.menu_button(t("menu.view"), |ui| view_menu(ui, explorer, actions));
         ui.menu_button(t("menu.help"), |ui| {
-            if menu_item(ui, t("menu.about"), "F1", true) {
+            if menu_item(ui, t("menu.about"), &hint(Command::About), true) {
                 actions.push(Action::OpenAbout);
                 ui.close();
             }

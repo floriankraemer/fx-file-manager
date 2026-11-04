@@ -1,6 +1,7 @@
 //! Windows-11-style command bar: file commands on the left, Sort/View dropdowns, and an overflow menu on the right.
 
 use super::icons::{self, Glyph};
+use crate::command::{Command, hint, tip};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, Popup, Response, Sense, TextStyle, Ui, vec2};
 use fx_app::{Explorer, SortColumn, SortSpec, t};
@@ -13,19 +14,19 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         if command(ui, Glyph::NewFolder, t("cmd.new_folder"), true, false)
-            .on_hover_text(t("tip.new_folder"))
+            .on_hover_text(tip("tip.new_folder", Command::NewFolder))
             .clicked()
         {
             actions.push(Action::NewFolder);
         }
         if command(ui, Glyph::Rename, t("cmd.rename"), one_selected, false)
-            .on_hover_text(t("tip.rename"))
+            .on_hover_text(tip("tip.rename", Command::Rename))
             .clicked()
         {
             actions.push(Action::Rename);
         }
         if command(ui, Glyph::Delete, t("cmd.delete"), has_selection, false)
-            .on_hover_text(t("tip.delete"))
+            .on_hover_text(tip("tip.delete", Command::Delete))
             .clicked()
         {
             actions.push(Action::Delete { permanent: false });
@@ -40,7 +41,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let resp = command(ui, Glyph::More, "", true, false);
             Popup::menu(&resp).show(|ui| {
-                if menu_item(ui, t("cmd.select_all"), "Ctrl+A", true) {
+                if menu_item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
                     actions.push(Action::SelectAll);
                 }
             });

@@ -7,7 +7,7 @@ A missing file means defaults.
 
 ## Settings dialog
 
-The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing, Behavior and Copy and move.
+The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing, Behavior, Copy and move and Keyboard.
 A search box filters the settings by name.
 
 ## Language
@@ -64,6 +64,54 @@ Sizes always use 1024-based steps, and sorting uses raw bytes.
 - `verify_copies` (default `false`): read every copied file again and compare its xxh3 checksum with the source.
   A mismatch removes the bad copy and is reported as an error for that item; a move then keeps its source.
   See [Copy engine](copy-engine.md) for the overhead.
+
+## Keyboard
+
+The Keyboard page lists every command with its shortcuts.
+**Record** captures the next key combination and replaces the shortcuts of that command, **Unbind** removes them, and **Reset** restores the default.
+Esc cancels a recording.
+A command that shares a shortcut with another one shows a warning; both stay bound, and the more specific modifiers win.
+Changes apply with OK or Apply.
+
+Only changes are stored, in a `[keymap]` table of command id to a list of shortcuts.
+An empty list unbinds the command.
+
+```toml
+[keymap]
+rename = ["f2", "ctrl+r"]
+open_settings = []
+```
+
+A shortcut is `+`-separated, case-insensitive, with the modifiers `ctrl`, `shift` and `alt` and the key last, for example `ctrl+shift+n`, `alt+left`, `f5` or `ctrl+comma`.
+Unknown command ids and unreadable shortcuts are ignored and shown in a notice at startup.
+Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
+
+| Command id | Default shortcuts |
+| --- | --- |
+| `new_tab` | `ctrl+t` |
+| `close_tab` | `ctrl+w` |
+| `next_tab` | `ctrl+tab` |
+| `prev_tab` | `ctrl+shift+tab` |
+| `refresh` | `f5` |
+| `back` | `alt+left`, `backspace` |
+| `forward` | `alt+right` |
+| `up` | `alt+up` |
+| `move_down` | `down` |
+| `move_up` | `up` |
+| `open_selected` | `enter` |
+| `rename` | `f2` |
+| `delete` | `delete` |
+| `delete_permanent` | `shift+delete` |
+| `select_all` | `ctrl+a` |
+| `copy` | `ctrl+c` |
+| `cut` | `ctrl+x` |
+| `paste` | `ctrl+v` |
+| `new_folder` | `ctrl+shift+n` |
+| `properties` | `alt+enter` |
+| `open_settings` | `ctrl+comma` |
+| `about` | `f1` |
+
+Menus and tooltips show the first shortcut of each command.
 
 ## Example
 
