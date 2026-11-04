@@ -593,11 +593,8 @@ fn parse_junction(buf: &[u8]) -> Option<PathBuf> {
     }
     let (offset, len) = (u16_at(REPARSE_HEADER)?, u16_at(REPARSE_HEADER + 2)?);
     let start = REPARSE_HEADER + MOUNT_POINT_HEADER + offset;
-    let wide: Vec<u16> = buf
-        .get(start..start + len)?
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let (pairs, _) = buf.get(start..start + len)?.as_chunks::<2>();
+    let wide: Vec<u16> = pairs.iter().map(|c| u16::from_le_bytes(*c)).collect();
     let name = OsString::from_wide(&wide).into_string().ok()?;
     let target = name.strip_prefix(NT_PREFIX)?;
     // Only drive paths are real targets here.
