@@ -505,4 +505,125 @@ mod tests {
         let err = io::Error::from_raw_os_error(13);
         assert_eq!(plain(&err), "Permission denied");
     }
+
+    fn run(job: Job) -> Outcome {
+        job.run()
+    }
+
+    #[test]
+    fn copy_paste_renames_clashes_and_copies_trees() {
+        let dir = tempfile::tempdir().unwrap();
+        let (src, dest) = (dir.path().join("src"), dir.path().join("dest"));
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::create_dir(&dest).unwrap();
+        fs::write(src.join("sub/f.txt"), b"x").unwrap();
+        fs::write(dest.join("sub"), b"clash").unwrap();
+        let out = run(Job::Paste {
+            sources: vec![src.join("sub")],
+            dest: dest.clone(),
+            cut: false,
+        });
+        assert_eq!(out.notice.text, "Copied 1 item");
+        assert_eq!(fs::read(dest.join("sub (2)/f.txt")).unwrap(), b"x");
+        assert!(src.join("sub/f.txt").exists());
+    }
+
+    #[test]
+    fn cut_paste_moves_and_same_folder_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::create_dir(&a).unwrap();
+        fs::create_dir(&b).unwrap();
+        fs::write(a.join("f"), b"x").unwrap();
+        run(Job::Paste {
+            sources: vec![a.join("f")],
+            dest: a.clone(),
+            cut: true,
+        });
+        assert!(a.join("f").exists());
+        let out = run(Job::Paste {
+            sources: vec![a.join("f")],
+            dest: b.clone(),
+            cut: true,
+        });
+        assert_eq!(out.notice.text, "Moved 1 item");
+        assert!(!a.join("f").exists() && b.join("f").exists());
+    }
+
+    #[test]
+    fn paste_reports_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().join("d");
+        fs::create_dir(&d).unwrap();
+        let out = run(Job::Paste {
+            sources: vec![d.clone()],
+            dest: d.join("in"),
+            cut: false,
+        });
+        assert!(
+            out.notice.text.starts_with("Could not paste d"),
+            "{}",
+            out.notice.text
+        );
+        let ok = dir.path().join("ok");
+        fs::write(&ok, b"").unwrap();
+        let out = run(Job::Paste {
+            sources: vec![ok, d.clone()],
+            dest: d.clone(),
+            cut: false,
+        });
+        assert!(
+            out.notice.text.contains("of 2 items"),
+            "{}",
+            out.notice.text
+        );
+    }
+
+    #[test]
+    fn copies_symlinks_and_unique_file_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let (t, l) = (dir.path().join("t.tar.gz"), dir.path().join("l"));
+        fs::write(&t, b"").unwrap();
+        std::os::unix::fs::symlink(&t, &l).unwrap();
+        let c = dir.path().join("c");
+        copy_tree(&l, &c).unwrap();
+        assert!(fs::symlink_metadata(&c).unwrap().file_type().is_symlink());
+        let taken = ["t.tar.gz"];
+        assert_eq!(
+            unique_file_name("t.tar.gz".as_ref(), |n| !taken.contains(&n)),
+            "t.tar (2).gz"
+        );
+    }
+
+    #[test]
+    fn rename_create_delete_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&a, b"").unwrap();
+        run(Job::Rename {
+            from: a.clone(),
+            to: b.clone(),
+        });
+        assert!(b.exists() && !a.exists());
+        let f = dir.path().join("New");
+        let out = run(Job::CreateFolder { path: f.clone() });
+        assert!(f.is_dir());
+        assert_eq!(out.created, Some(f.clone()));
+        run(Job::CreateFolder { path: f.clone() });
+        let out = run(Job::Delete {
+            paths: vec![b.clone(), f.clone()],
+            permanent: true,
+        });
+        assert!(!b.exists() && !f.exists());
+        assert!(!out.notice.text.is_empty());
+        let out = run(Job::Delete {
+            paths: vec![b],
+            permanent: true,
+        });
+        assert!(
+            out.notice.text.starts_with("Could not delete"),
+            "{}",
+            out.notice.text
+        );
+    }
 }

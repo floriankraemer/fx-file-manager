@@ -16,7 +16,7 @@ DOCKER_MOUNTS = -v "$(CURDIR)":/workspace -w /workspace \
 DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
-.PHONY: help all debug build build-linux build-windows build-osx release gui cli test lint fmt check \
+.PHONY: help all debug build build-linux build-windows build-osx release gui cli test lint fmt check coverage \
 	linux-image test-container e2e clean
 
 .DEFAULT_GOAL := help
@@ -57,6 +57,11 @@ cli:
 ## Run all tests on the host
 test:
 	$(CARGO) test --workspace
+
+## Line coverage (needs cargo-llvm-cov); egui rendering in fx-gui is excluded, target 85%
+coverage:
+	$(CARGO) llvm-cov --workspace --summary-only --fail-under-lines 85 \
+		--ignore-filename-regex 'fx-gui/|icon-theme/src/lib.rs'
 
 ## Clippy with warnings as errors
 lint:

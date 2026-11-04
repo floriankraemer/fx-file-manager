@@ -19,6 +19,8 @@ pub fn show(
     scroll_to_selection: bool,
     actions: &mut Vec<Action>,
 ) {
+    // Selectable labels grab clicks and drags, so rows would never see double/right clicks.
+    ui.style_mut().interaction.selectable_labels = false;
     let settings = explorer.settings().clone();
     let can_paste = explorer.can_paste();
     let tab = explorer.active();
