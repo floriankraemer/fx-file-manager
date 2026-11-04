@@ -280,10 +280,44 @@ pub(crate) fn detect_storage(path: &Path) -> StorageKind {
     fs_type_name(path).map_or(StorageKind::Unknown, |t| storage_of(&t))
 }
 
-/// Clone support comes from the filesystem type: every APFS volume supports `clonefile`.
-// ponytail: no getattrlist(VOL_CAP_INT_CLONE) probe; the per-pair method cache already
-// falls back on the first ENOTSUP, so a probe would only save one failed call per job.
-// Removable media stay `Ssd` until a DiskArbitration probe is justified.
+/// `getattrlist(ATTR_VOL_CAPABILITIES)`: does the volume say it supports `clonefile` (`VOL_CAP_INT_CLONE`)?
+/// `None` when the volume does not report the bit, so the filesystem type decides.
+fn volume_clone_capability(path: &Path) -> Option<bool> {
+    #[repr(C)]
+    struct Reply {
+        length: u32,
+        caps: libc::vol_capabilities_attr_t,
+    }
+    let cpath = cstring(path).ok()?;
+    let mut list = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: 0,
+        volattr: libc::ATTR_VOL_INFO | libc::ATTR_VOL_CAPABILITIES,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // SAFETY: `Reply` is plain integers, so all-zero is valid; the C string, the list and the buffer
+    // (with its exact size) outlive the call, and the buffer is read only on success.
+    unsafe {
+        let mut reply: Reply = std::mem::zeroed();
+        let rc = libc::getattrlist(
+            cpath.as_ptr(),
+            std::ptr::from_mut(&mut list).cast(),
+            std::ptr::from_mut(&mut reply).cast(),
+            std::mem::size_of::<Reply>(),
+            0,
+        );
+        let i = libc::VOL_CAPABILITIES_INTERFACES;
+        (rc == 0 && reply.caps.valid[i] & libc::VOL_CAP_INT_CLONE != 0)
+            .then_some(reply.caps.capabilities[i] & libc::VOL_CAP_INT_CLONE != 0)
+    }
+}
+
+/// Clone support comes from the volume's `VOL_CAP_INT_CLONE` bit, else from the filesystem type
+/// (every APFS volume supports `clonefile`); the per-pair method cache still falls back on the first ENOTSUP.
+// ponytail: removable media stay `Ssd` until a DiskArbitration probe is justified.
 pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
     let id = std::fs::symlink_metadata(path).map_or(0, |m| {
         use std::os::unix::fs::MetadataExt;
@@ -293,11 +327,15 @@ pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
         return crate::VolumeInfo::unknown(id);
     };
     let fs = crate::FsKind::from_name(&fstype.to_string_lossy());
+    let mut caps = crate::FsCaps::for_fs(fs);
+    if let Some(clone) = volume_clone_capability(path) {
+        caps.clone = clone;
+    }
     crate::VolumeInfo {
         id,
         fs,
         storage: storage_of(&fstype),
-        caps: crate::FsCaps::for_fs(fs),
+        caps,
     }
 }
 

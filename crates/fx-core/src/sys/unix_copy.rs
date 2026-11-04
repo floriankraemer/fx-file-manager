@@ -573,6 +573,7 @@ pub(crate) fn copy_symlink(
     m: &Meta,
     dst: &Dir,
     dst_name: &OsStr,
+    _roots: &[PathBuf],
 ) -> io::Result<()> {
     let target = readlinkat(&src_dir.fd, name, Vec::new())?;
     symlinkat(target.as_c_str(), &dst.fd, dst_name)?;
@@ -603,11 +604,21 @@ pub(crate) fn copy_special(m: &Meta, dst: &Dir, dst_name: &OsStr) -> io::Result<
             Err(e) => Err(e.into()),
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
-        // ponytail: no mknodat in rustix on Apple; add libc::mkfifo/mknod if anyone copies FIFOs on macOS.
-        let _ = (dst, dst_name);
-        Err(unsupported("special files are not copied on this system"))
+        // Apple has no `mknodat`, and `mkfifoat` only since macOS 13: `mkfifo` by path, for FIFOs only.
+        if kind != FileType::Fifo {
+            return Err(unsupported("device files are not copied on this system"));
+        }
+        let path = std::ffi::CString::new(dst.path().join(dst_name).as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let perms = (m.mode & 0o7777) as libc::mode_t;
+        // SAFETY: `path` is NUL-terminated and outlives the call.
+        if unsafe { libc::mkfifo(path.as_ptr(), perms) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let _ = utimensat(&dst.fd, dst_name, &timestamps(m), AtFlags::SYMLINK_NOFOLLOW);
+        Ok(())
     }
 }
 
