@@ -273,7 +273,8 @@ mod tests {
         for t in [
             Time {
                 secs: 1_700_000_000,
-                nanos: 123_456_789,
+                // Windows keeps 100 ns ticks.
+                nanos: 123_456_700,
             },
             Time {
                 secs: -2,

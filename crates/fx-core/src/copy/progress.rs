@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn errors_count_and_warnings_do_not() {
         let sh = shared();
-        let e = io::Error::from_raw_os_error(13);
+        let e = io::Error::new(io::ErrorKind::PermissionDenied, "Permission denied");
         sh.record(Path::new("a"), ErrorOp::Copy, &e, false);
         sh.record(Path::new("b"), ErrorOp::Metadata, &e, true);
         assert_eq!(sh.snapshot().errors, 1);
