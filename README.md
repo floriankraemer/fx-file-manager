@@ -1,29 +1,6 @@
 # fx
 
-Fast folder-listing core for a tabbed file explorer, plus the `fx` console app.
-
-## Layout
-
-- `crates/fx-core`: library with the listing domain, storage detection and strategy, the `list_dir` and `walk` use cases, and per-OS backends in `src/sys`.
-- `crates/fx-app`: UI-agnostic explorer logic (tabs, history, sorting, filtering, file operations).
-- `crates/fx-gui`: egui/eframe desktop app, binary `fx-gui`.
-- `crates/fx-cli`: console app, binary `fx`.
-- `crates/icon-theme`: embedded Material icon theme for the GUI.
-
-Per-OS listing backends:
-
-- Linux: `getdents64` and `statx` via rustix.
-- Windows: `GetFileInformationByHandleEx` with `FileIdBothDirectoryInfo`.
-- macOS: `getattrlistbulk`.
-- `std_fs` is the portable baseline and the test oracle.
-
-## Storage strategies
-
-Storage kind is detected per path and picks the concurrency strategy.
-
-- SSD: one thread per core for stat and walk.
-- HDD: one stat thread, stats sorted by inode to cut seeks, two walk threads.
-- Network (SMB, NFS, 9p, FUSE, UNC, mapped drives): 8 requests in flight with 256 KiB buffers, since latency dominates.
+Fast folder-listing core for a tabbed file explorer.
 
 ## Performance
 
@@ -37,37 +14,19 @@ Storage kind is detected per path and picks the concurrency strategy.
 - Background loads carry a generation counter, so stale results are dropped.
 - Release builds use fat LTO, one codegen unit and `panic = "abort"`.
 
-## Usage
+### File system reading strategies
 
-```
-fx [PATH]  [--names] [--no-sort] [--backend native|std] [--storage ssd|hdd|network] [--quiet]
-fx walk [PATH] [--print] [--backend native|std] [--storage ssd|hdd|network] [--quiet]
-```
+Storage kind is detected per path and picks the concurrency strategy.
 
-## Development
+- SSD: one thread per core for stat and walk.
+- HDD: one stat thread, stats sorted by inode to cut seeks, two walk threads.
+- Network (SMB, NFS, 9p, FUSE, UNC, mapped drives): 8 requests in flight with 256 KiB buffers, since latency dominates.
 
-```
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo build --release
-```
+## Documentation
 
-The oracle test (`crates/fx-core/tests/oracle.rs`) checks that the native backend returns the same results as the std backend.
-
-## Builds and releases
-
-Linux and Windows artifacts are built in Docker (`docker/Dockerfile`), so they need no local toolchain:
-
-```
-make test-container   # fmt, clippy -D warnings, tests, inside the Linux image
-make e2e              # launch fx-gui under Xvfb, screenshot to dist/e2e/screenshot.png
-make build-linux      # dist/linux/{fx,fx-gui}
-make build-windows    # dist/windows/{fx.exe,fx-gui.exe}
-make build-osx        # native, on a Mac only: dist/macos/
-```
-
-Releases: bump `version` in the workspace `Cargo.toml`, commit, then tag `vX.Y.Z`.
-`.github/workflows/release.yml` refuses a tag that does not match the version and publishes Linux (tar.gz, .deb, AppImage), Windows (zip) and macOS (dmg, unsigned) assets.
+- [Layout](docs/layout.md)
+- [Console app](docs/console.md)
+- [Development, builds and releases](docs/development.md)
 
 ## License
 
