@@ -156,6 +156,8 @@ font_filter = "Filtrar fuentes"
 list_font_size = "Tamaño de fuente de la lista"
 tree_font_size = "Tamaño de fuente del árbol"
 folder_order = "Orden de las carpetas"
+date_format = "Formato de fecha"
+cjk_missing = "No hay ninguna fuente china instalada, por lo que el texto chino aparece como cuadros. Instala Noto Sans CJK SC o similar."
 preload = "Precargar subcarpetas en segundo plano"
 tree_single_click = "Un clic en el árbol de carpetas"
 list_single_click = "Un clic en la lista de archivos"
@@ -294,3 +296,23 @@ overwrite = "Sobrescribir"
 keep_both = "Conservar ambos, renombrar la copia"
 overwrite_if_newer = "Sobrescribir si es más reciente"
 skip_identical = "Omitir archivos idénticos (reanudar)"
+
+[unit]
+b = "B"
+kb = "KB"
+mb = "MB"
+gb = "GB"
+tb = "TB"
+pb = "PB"
+ms = "ms"
+
+[date_format]
+locale = "Según el idioma"
+iso = "ISO (2026-11-04)"
+
+[os_error]
+not_found = "No encontrado"
+permission_denied = "Permiso denegado"
+already_exists = "Ya existe"
+directory_not_empty = "La carpeta no está vacía"
+no_space = "No queda espacio en el dispositivo"

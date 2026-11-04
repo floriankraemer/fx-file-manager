@@ -156,6 +156,8 @@ font_filter = "Schriften filtern"
 list_font_size = "Schriftgröße der Liste"
 tree_font_size = "Schriftgröße des Ordnerbaums"
 folder_order = "Ordnerreihenfolge"
+date_format = "Datumsformat"
+cjk_missing = "Es ist keine chinesische Schriftart installiert, daher erscheint chinesischer Text als Kästchen. Installiere Noto Sans CJK SC oder eine ähnliche Schrift."
 preload = "Unterordner im Hintergrund vorladen"
 tree_single_click = "Einfachklick im Ordnerbaum"
 list_single_click = "Einfachklick in der Dateiliste"
@@ -294,3 +296,23 @@ overwrite = "Überschreiben"
 keep_both = "Beide behalten, Kopie umbenennen"
 overwrite_if_newer = "Überschreiben, wenn neuer"
 skip_identical = "Identische Dateien überspringen (Fortsetzen)"
+
+[unit]
+b = "B"
+kb = "KB"
+mb = "MB"
+gb = "GB"
+tb = "TB"
+pb = "PB"
+ms = "ms"
+
+[date_format]
+locale = "Der Sprache folgen"
+iso = "ISO (2026-11-04)"
+
+[os_error]
+not_found = "Nicht gefunden"
+permission_denied = "Zugriff verweigert"
+already_exists = "Existiert bereits"
+directory_not_empty = "Ordner ist nicht leer"
+no_space = "Kein Speicherplatz mehr verfügbar"

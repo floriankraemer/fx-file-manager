@@ -323,8 +323,20 @@ fn permissions_text(meta: &fs::Metadata) -> String {
     }
 }
 
-/// Strips the `(os error N)` suffix so messages read as "Permission denied".
+/// Common error kinds in the UI language; other kinds fall back to the OS text without its `(os error N)` suffix.
 fn plain(err: &io::Error) -> String {
+    use io::ErrorKind::*;
+    let key = match err.kind() {
+        NotFound => "os_error.not_found",
+        PermissionDenied => "os_error.permission_denied",
+        AlreadyExists => "os_error.already_exists",
+        DirectoryNotEmpty => "os_error.directory_not_empty",
+        StorageFull => "os_error.no_space",
+        _ => "",
+    };
+    if !key.is_empty() {
+        return crate::t(key).to_owned();
+    }
     let text = err.to_string();
     match text.rsplit_once(" (os error ") {
         Some((head, _)) => head.to_owned(),
@@ -392,6 +404,35 @@ mod tests {
         assert_eq!(mode_text(0o755), "rwxr-xr-x");
         assert_eq!(mode_text(0o640), "rw-r-----");
         assert_eq!(mode_text(0o000), "---------");
+    }
+
+    #[test]
+    fn mapped_error_kinds_use_the_catalog() {
+        use crate::i18n::{Language, find_in};
+        for (kind, key) in [
+            (io::ErrorKind::NotFound, "os_error.not_found"),
+            (
+                io::ErrorKind::PermissionDenied,
+                "os_error.permission_denied",
+            ),
+            (io::ErrorKind::AlreadyExists, "os_error.already_exists"),
+            (
+                io::ErrorKind::DirectoryNotEmpty,
+                "os_error.directory_not_empty",
+            ),
+            (io::ErrorKind::StorageFull, "os_error.no_space"),
+        ] {
+            assert_eq!(
+                plain(&io::Error::from(kind)),
+                find_in(Language::En, key).unwrap()
+            );
+            for lang in Language::CATALOGS {
+                assert!(
+                    crate::i18n::catalog(lang).contains_key(key),
+                    "{lang:?} {key}"
+                );
+            }
+        }
     }
 
     #[test]

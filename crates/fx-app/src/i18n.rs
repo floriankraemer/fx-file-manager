@@ -214,7 +214,7 @@ pub(crate) fn render_plural(
                 .or_else(|| lookup(l, &format!("{key}.other")))
         })
         .unwrap_or(key);
-    let n = n.to_string();
+    let n = crate::format::format_number_in(lang, n);
     let mut all = vec![("n", n.as_str())];
     all.extend_from_slice(args);
     fill(text, &all)

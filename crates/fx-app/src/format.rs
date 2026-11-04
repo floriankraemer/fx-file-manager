@@ -1,9 +1,55 @@
 //! Pure display helpers: sizes, timestamps, relative ages, extensions.
 
+use crate::i18n::{Language, current, find_in};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const KIB: f64 = 1024.0;
-const SIZE_UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+const SIZE_UNITS: [&str; 5] = ["unit.kb", "unit.mb", "unit.gb", "unit.tb", "unit.pb"];
+
+/// How `format_time` writes dates. Stored by [`set_date_format`] so call sites stay unchanged.
+static ISO_DATES: AtomicBool = AtomicBool::new(false);
+
+pub fn set_date_format(format: crate::settings::DateFormat) {
+    ISO_DATES.store(
+        format == crate::settings::DateFormat::Iso,
+        Ordering::Relaxed,
+    );
+}
+
+/// Decimal separator and digit group separator of `lang`.
+// ponytail: table for the six supported languages; swap for ICU4X if many more are added.
+fn separators(lang: Language) -> (char, char) {
+    match lang {
+        Language::De | Language::Es => (',', '.'),
+        Language::Fr | Language::Uk => (',', '\u{a0}'),
+        _ => ('.', ','),
+    }
+}
+
+/// `n` with digit groups, e.g. `12,345` or `12.345`.
+pub fn format_number(n: u64) -> String {
+    format_number_in(current(), n)
+}
+
+pub(crate) fn format_number_in(lang: Language, n: u64) -> String {
+    let (_, group) = separators(lang);
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(group);
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `value` with one decimal and the language's decimal separator.
+fn decimal(lang: Language, value: f64) -> String {
+    let text = format!("{value:.1}");
+    text.replace('.', &separators(lang).0.to_string())
+}
 
 const SECS_PER_MINUTE: u64 = 60;
 const SECS_PER_HOUR: u64 = 60 * SECS_PER_MINUTE;
@@ -14,8 +60,16 @@ const SECS_PER_YEAR: u64 = 365 * SECS_PER_DAY;
 
 /// Binary units, one decimal from KB up. Rounding never shows "1024.0 KB": it promotes to the next unit.
 pub fn format_size(bytes: u64) -> String {
+    size_in(current(), bytes)
+}
+
+fn unit(lang: Language, key: &'static str) -> &'static str {
+    find_in(lang, key).unwrap_or(key)
+}
+
+fn size_in(lang: Language, bytes: u64) -> String {
     if bytes < 1024 {
-        return format!("{bytes} B");
+        return format!("{bytes} {}", unit(lang, "unit.b"));
     }
     let mut value = bytes as f64 / KIB;
     let mut unit = 0;
@@ -23,22 +77,40 @@ pub fn format_size(bytes: u64) -> String {
         value /= KIB;
         unit += 1;
     }
-    format!("{value:.1} {}", SIZE_UNITS[unit])
+    format!(
+        "{} {}",
+        decimal(lang, value),
+        self::unit(lang, SIZE_UNITS[unit])
+    )
 }
 
 /// Milliseconds with one decimal below 10 ms (`"0.4 ms"`), whole milliseconds from there up.
 pub fn format_millis(d: std::time::Duration) -> String {
-    let ms = d.as_secs_f64() * 1000.0;
-    if ms < 9.95 {
-        format!("{ms:.1} ms")
-    } else {
-        format!("{ms:.0} ms")
-    }
+    millis_in(current(), d)
 }
 
-/// `YYYY-MM-DD HH:MM`.
+fn millis_in(lang: Language, d: std::time::Duration) -> String {
+    let ms = d.as_secs_f64() * 1000.0;
+    let value = if ms < 9.95 {
+        decimal(lang, ms)
+    } else {
+        format!("{ms:.0}")
+    };
+    format!("{value} {}", unit(lang, "unit.ms"))
+}
+
+/// Date in the language's order plus `HH:MM`, or `YYYY-MM-DD HH:MM` when the date format is ISO.
 // ponytail: UTC; local tz when a time crate is added
 pub fn format_time(time: SystemTime) -> String {
+    let lang = if ISO_DATES.load(Ordering::Relaxed) {
+        Language::En
+    } else {
+        current()
+    };
+    time_in(lang, time)
+}
+
+fn time_in(lang: Language, time: SystemTime) -> String {
     let secs = match time.duration_since(UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
         // Floor for pre-epoch times, so the minute never rounds toward zero.
@@ -53,7 +125,13 @@ pub fn format_time(time: SystemTime) -> String {
         secs_of_day / SECS_PER_HOUR,
         secs_of_day % SECS_PER_HOUR / SECS_PER_MINUTE,
     );
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+    let date = match lang {
+        Language::De | Language::Uk => format!("{day:02}.{month:02}.{year:04}"),
+        Language::Es | Language::Fr => format!("{day:02}/{month:02}/{year:04}"),
+        Language::Zh => format!("{year}年{month}月{day}日"),
+        _ => format!("{year:04}-{month:02}-{day:02}"),
+    };
+    format!("{date} {hour:02}:{minute:02}")
 }
 
 /// Days since 1970-01-01 to (year, month, day) in the proleptic Gregorian calendar.
@@ -173,5 +251,70 @@ mod tests {
         assert_eq!(extension("archive.tar.gz"), "gz");
         assert_eq!(extension(".bashrc"), "");
         assert_eq!(extension("README"), "");
+    }
+
+    #[test]
+    fn sizes_numbers_dates_per_locale() {
+        let t = UNIX_EPOCH + Duration::from_secs(1_793_802_600); // 2026-11-04 14:30 UTC
+        // (language, 1536 bytes, 512 bytes, 12345, date, 0.4 ms)
+        let table = [
+            (
+                Language::En,
+                "1.5 KB",
+                "512 B",
+                "12,345",
+                "2026-11-04 14:30",
+                "0.4 ms",
+            ),
+            (
+                Language::De,
+                "1,5 KB",
+                "512 B",
+                "12.345",
+                "04.11.2026 14:30",
+                "0,4 ms",
+            ),
+            (
+                Language::Es,
+                "1,5 KB",
+                "512 B",
+                "12.345",
+                "04/11/2026 14:30",
+                "0,4 ms",
+            ),
+            (
+                Language::Fr,
+                "1,5 Ko",
+                "512 o",
+                "12\u{a0}345",
+                "04/11/2026 14:30",
+                "0,4 ms",
+            ),
+            (
+                Language::Uk,
+                "1,5 КБ",
+                "512 Б",
+                "12\u{a0}345",
+                "04.11.2026 14:30",
+                "0,4 мс",
+            ),
+            (
+                Language::Zh,
+                "1.5 KB",
+                "512 字节",
+                "12,345",
+                "2026年11月4日 14:30",
+                "0.4 毫秒",
+            ),
+        ];
+        for (lang, kb, b, n, date, ms) in table {
+            assert_eq!(size_in(lang, 1536), kb, "{lang:?}");
+            assert_eq!(size_in(lang, 512), b, "{lang:?}");
+            assert_eq!(format_number_in(lang, 12_345), n, "{lang:?}");
+            assert_eq!(time_in(lang, t), date, "{lang:?}");
+            assert_eq!(millis_in(lang, Duration::from_micros(400)), ms, "{lang:?}");
+        }
+        assert_eq!(format_number_in(Language::En, 999), "999");
+        assert_eq!(format_number_in(Language::En, 1_000_000), "1,000,000");
     }
 }

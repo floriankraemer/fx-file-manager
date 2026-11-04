@@ -8,8 +8,8 @@ use eframe::egui::{
     Ui,
 };
 use fx_app::{
-    ConflictChoice, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE, MIN_FONT_SIZE,
-    Settings, open_with_system, t,
+    ConflictChoice, DateFormat, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE,
+    MIN_FONT_SIZE, Settings, open_with_system, t,
 };
 use std::path::PathBuf;
 
@@ -91,6 +91,11 @@ const ROWS: &[Row] = &[
         show: |ui, f, l| {
             ui.label(l);
             language_combo(ui, &mut f.draft.language);
+            if f.draft.language.needs_cjk() && !theme::cjk_font_found() {
+                ui.end_row();
+                ui.label("");
+                ui.colored_label(theme::error(), t("settings.cjk_missing"));
+            }
         },
     },
     Row {
@@ -179,6 +184,25 @@ const ROWS: &[Row] = &[
                 .show_ui(ui, |ui| {
                     for v in [FolderOrder::Top, FolderOrder::Mixed, FolderOrder::Bottom] {
                         ui.selectable_value(o, v, text(v));
+                    }
+                });
+        },
+    },
+    Row {
+        category: Category::Listing,
+        label: "settings.date_format",
+        show: |ui, f, l| {
+            ui.label(l);
+            let d = &mut f.draft.date_format;
+            let text = |d: DateFormat| match d {
+                DateFormat::Locale => t("date_format.locale"),
+                DateFormat::Iso => t("date_format.iso"),
+            };
+            egui::ComboBox::from_id_salt("date-format")
+                .selected_text(text(*d))
+                .show_ui(ui, |ui| {
+                    for v in [DateFormat::Locale, DateFormat::Iso] {
+                        ui.selectable_value(d, v, text(v));
                     }
                 });
         },

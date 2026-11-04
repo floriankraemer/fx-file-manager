@@ -77,3 +77,18 @@ When the language is Simplified Chinese, the GUI adds an installed system font a
 It looks for Noto Sans CJK SC, Noto Sans SC, Source Han Sans SC, WenQuanYi, Microsoft YaHei, SimSun, PingFang SC, Hiragino Sans GB and Heiti SC.
 No font is bundled, to keep the binary small.
 If none of them is installed, Chinese text shows as boxes.
+
+If no font is found and Chinese is selected, the Settings dialog shows a notice under the language picker.
+
+## Numbers, sizes and dates
+
+Decimal separators, digit grouping and date order live in a small table in `crates/fx-app/src/format.rs`, one entry per supported language.
+Unit names (`unit.*`) and common file error texts (`os_error.*`) are in the catalogs.
+Grouping uses a no-break space (U+00A0) in French and Ukrainian, because the built-in font may lack the narrow no-break space.
+Errors whose `io::ErrorKind` has no `os_error.*` text show the operating system message as is.
+The per-item report of copy and move jobs also shows the operating system message.
+
+## What stays in English
+
+- The `fx` command line tool: output is meant for scripts, so help and error text stay English.
+- Diagnostics written to stderr (settings and theme load problems, open failures): they are log lines for bug reports.

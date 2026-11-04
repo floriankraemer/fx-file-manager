@@ -148,6 +148,8 @@ font_filter = "筛选字体"
 list_font_size = "列表字号"
 tree_font_size = "文件夹树字号"
 folder_order = "文件夹顺序"
+date_format = "日期格式"
+cjk_missing = "未安装中文字体，中文文字将显示为方框。请安装 Noto Sans CJK SC 或类似字体。"
 preload = "在后台预加载子文件夹"
 tree_single_click = "在文件夹树中单击"
 list_single_click = "在文件列表中单击"
@@ -270,3 +272,23 @@ overwrite = "覆盖"
 keep_both = "保留两者，重命名副本"
 overwrite_if_newer = "较新时覆盖"
 skip_identical = "跳过相同文件（续传）"
+
+[unit]
+b = "字节"
+kb = "KB"
+mb = "MB"
+gb = "GB"
+tb = "TB"
+pb = "PB"
+ms = "毫秒"
+
+[date_format]
+locale = "跟随语言"
+iso = "ISO（2026-11-04）"
+
+[os_error]
+not_found = "未找到"
+permission_denied = "权限被拒绝"
+already_exists = "已存在"
+directory_not_empty = "文件夹不为空"
+no_space = "设备上没有剩余空间"
