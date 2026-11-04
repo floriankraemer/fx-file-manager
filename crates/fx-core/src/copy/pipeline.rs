@@ -114,7 +114,10 @@ fn is_transient(e: &io::Error) -> bool {
     use io::ErrorKind::*;
     // ERROR_UNEXP_NET_ERR, ERROR_NETNAME_DELETED: an SMB session dropped mid-file.
     let windows_net = cfg!(windows) && matches!(e.raw_os_error(), Some(59 | 64));
+    // EMFILE/ENFILE: other workers close their descriptors within one file.
+    let out_of_fds = cfg!(unix) && matches!(e.raw_os_error(), Some(23 | 24));
     windows_net
+        || out_of_fds
         || matches!(
             e.kind(),
             TimedOut
@@ -191,9 +194,40 @@ struct Fds {
     dst: os::Dir,
 }
 
+/// The paths of an `Fds`, for queued tasks. Descriptors are opened when a task starts and closed when it
+/// ends, so a walk that runs ahead of the copy cannot pile up open directories (and hit `EMFILE`).
+/// The per-file work inside a task stays relative to the open descriptors.
+struct Pair {
+    src: PathBuf,
+    dst: PathBuf,
+}
+
+impl Pair {
+    fn of(fds: &Fds) -> Arc<Self> {
+        Arc::new(Self {
+            src: fds.src.path().to_path_buf(),
+            dst: fds.dst.path().to_path_buf(),
+        })
+    }
+
+    fn open(&self) -> io::Result<Fds> {
+        Ok(Fds {
+            src: os::Dir::open_nofollow(&self.src)?,
+            dst: os::Dir::open_nofollow(&self.dst)?,
+        })
+    }
+}
+
+/// Where a directory task finds its parent: the shared top-level folders stay open for the whole job.
+enum Parent {
+    Open(Arc<Fds>),
+    Closed(Arc<Pair>),
+}
+
 /// A destination directory waiting for its children before its final mode and times are set.
 struct Node {
     meta: Meta,
+    src_path: PathBuf,
     dst_path: PathBuf,
     /// The listing itself plus every child task still running.
     pending: AtomicUsize,
@@ -231,16 +265,17 @@ struct Job<'a> {
 }
 
 pub(crate) fn run(req: &Request, sh: &Shared) -> Summary {
+    os::raise_fd_limit();
     let cores = thread::available_parallelism().map_or(1, |n| n.get());
     let items: Vec<Arc<ItemState>> = req.items.iter().map(|_| Arc::default()).collect();
     let mut prepared = vec![false; req.items.len()];
-    let mut volumes: HashMap<PathBuf, VolumeInfo> = HashMap::new();
+    let mut parents = Parents::default();
     let mut tops: Vec<Top> = Vec::new();
     for (i, item) in req.items.iter().enumerate() {
         if sh.is_cancelled() {
             break;
         }
-        match prepare(req, i, &item.src, &item.dst, cores, &mut volumes) {
+        match prepare(req, i, &item.src, &item.dst, cores, &mut parents) {
             Ok(Some(top)) => {
                 prepared[i] = true;
                 tops.push(top);
@@ -348,6 +383,24 @@ fn invalid(msg: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, msg)
 }
 
+/// Per-parent results: the items of one paste nearly always share their source and destination folder.
+#[derive(Default)]
+struct Parents {
+    canonical: HashMap<PathBuf, PathBuf>,
+    volumes: HashMap<PathBuf, VolumeInfo>,
+}
+
+impl Parents {
+    fn canonical(&mut self, dir: &Path) -> io::Result<PathBuf> {
+        if let Some(real) = self.canonical.get(dir) {
+            return Ok(real.clone());
+        }
+        let real = fs::canonicalize(dir)?;
+        self.canonical.insert(dir.to_path_buf(), real.clone());
+        Ok(real)
+    }
+}
+
 /// Pre-flight checks and planning for one item. `Ok(None)`: a move onto itself, already done.
 fn prepare(
     req: &Request,
@@ -355,7 +408,7 @@ fn prepare(
     src: &Path,
     dst: &Path,
     cores: usize,
-    volumes: &mut HashMap<PathBuf, VolumeInfo>,
+    parents: &mut Parents,
 ) -> io::Result<Option<Top>> {
     let kind = entry_kind(fs::symlink_metadata(src)?.file_type());
     let name = src.file_name().ok_or_else(|| invalid("invalid name"))?;
@@ -375,8 +428,8 @@ fn prepare(
     } else {
         dst_parent
     };
-    let real_src_parent = fs::canonicalize(src_parent)?;
-    let real_dst_parent = fs::canonicalize(dst_parent)?;
+    let real_src_parent = parents.canonical(src_parent)?;
+    let real_dst_parent = parents.canonical(dst_parent)?;
     let same_entry = real_src_parent.join(name) == real_dst_parent.join(dst_name);
     // A duplicate next to itself (`dir (2)`) is not inside itself.
     if !same_entry
@@ -391,7 +444,7 @@ fn prepare(
         return Ok(None);
     }
     let mut volume = |dir: &Path| {
-        *volumes.entry(dir.to_path_buf()).or_insert_with(|| {
+        *parents.volumes.entry(dir.to_path_buf()).or_insert_with(|| {
             let mut v = volume_info(dir);
             if let Some(storage) = req.overrides.storage {
                 v.storage = storage;
@@ -818,11 +871,25 @@ impl<'a> Job<'a> {
         }
     }
 
-    fn open_top(&self, top: &Top) -> Option<Arc<Fds>> {
+    /// Items of one paste share their parent folders: open each pair once, not once per item,
+    /// so thousands of selected files do not hold thousands of descriptors.
+    fn open_top(
+        &self,
+        top: &Top,
+        open: &mut HashMap<(PathBuf, PathBuf), Arc<Fds>>,
+    ) -> Option<Arc<Fds>> {
+        let key = (top.src_parent.clone(), top.dst_parent.clone());
+        if let Some(fds) = open.get(&key) {
+            return Some(Arc::clone(fds));
+        }
         let opened = os::Dir::open(&top.src_parent)
             .and_then(|src| Ok((src, os::Dir::open(&top.dst_parent)?)));
         match opened {
-            Ok((src, dst)) => Some(Arc::new(Fds { src, dst })),
+            Ok((src, dst)) => {
+                let fds = Arc::new(Fds { src, dst });
+                open.insert(key, Arc::clone(&fds));
+                Some(fds)
+            }
             Err(e) => {
                 self.fail(
                     top.item,
@@ -842,8 +909,9 @@ impl<'a> Job<'a> {
             rayon::scope(|s| {
                 // Held while top-level items are scheduled, so the walk cannot look complete too early.
                 self.dirs_pending.fetch_add(1, Ordering::AcqRel);
+                let mut parents = HashMap::new();
                 for top in tops {
-                    let Some(fds) = self.open_top(top) else {
+                    let Some(fds) = self.open_top(top, &mut parents) else {
                         continue;
                     };
                     let item = Arc::clone(&self.items[top.item]);
@@ -852,7 +920,7 @@ impl<'a> Job<'a> {
                         s.spawn(move |s| {
                             self.visit_dir(
                                 s,
-                                fds,
+                                Parent::Open(fds),
                                 None,
                                 &top.name,
                                 &top.dst_name,
@@ -884,14 +952,29 @@ impl<'a> Job<'a> {
     fn visit_dir<'s>(
         &'s self,
         s: &rayon::Scope<'s>,
-        parent: Arc<Fds>,
+        parent: Parent,
         parent_node: Option<Arc<Node>>,
         name: &OsStr,
         dst_name: &OsStr,
         item: Arc<ItemState>,
         keep_both: bool,
     ) {
-        let opened = self.open_dir_pair(&parent, name, dst_name, keep_both, &item);
+        let parent = match parent {
+            Parent::Open(fds) => Ok(fds),
+            Parent::Closed(pair) => pair.open().map(Arc::new),
+        };
+        let opened = match &parent {
+            Ok(fds) => self.open_dir_pair(fds, name, dst_name, keep_both, &item),
+            Err(e) => {
+                self.fail_state(
+                    &item,
+                    &parent_path(&parent_node).join(name),
+                    ErrorOp::List,
+                    e,
+                );
+                None
+            }
+        };
         drop(parent);
         let Some((fds, meta)) = opened else {
             self.dir_listed();
@@ -902,6 +985,7 @@ impl<'a> Job<'a> {
         };
         let node = Arc::new(Node {
             meta,
+            src_path: fds.src.path().to_path_buf(),
             dst_path: fds.dst.path().to_path_buf(),
             pending: AtomicUsize::new(1),
             parent: parent_node,
@@ -911,14 +995,25 @@ impl<'a> Job<'a> {
             self.fail_state(&item, fds.src.path(), ErrorOp::List, &e);
             Vec::new()
         });
-        let fds = Arc::new(fds);
+        let pair = Pair::of(&fds);
+        drop(fds);
         let mut files = Vec::new();
         for (child, kind) in entries {
             if kind == EntryKind::Dir {
                 self.dirs_pending.fetch_add(1, Ordering::AcqRel);
                 node.pending.fetch_add(1, Ordering::AcqRel);
-                let (fds, node, item) = (Arc::clone(&fds), Arc::clone(&node), Arc::clone(&item));
-                s.spawn(move |s| self.visit_dir(s, fds, Some(node), &child, &child, item, false));
+                let (pair, node, item) = (Arc::clone(&pair), Arc::clone(&node), Arc::clone(&item));
+                s.spawn(move |s| {
+                    self.visit_dir(
+                        s,
+                        Parent::Closed(pair),
+                        Some(node),
+                        &child,
+                        &child,
+                        item,
+                        false,
+                    )
+                });
             } else {
                 files.push((child, kind));
             }
@@ -927,8 +1022,8 @@ impl<'a> Job<'a> {
         while !files.is_empty() {
             let rest = files.split_off(files.len().saturating_sub(FILES_PER_TASK));
             node.pending.fetch_add(1, Ordering::AcqRel);
-            let (fds, node) = (Arc::clone(&fds), Arc::clone(&node));
-            s.spawn(move |s| self.copy_batch(s, fds, node, rest));
+            let (pair, node) = (Arc::clone(&pair), Arc::clone(&node));
+            s.spawn(move |s| self.copy_batch(s, pair, node, rest));
         }
         self.dir_listed();
         self.node_done(node);
@@ -937,10 +1032,17 @@ impl<'a> Job<'a> {
     fn copy_batch<'s>(
         &'s self,
         s: &rayon::Scope<'s>,
-        fds: Arc<Fds>,
+        pair: Arc<Pair>,
         node: Arc<Node>,
         entries: Vec<(OsString, EntryKind)>,
     ) {
+        let fds = match pair.open() {
+            Ok(fds) => fds,
+            Err(e) => {
+                self.fail_state(&node.item, &pair.src, ErrorOp::List, &e);
+                return self.node_done(node);
+            }
+        };
         let mut bytes = 0;
         let mut rest = entries.into_iter();
         while let Some((name, kind)) = rest.next() {
@@ -956,8 +1058,8 @@ impl<'a> Job<'a> {
             if bytes >= TASK_BYTES && rest.len() > 0 {
                 let remaining: Vec<_> = rest.collect();
                 node.pending.fetch_add(1, Ordering::AcqRel);
-                let (fds, node) = (Arc::clone(&fds), Arc::clone(&node));
-                s.spawn(move |s| self.copy_batch(s, fds, node, remaining));
+                let (pair, node) = (Arc::clone(&pair), Arc::clone(&node));
+                s.spawn(move |s| self.copy_batch(s, pair, node, remaining));
                 break;
             }
         }
@@ -1015,11 +1117,12 @@ impl<'a> Job<'a> {
             });
         };
 
+        let mut parents = HashMap::new();
         for top in tops {
             if self.sh.is_cancelled() {
                 return;
             }
-            let Some(fds) = self.open_top(top) else {
+            let Some(fds) = self.open_top(top, &mut parents) else {
                 continue;
             };
             dirs.push((fds.src.path().to_path_buf(), fds.dst.path().to_path_buf()));
@@ -1292,6 +1395,13 @@ impl<'a> Job<'a> {
         }
         kept
     }
+}
+
+/// The source folder of a directory node, for error messages when its parent cannot be reopened.
+fn parent_path(node: &Option<Arc<Node>>) -> PathBuf {
+    node.as_ref()
+        .map(|n| n.src_path.clone())
+        .unwrap_or_default()
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

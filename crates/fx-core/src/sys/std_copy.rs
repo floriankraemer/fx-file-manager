@@ -41,6 +41,16 @@ impl Dir {
         })
     }
 
+    /// Like `open`, but a symlink in place of the folder is refused.
+    pub(crate) fn open_nofollow(path: &Path) -> io::Result<Self> {
+        if !fs::symlink_metadata(path)?.is_dir() {
+            return Err(not_a_dir());
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -335,6 +345,8 @@ pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     }
     fs::rename(from, to)
 }
+
+pub(crate) fn raise_fd_limit() {}
 
 /// Each file was synced as it was written.
 #[cfg(not(windows))]

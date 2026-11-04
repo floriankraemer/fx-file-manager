@@ -60,6 +60,15 @@ impl Dir {
         })
     }
 
+    /// Like `open`, but a symlink in place of the folder is refused (reopening a folder found by the walk).
+    pub(crate) fn open_nofollow(path: &Path) -> io::Result<Self> {
+        let fd = openat(CWD, path, DIR_FLAGS, Mode::empty())?;
+        Ok(Self {
+            fd,
+            path: path.to_path_buf(),
+        })
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -631,6 +640,27 @@ pub(crate) fn barrier(path: &Path) -> io::Result<()> {
         rustix::fs::fsync(&fd)?;
     }
     Ok(())
+}
+
+/// Raises the soft open-file limit to the hard limit once per process, as Go's runtime does: workers hold
+/// a few descriptors each, and macOS starts GUI apps with only 256.
+pub(crate) fn raise_fd_limit() {
+    use rustix::process::{Resource, getrlimit, setrlimit};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let mut limit = getrlimit(Resource::Nofile);
+        // macOS rejects values above OPEN_MAX even when the hard limit is "unlimited".
+        let cap = if cfg!(target_os = "macos") {
+            10_240
+        } else {
+            1 << 20
+        };
+        let want = limit.maximum.unwrap_or(cap).min(cap);
+        if limit.current.is_some_and(|c| c < want) {
+            limit.current = Some(want);
+            let _ = setrlimit(Resource::Nofile, limit);
+        }
+    });
 }
 
 pub(crate) fn free_space(path: &Path) -> Option<u64> {

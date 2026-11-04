@@ -3,7 +3,8 @@
 //! `MoveFileExW` no-replace renames and `FlushFileBuffers` durability for moves.
 
 pub(crate) use super::std_copy::{
-    Dir, Src, copy_dir_attrs, copy_special, copy_symlink, hard_link, lstat, open_file, read_all,
+    Dir, Src, copy_dir_attrs, copy_special, copy_symlink, hard_link, lstat, open_file,
+    raise_fd_limit, read_all,
 };
 
 use super::windows::wide_path;
