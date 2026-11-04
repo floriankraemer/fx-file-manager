@@ -1,8 +1,14 @@
-# fx
+# fx File Manager
 
-Fast folder-listing core for a tabbed file explorer.
+A performance optimized cross platform file manager written in Rust.
 
-## Performance
+## Documentation
+
+- [Layout](docs/layout.md)
+- [Console app](docs/console.md)
+- [Development, builds and releases](docs/development.md)
+
+## Performance Optimizations
 
 - Linux reads directories with `getdents64` into one buffer per listing.
 - Entry metadata is fetched with dirfd-relative `statx`, so no full paths are built.
@@ -21,12 +27,6 @@ Storage kind is detected per path and picks the concurrency strategy.
 - SSD: one thread per core for stat and walk.
 - HDD: one stat thread, stats sorted by inode to cut seeks, two walk threads.
 - Network (SMB, NFS, 9p, FUSE, UNC, mapped drives): 8 requests in flight with 256 KiB buffers, since latency dominates.
-
-## Documentation
-
-- [Layout](docs/layout.md)
-- [Console app](docs/console.md)
-- [Development, builds and releases](docs/development.md)
 
 ## License
 
