@@ -7,6 +7,17 @@ cargo build --release
 ```
 
 The oracle test (`crates/fx-core/tests/oracle.rs`) checks that the native backend returns the same results as the std backend.
+The copy tests (`crates/fx-core/tests/copy.rs`) copy and move temp trees of many small files through every schedule and host method and compare the result with the source.
+
+## Copy benchmarks
+
+```
+python3 bench/copy/gen.py /data/datasets --scale 0.1   # D1-D6 of issue #15, fixed seed
+cargo build --release -p fx-cli
+bench/copy/run.sh /data/datasets /mnt/target D2 D3     # hyperfine: fx vs cp -a, xcp, fcp, rsync
+```
+
+Run `run.sh` as root for cold-cache numbers; results land in `bench/copy/results/`.
 
 ## Builds and releases
 

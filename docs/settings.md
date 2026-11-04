@@ -7,7 +7,7 @@ A missing file means defaults.
 
 ## Settings dialog
 
-The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing and Behavior.
+The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing, Behavior and Copy and move.
 A search box filters the settings by name.
 
 ## Appearance
@@ -34,6 +34,14 @@ Values outside that range are clamped on load.
 - `"mixed"`: folders and files sorted together.
 - `"bottom"`: folders after files, as in Finder.
 
+## Copy and move
+
+- `conflict_policy` (default `"ask"`): what a paste does when an item with the same name exists.
+  Values: `"ask"`, `"skip"`, `"overwrite"`, `"keep-both"`, `"overwrite-if-newer"`, `"skip-identical"`.
+  Folders always merge.
+- `copy_workers` (default `0`): copy workers per transfer.
+  `0` lets the copy engine choose per storage type, see [Copy engine](copy-engine.md).
+
 ## Example
 
 ```toml
@@ -42,4 +50,6 @@ list_font_size = 14.0
 tree_font_size = 12.0
 folder_order = "top"
 theme = "nord-dark"
+conflict_policy = "ask"
+copy_workers = 0
 ```
