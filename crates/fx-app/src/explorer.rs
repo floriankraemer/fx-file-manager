@@ -406,6 +406,7 @@ impl Explorer {
         if self.settings.copy_workers > 0 {
             req.overrides.workers = Some(self.settings.copy_workers as usize);
         }
+        req.overrides.verify = self.settings.verify_copies;
         let key = if cut {
             "transfer.moving"
         } else {

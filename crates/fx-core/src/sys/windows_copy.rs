@@ -39,6 +39,8 @@ use windows_sys::Win32::System::Ioctl::{
 const COPIED_ATTRIBUTES: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x2000;
 /// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` clones at most this much per call (4 GiB minus one 64 KiB cluster).
 const MAX_CLONE_RANGE: u64 = (4 << 30) - (64 << 10);
+/// Files below this size may take the experimental raw path.
+const RAW_SMALL_MAX: u64 = 64 * 1024;
 const CHUNK: usize = 16 * 1024 * 1024;
 
 /// `DeviceIoControl` with typed in/out buffers. `ERROR_MORE_DATA` counts as success (partial output).
@@ -109,7 +111,7 @@ pub(crate) fn copy_file(
             other => return other,
         }
     }
-    for &method in ctx.plan.methods {
+    for method in ctx.plan.chain() {
         if !ctx.cache.enabled(method) {
             continue;
         }
@@ -117,6 +119,9 @@ pub(crate) fn copy_file(
             Method::CopyFile2 => created(ctx, &dst_path, copy_file2(ctx, src, &dst_path)),
             Method::DuplicateExtents => {
                 created(ctx, &dst_path, duplicate_extents(ctx, src, &dst_path))
+            }
+            Method::RawSmall if src.meta.size < RAW_SMALL_MAX => {
+                created(ctx, &dst_path, raw_small(ctx, src, &dst_path))
             }
             Method::ReadWrite => {
                 return super::std_copy::copy_file(ctx, src, src_dir, name, dst, dst_name, None);
@@ -352,6 +357,39 @@ fn sparse_copy(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
                 off += n as u64;
             }
         }
+        finish_like(src, &input, &out, dst)
+    })();
+    if result.is_err() {
+        meter.rollback();
+    }
+    result.map(|()| false)
+}
+
+/// Experimental (issue #22): one read and one write for a small file, plus times and attributes.
+/// Unlike `CopyFile2` it does not carry alternate data streams or security descriptors.
+fn raw_small(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
+    ctx.shared.checkpoint()?;
+    let size = src.meta.size as usize;
+    let (input, out) = create_like(src, dst)?;
+    let mut meter = ctx.meter();
+    let result = (|| {
+        let mut buf = vec![0u8; size];
+        let mut read = 0;
+        while read < size {
+            match input.seek_read(&mut buf[read..], read as u64)? {
+                0 => {
+                    return Err(io::Error::other(
+                        "the file changed while it was being copied",
+                    ));
+                }
+                n => read += n,
+            }
+        }
+        let mut written = 0;
+        while written < size {
+            written += out.seek_write(&buf[written..], written as u64)?;
+        }
+        meter.add(size as u64);
         finish_like(src, &input, &out, dst)
     })();
     if result.is_err() {

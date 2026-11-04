@@ -847,3 +847,73 @@ mod unix {
         assert_eq!(fs::read(out.join("b")).unwrap(), b"b");
     }
 }
+
+/// Every experimental method must leave the same tree as the default path: content, mtimes and modes.
+/// Methods that do not apply to the host or to the file sizes fall back, so this holds everywhere.
+#[test]
+fn experimental_methods_copy_like_the_default_path() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("src");
+    small_tree(&src, 3, 12);
+    fs::write(src.join("mid.bin"), bytes(3, 300_000)).unwrap();
+    fs::write(src.join("big.bin"), bytes(9, 17 << 20)).unwrap();
+    let read_only = src.join("ro.txt");
+    fs::write(&read_only, b"read only").unwrap();
+    let mut perms = fs::metadata(&read_only).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&read_only, perms).unwrap();
+
+    let default = t.path().join("default");
+    assert_clean(&copy(
+        &src,
+        &default,
+        ConflictPolicy::Skip,
+        Overrides::default(),
+    ));
+    for method in Method::EXPERIMENTAL {
+        let dst = t.path().join(method.name());
+        let overrides = Overrides {
+            experiment: Some(method),
+            workers: Some(3),
+            ..Overrides::default()
+        };
+        let s = copy(&src, &dst, ConflictPolicy::Skip, overrides);
+        assert_clean(&s);
+        assert_same_tree(&src, &dst);
+        assert_same_tree(&default, &dst);
+        assert!(
+            fs::metadata(dst.join("ro.txt"))
+                .unwrap()
+                .permissions()
+                .readonly(),
+            "{}: read-only bit",
+            method.name()
+        );
+    }
+}
+
+#[test]
+fn verified_copies_are_complete_and_report_no_errors() {
+    for schedule in [
+        Schedule::Streaming,
+        Schedule::TwoPhase {
+            order: Order::Inode,
+        },
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("src");
+        small_tree(&src, 3, 12);
+        fs::write(src.join("big.bin"), bytes(5, 17 << 20)).unwrap();
+        let dst = t.path().join("dst");
+        let overrides = Overrides {
+            verify: true,
+            schedule: Some(schedule),
+            ..Overrides::default()
+        };
+        let s = copy(&src, &dst, ConflictPolicy::Skip, overrides);
+        assert_clean(&s);
+        assert_eq!(s.error_count(), 0);
+        assert_same_tree(&src, &dst);
+        assert!(s.plans.iter().all(|p| p.verify));
+    }
+}

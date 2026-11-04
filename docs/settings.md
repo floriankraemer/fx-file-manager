@@ -52,6 +52,9 @@ Values outside that range are clamped on load.
   Folders always merge.
 - `copy_workers` (default `0`): copy workers per transfer.
   `0` lets the copy engine choose per storage type, see [Copy engine](copy-engine.md).
+- `verify_copies` (default `false`): read every copied file again and compare its xxh3 checksum with the source.
+  A mismatch removes the bad copy and is reported as an error for that item; a move then keeps its source.
+  See [Copy engine](copy-engine.md) for the overhead.
 
 ## Example
 
@@ -64,4 +67,5 @@ theme = "nord-dark"
 language = "system"
 conflict_policy = "ask"
 copy_workers = 0
+verify_copies = false
 ```

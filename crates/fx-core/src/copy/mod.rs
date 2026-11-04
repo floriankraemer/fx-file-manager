@@ -11,6 +11,7 @@ mod conflict;
 pub(crate) mod pipeline;
 pub(crate) mod plan;
 pub(crate) mod progress;
+mod verify;
 
 pub use conflict::{Conflict, ConflictPolicy, Resolution, keep_both_name};
 pub use plan::{CopyPlan, Durability, Method, Op, Order, Os, Overrides, Schedule};

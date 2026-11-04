@@ -47,6 +47,8 @@ pub struct Settings {
     pub conflict_policy: ConflictChoice,
     /// Copy workers per transfer; `0` lets the copy planner decide per storage type.
     pub copy_workers: u32,
+    /// Read every copied file back and compare checksums.
+    pub verify_copies: bool,
 }
 
 impl Default for Settings {
@@ -70,6 +72,7 @@ impl Default for Settings {
             language: Language::default(),
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
+            verify_copies: false,
         }
     }
 }
@@ -284,6 +287,7 @@ mod tests {
             language: Language::Uk,
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
+            verify_copies: true,
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);

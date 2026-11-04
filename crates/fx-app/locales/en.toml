@@ -167,6 +167,8 @@ conflict_policy = "When an item already exists"
 copy_workers = "Copy workers (advanced)"
 copy_workers_auto = "Automatic"
 copy_workers_note = "Automatic picks the count per storage type (SSD, HDD, USB, network)."
+verify_copies = "Verify copies"
+verify_copies_note = "Reads every copied file again and compares checksums. A mismatch is reported as an error. Slower."
 
 [settings.cat]
 general = "General"

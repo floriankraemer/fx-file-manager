@@ -166,6 +166,8 @@ conflict_policy = "Cuando un elemento ya existe"
 copy_workers = "Hilos de copia (avanzado)"
 copy_workers_auto = "Automático"
 copy_workers_note = "Automático elige la cantidad según el tipo de almacenamiento (SSD, HDD, USB, red)."
+verify_copies = "Verificar copias"
+verify_copies_note = "Vuelve a leer cada archivo copiado y compara sumas de verificación. Una diferencia se notifica como error. Más lento."
 
 [settings.cat]
 general = "General"

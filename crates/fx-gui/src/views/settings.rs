@@ -257,11 +257,21 @@ const ROWS: &[Row] = &[
                     }),
             );
             ui.label(
-                RichText::new(
-                    "Automatic picks the count per storage type (SSD, HDD, USB, network).",
-                )
-                .small()
-                .color(theme::dim()),
+                RichText::new(t("settings.copy_workers_note"))
+                    .small()
+                    .color(theme::dim()),
+            );
+        },
+    },
+    Row {
+        category: Category::Transfers,
+        label: "settings.verify_copies",
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.verify_copies, l);
+            ui.label(
+                RichText::new(t("settings.verify_copies_note"))
+                    .small()
+                    .color(theme::dim()),
             );
         },
     },

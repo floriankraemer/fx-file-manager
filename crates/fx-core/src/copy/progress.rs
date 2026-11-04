@@ -86,6 +86,8 @@ pub enum ErrorOp {
     Rename,
     Sync,
     Remove,
+    /// The copy was read back and differs from the source.
+    Verify,
     /// Recorded but not copied (sockets, devices without privilege).
     Unsupported,
 }
@@ -102,6 +104,7 @@ impl fmt::Display for ErrorOp {
             Self::Rename => "move",
             Self::Sync => "flush",
             Self::Remove => "remove source",
+            Self::Verify => "verify",
             Self::Unsupported => "copy special file",
         })
     }

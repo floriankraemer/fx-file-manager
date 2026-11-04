@@ -158,6 +158,8 @@ conflict_policy = "项目已存在时"
 copy_workers = "复制线程数（高级）"
 copy_workers_auto = "自动"
 copy_workers_note = "自动会根据存储类型（SSD、HDD、USB、网络）选择数量。"
+verify_copies = "验证复制结果"
+verify_copies_note = "重新读取每个已复制的文件并比较校验和。不一致会作为错误报告。速度较慢。"
 
 [settings.cat]
 general = "常规"

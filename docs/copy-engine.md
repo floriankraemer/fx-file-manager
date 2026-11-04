@@ -59,7 +59,32 @@ Workers update atomic counters; the GUI samples them ten times a second.
 Totals grow while the walk is running ("at least"), so the ETA appears once the walk is complete.
 It takes the slower of the byte-rate and the file-rate estimate, because small-file jobs are bound by files per second.
 
+## Verification
+
+`fx cp --verify`, `fx mv --verify` and the "Verify copies" setting re-read every copied file once it is complete and compare a 128-bit xxh3 hash (and the length) of the source and the destination.
+A mismatch removes the bad copy and is reported as a per-item error (`verify`), so a move keeps its source.
+Links, symlinks and special files are not verified.
+The cost is one extra read of both sides, so a verified copy takes roughly twice as long when the data is not cached, and less when it is.
+The destination is usually still in the page cache, so verification proves that the engine wrote the right bytes, not that the medium stored them.
+Hashing uses the `xxhash-rust` crate (feature `xxh3` only, no further dependencies).
+
+## Experiments
+
+These methods are opt-in and never chosen by `CopyPlan::for_pair`; the final go or no-go decisions follow the benchmarks of issue #21 (see [benchmarks](benchmarks/copy.md)).
+`fx cp --experimental NAME` tries one first and falls back to the planned chain for files it does not apply to or when the OS refuses it.
+`fx cp --method NAME` forces one method without fallback, as for the other methods.
+
+| Name | OS | Applies to | What it does |
+|------|----|------------|--------------|
+| `uring` | Linux, `--features uring` | Dense files up to 1 MiB | A linked `READ` -> `WRITE` pair per file in one `io_uring` submission. A missing or blocked `io_uring` (`EPERM`, `ENOSYS`) disables it for the volume pair. |
+| `parallel` | Linux | Dense files of 1 GiB and more | 64 MiB ranges copied by up to 4 threads with positional `copy_file_range`. |
+| `o-direct` | Linux | Dense files of 1 GiB and more | `O_DIRECT` read and write in 8 MiB aligned blocks, so no write-back stall. |
+| `raw-small` | Windows | Files under 64 KiB | One read and one write plus times and attributes, instead of `CopyFile2`. It does not copy alternate data streams or security descriptors. |
+
+Not built yet: linked `OPENAT`/`CLOSE` and registered buffers for `uring`, overlapped I/O for `parallel` on Windows.
+
 ## Benchmarks
 
 `bench/copy/gen.py` generates the datasets of issue #15 with a fixed seed, and `bench/copy/run.sh` runs `fx cp` against `cp -a`, `xcp`, `fcp` and `rsync` with `hyperfine`.
-Use the `--storage`, `--workers`, `--method` and `--schedule` flags of `fx cp` to compare plans on the same hardware.
+Results: [benchmarks](benchmarks/copy.md).
+Use the `--storage`, `--workers`, `--method`, `--experimental`, `--verify` and `--schedule` flags of `fx cp` to compare plans on the same hardware.
