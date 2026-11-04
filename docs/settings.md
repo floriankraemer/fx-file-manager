@@ -8,7 +8,9 @@ A missing file means defaults.
 ## Settings dialog
 
 The settings dialog has a category sidebar on the left with General, Appearance, Fonts, Listing, Behavior, Copy and move and Keyboard.
-A search box filters the settings by name.
+Each page lists its settings in titled groups, as a two-column form: the label on the left, the control on the right.
+Checkboxes carry their own label in the right column.
+A search box filters the settings by name and shows the matches grouped by category.
 
 ## Language
 

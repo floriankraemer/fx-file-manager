@@ -179,6 +179,22 @@ behavior = "行为"
 transfers = "复制和移动"
 keyboard = "键盘"
 
+[settings.group]
+interface = "界面"
+startup = "启动"
+files = "文件"
+theme = "主题"
+columns = "文件列表列"
+font = "字体"
+sizes = "字号"
+sorting = "排序"
+display = "显示"
+performance = "性能"
+clicks = "单击"
+deleting = "删除"
+conflicts = "冲突"
+safety = "安全"
+
 [folder_order]
 top = "文件夹在前"
 mixed = "文件夹与文件混合"

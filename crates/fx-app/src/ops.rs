@@ -437,13 +437,14 @@ mod tests {
 
     #[test]
     fn plain_strips_os_error_suffix() {
-        // EACCES; Windows numbers its errors differently and words them in the system language.
-        let err = io::Error::from_raw_os_error(if cfg!(windows) { 5 } else { 13 });
+        // EINVAL / ERROR_INVALID_PARAMETER: a kind with no catalog text, so the OS wording is kept.
+        // Windows words its errors in the system language.
+        let err = io::Error::from_raw_os_error(if cfg!(windows) { 87 } else { 22 });
         let text = plain(&err);
         assert!(!text.contains("os error") && !text.is_empty(), "{text}");
         assert!(err.to_string().starts_with(&text));
         if cfg!(unix) {
-            assert_eq!(text, "Permission denied");
+            assert_eq!(text, "Invalid argument");
         }
     }
 

@@ -187,6 +187,22 @@ behavior = "Verhalten"
 transfers = "Kopieren und Verschieben"
 keyboard = "Tastatur"
 
+[settings.group]
+interface = "Oberfläche"
+startup = "Start"
+files = "Dateien"
+theme = "Design"
+columns = "Spalten der Dateiliste"
+font = "Schrift"
+sizes = "Schriftgrößen"
+sorting = "Sortierung"
+display = "Anzeige"
+performance = "Leistung"
+clicks = "Klicks"
+deleting = "Löschen"
+conflicts = "Konflikte"
+safety = "Sicherheit"
+
 [folder_order]
 top = "Ordner zuerst"
 mixed = "Ordner und Dateien gemischt"

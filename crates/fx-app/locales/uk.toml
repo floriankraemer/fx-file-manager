@@ -203,6 +203,22 @@ behavior = "Поведінка"
 transfers = "Копіювання і переміщення"
 keyboard = "Клавіатура"
 
+[settings.group]
+interface = "Інтерфейс"
+startup = "Запуск"
+files = "Файли"
+theme = "Тема"
+columns = "Стовпці списку файлів"
+font = "Шрифт"
+sizes = "Розміри шрифту"
+sorting = "Сортування"
+display = "Відображення"
+performance = "Продуктивність"
+clicks = "Клацання"
+deleting = "Видалення"
+conflicts = "Конфлікти"
+safety = "Безпека"
+
 [folder_order]
 top = "Папки зверху"
 mixed = "Папки разом із файлами"
