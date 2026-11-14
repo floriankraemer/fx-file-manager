@@ -1,0 +1,236 @@
+name: Build
+
+# Reusable build matrix shared by `latest.yml` and `release.yml`.
+# Every leg stamps `version` into the workspace Cargo.toml, so the binary
+# reports exactly what the caller asked for, and smoke-tests the result before
+# uploading: a build that cannot start never reaches a release.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version stamped into the binaries (e.g. 0.1.0 or 0.0.0-latest+abc1234)
+        required: true
+        type: string
+      asset_prefix:
+        description: Archive name prefix (e.g. fx-v0.1.0 or fx-latest)
+        required: true
+        type: string
+      git_hash:
+        required: true
+        type: string
+      build_date:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version }}
+  PREFIX: ${{ inputs.asset_prefix }}
+  FX_GIT_HASH: ${{ inputs.git_hash }}
+  FX_BUILD_DATE: ${{ inputs.build_date }}
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, deb_arch: amd64, runner: ubuntu-latest, appimage: true }
+          - { arch: arm64, deb_arch: arm64, runner: ubuntu-24.04-arm, appimage: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version
+        run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries
+        run: |
+          docker buildx build \
+            --target linux-artifact \
+            --build-arg FX_GIT_HASH --build-arg FX_BUILD_DATE \
+            -f docker/Dockerfile \
+            --output type=local,dest=dist/ \
+            --cache-from type=gha,scope=linux-${{ matrix.arch }} \
+            --cache-to type=gha,scope=linux-${{ matrix.arch }},mode=max \
+            .
+
+      - name: Smoke test
+        run: |
+          set -eu
+          test -n "$FX_GIT_HASH" && [ "$FX_GIT_HASH" != unknown ]
+          grep -qa "$FX_GIT_HASH" dist/linux/fx-gui
+          [ "$(dist/linux/fx --version)" = "fx $VERSION" ]
+          dist/linux/fx . --quiet
+
+      - name: Package tarball
+        run: |
+          set -eux
+          name="$PREFIX-linux-${{ matrix.arch }}"
+          mkdir "$name"
+          cp dist/linux/fx dist/linux/fx-gui "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - name: Package .deb
+        run: |
+          set -eux
+          name="$PREFIX-linux-${{ matrix.arch }}"
+          pkgroot="$(mktemp -d)"
+          mkdir -p "$pkgroot/opt/fx" "$pkgroot/usr/bin" \
+            "$pkgroot/usr/share/applications" \
+            "$pkgroot/usr/share/icons/hicolor/256x256/apps" \
+            "$pkgroot/DEBIAN"
+          cp dist/linux/fx dist/linux/fx-gui "$pkgroot/opt/fx/"
+          ln -s /opt/fx/fx-gui "$pkgroot/usr/bin/fx-gui"
+          ln -s /opt/fx/fx "$pkgroot/usr/bin/fx"
+          cp assets/linux/fx.desktop "$pkgroot/usr/share/applications/fx.desktop"
+          cp assets/icon.png "$pkgroot/usr/share/icons/hicolor/256x256/apps/fx.png"
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/${{ matrix.deb_arch }}/g" \
+            assets/linux/control > "$pkgroot/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "$pkgroot" "$name.deb"
+          sha256sum "$name.deb" > "$name.deb.sha256"
+
+      # appimagetool has no maintained numbered release, so pin the
+      # `continuous` build by content hash: a supply-chain change fails loudly.
+      # x86_64 only: the aarch64 tool is not pinned, so arm64 ships tar.gz + .deb.
+      - name: Package AppImage
+        if: matrix.appimage
+        run: |
+          set -eux
+          name="$PREFIX-linux-${{ matrix.arch }}"
+          appdir="$(mktemp -d)/AppDir"
+          mkdir -p "$appdir/bin"
+          cp dist/linux/fx dist/linux/fx-gui "$appdir/bin/"
+          install -m 755 assets/linux/AppRun "$appdir/AppRun"
+          cp assets/linux/fx.desktop "$appdir/fx.desktop"
+          cp assets/icon.png "$appdir/fx.png"
+
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          echo "b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2  appimagetool" | sha256sum -c -
+          chmod +x appimagetool
+          ./appimagetool --appimage-extract-and-run "$appdir" "$name.AppImage"
+          sha256sum "$name.AppImage" > "$name.AppImage.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.deb
+            *.deb.sha256
+            *.AppImage
+            *.AppImage.sha256
+
+  # Non-blocking: a failed Windows leg must not hold back the Linux artifacts.
+  # Because the smoke test runs before the upload, a Windows build that cannot
+  # start under Wine publishes nothing for Windows.
+  windows:
+    name: Windows x86_64
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version
+        run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries
+        run: |
+          docker buildx build \
+            --target windows-artifact \
+            --build-arg FX_GIT_HASH --build-arg FX_BUILD_DATE \
+            -f docker/Dockerfile \
+            --output type=local,dest=dist/ \
+            --cache-from type=gha,scope=windows \
+            --cache-to type=gha,scope=windows,mode=max \
+            .
+
+      - name: Smoke test under Wine
+        env:
+          WINEDEBUG: -all
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine64
+          [ "$(wine dist/windows/fx.exe --version | tr -d '\r')" = "fx $VERSION" ]
+          wine dist/windows/fx.exe . --quiet
+          grep -qa "$FX_GIT_HASH" dist/windows/fx-gui.exe
+
+      - name: Package zip
+        run: |
+          set -eux
+          name="$PREFIX-windows-x86_64"
+          mkdir "$name"
+          cp dist/windows/fx.exe dist/windows/fx-gui.exe "$name/"
+          zip -r "$name.zip" "$name"
+          sha256sum "$name.zip" > "$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            *.zip
+            *.zip.sha256
+
+  # Non-blocking, and native: Apple's SDK cannot be used in a Linux container,
+  # so this leg builds on a macOS runner (Apple Silicon only).
+  macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version
+        run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Smoke test
+        run: |
+          set -eu
+          [ "$(target/release/fx --version)" = "fx $VERSION" ]
+          target/release/fx . --quiet
+          grep -qa "$FX_GIT_HASH" target/release/fx-gui
+
+      - name: Assemble app bundle and dmg
+        run: |
+          set -eux
+          app=fx.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/fx-gui "$app/Contents/MacOS/fx-gui"
+          # CFBundleVersion cannot carry build metadata.
+          sed "s/@VERSION@/${VERSION%%+*}/g" assets/macos/Info.plist > "$app/Contents/Info.plist"
+
+          iconset="$(mktemp -d)/icon.iconset"
+          mkdir -p "$iconset"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz assets/icon.png --out "$iconset/icon_${sz}x${sz}.png"
+            sips -z $((sz*2)) $((sz*2)) assets/icon.png --out "$iconset/icon_${sz}x${sz}@2x.png"
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/icon.icns"
+
+          name="$PREFIX-macos-arm64"
+          stage="$(mktemp -d)"
+          cp -R "$app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname fx -srcfolder "$stage" -ov -format UDZO "$name.dmg"
+          shasum -a 256 "$name.dmg" > "$name.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            *.dmg
+            *.dmg.sha256

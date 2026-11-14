@@ -24,15 +24,18 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 
 # sccache is a compiler-output cache keyed on source, flags and the target
 # directory path. A `cargo clean` rebuild at the same path hits it fully; a
-# build at a different target path misses. Pinned binary release, not
+# build at a different target path misses. Pinned binary release (x86_64 or
+# aarch64, matching the build host), not
 # `cargo install`, which would compile it from source on every image rebuild.
 ARG SCCACHE_VERSION=0.17.0
-RUN curl -fsSL -o /tmp/sccache.tar.gz \
-      "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+RUN arch="$(uname -m)" \
+    && dir="sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl" \
+    && curl -fsSL -o /tmp/sccache.tar.gz \
+      "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${dir}.tar.gz" \
     && tar -xzf /tmp/sccache.tar.gz -C /tmp \
-    && mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/cargo/bin/sccache \
+    && mv "/tmp/${dir}/sccache" /usr/local/cargo/bin/sccache \
     && chmod +x /usr/local/cargo/bin/sccache \
-    && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl" \
+    && rm -rf /tmp/sccache.tar.gz "/tmp/${dir}" \
     && sccache --version
 
 # sccache does not cache incremental compilation, and dev builds enable it, so

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[derive(Parser)]
 #[command(
     name = "fx",
+    version,
     about = "Fast directory listing, copying and moving",
     args_conflicts_with_subcommands = true
 )]

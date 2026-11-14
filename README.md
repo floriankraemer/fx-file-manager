@@ -52,6 +52,11 @@ Unsupported methods are disabled for the pair on first failure, so a wrong guess
 - Progress is a set of atomic counters sampled by the UI, not a message per file.
 - Overwrites go through a temp file and a rename; a move deletes its source only after a flushed, error-free copy.
 
+## Contributing
+
+Commit messages and pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
+`fix` bumps the patch version, `feat` the minor version, and `!` or `BREAKING CHANGE` a breaking release.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

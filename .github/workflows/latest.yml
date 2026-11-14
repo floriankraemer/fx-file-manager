@@ -1,0 +1,74 @@
+name: Latest
+
+# Every push to the default branch rebuilds the rolling `latest` pre-release.
+# It is a pre-release so GitHub's "Latest" badge stays on the newest stable tag.
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest
+  cancel-in-progress: true
+
+jobs:
+  meta:
+    name: Identity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.id.outputs.version }}
+      git_hash: ${{ steps.id.outputs.git_hash }}
+      build_date: ${{ steps.id.outputs.build_date }}
+    steps:
+      - id: id
+        run: |
+          echo "version=0.0.0-latest+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "git_hash=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: Build
+    needs: [meta, test]
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.meta.outputs.version }}
+      # `+` is awkward in URLs, so the rolling build has a fixed archive name;
+      # `fx --version` still reports the full version.
+      asset_prefix: fx-latest
+      git_hash: ${{ needs.meta.outputs.git_hash }}
+      build_date: ${{ needs.meta.outputs.build_date }}
+
+  publish:
+    name: Update latest release
+    needs: [meta, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Replace latest release
+        run: |
+          set -eux
+          cd artifacts
+          sha256sum $(ls | grep -v '\.sha256$') > SHA256SUMS
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create latest --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease --latest=false \
+            --title "latest ($VERSION)" \
+            --notes "Rolling build of \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA}. Not a stable release." \
+            ./*
