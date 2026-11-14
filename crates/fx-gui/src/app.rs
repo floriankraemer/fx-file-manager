@@ -113,10 +113,17 @@ impl App {
                 }
             }
             Action::OpenAbout => self.open_dialog(Some(Dialog::About)),
+            Action::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::SelectAll => ex.active_mut().select_all(),
             Action::Refresh => ex.refresh(),
             Action::Open(row) => ex.activate(row),
             Action::OpenInNewTab(row) => ex.open_in_new_tab(row),
+            #[cfg(windows)]
+            Action::OpenWith(row) => {
+                if let Some(path) = ex.entry_path(row) {
+                    fx_app::open_with_chooser(&path);
+                }
+            }
             Action::CopyPath => {
                 let paths: Vec<String> = ex
                     .active()
@@ -197,6 +204,7 @@ impl App {
             Command::Properties => actions.push(Action::Properties),
             Command::OpenSettings => actions.push(Action::OpenSettings),
             Command::About => actions.push(Action::OpenAbout),
+            Command::Exit => actions.push(Action::Exit),
         }
         false
     }
