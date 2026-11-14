@@ -275,6 +275,10 @@ fn row_menu(
     if is_dir && menu_item(ui, t("cmd.open_new_tab"), "", true) {
         actions.push(Action::OpenInNewTab(row));
     }
+    #[cfg(windows)]
+    if !is_dir && menu_item(ui, t("cmd.open_with"), "", true) {
+        actions.push(Action::OpenWith(row));
+    }
     ui.separator();
     if menu_item(ui, t("cmd.cut"), &hint(Command::Cut), true) {
         actions.push(Action::Cut);

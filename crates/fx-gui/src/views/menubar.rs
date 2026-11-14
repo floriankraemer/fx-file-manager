@@ -28,6 +28,11 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
                     actions.push(Action::OpenSettings);
                     ui.close();
                 }
+                ui.separator();
+                if menu_item(ui, t("cmd.exit"), &hint(Command::Exit), true) {
+                    actions.push(Action::Exit);
+                    ui.close();
+                }
             });
             ui.menu_button(t("menu.view"), |ui| view_menu(ui, explorer, actions));
             ui.menu_button(t("menu.help"), |ui| {

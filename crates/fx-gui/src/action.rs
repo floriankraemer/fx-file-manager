@@ -12,10 +12,14 @@ pub enum Action {
     Properties,
     OpenSettings,
     OpenAbout,
+    Exit,
     Refresh,
     /// Row of the active tab.
     Open(usize),
     OpenInNewTab(usize),
+    /// Let the user pick the app for the file at this row of the active tab.
+    #[cfg(windows)]
+    OpenWith(usize),
     CopyPath,
     Copy,
     Cut,

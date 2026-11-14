@@ -8,8 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, mem, ptr};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_INVALID_LEVEL, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES,
-    ERROR_NOT_SUPPORTED, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_NOT_SUPPORTED, GetLastError, HANDLE, INVALID_HANDLE_VALUE, NO_ERROR,
 };
+use windows_sys::Win32::NetworkManagement::WNet::WNetGetConnectionW;
 use windows_sys::Win32::Storage::FileSystem::{
     BusTypeUsb, CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO,
@@ -282,6 +283,19 @@ fn bus_type(root: &[u16]) -> Option<i32> {
     // SAFETY: all-zero is a valid descriptor; only the fixed header is requested.
     let mut desc: STORAGE_DEVICE_DESCRIPTOR = unsafe { mem::zeroed() };
     query_property(&handle, StorageDeviceProperty, &mut desc).then_some(desc.BusType)
+}
+
+pub(crate) fn network_share(drive: &str) -> Option<String> {
+    let local: Vec<u16> = drive.encode_utf16().chain([0]).collect();
+    let mut remote = [0u16; 1024];
+    let mut len = remote.len() as u32;
+    // SAFETY: `local` is NUL-terminated; `len` is the capacity of `remote` in UTF-16 units.
+    let rc = unsafe { WNetGetConnectionW(local.as_ptr(), remote.as_mut_ptr(), &mut len) };
+    if rc != NO_ERROR {
+        return None;
+    }
+    let end = remote.iter().position(|&c| c == 0).unwrap_or(remote.len());
+    Some(String::from_utf16_lossy(&remote[..end]))
 }
 
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {

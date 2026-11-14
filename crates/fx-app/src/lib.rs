@@ -11,6 +11,8 @@ mod transfers;
 mod tree;
 mod view;
 
+#[cfg(windows)]
+pub use explorer::open_with_chooser;
 pub use explorer::{Explorer, REVALIDATE_INTERVAL, open_with_system};
 pub use format::{
     AgeBucket, age, extension, format_millis, format_number, format_size, format_time,

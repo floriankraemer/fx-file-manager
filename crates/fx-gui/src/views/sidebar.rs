@@ -55,10 +55,11 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
                 );
                 ui.add_space(2.0);
                 for place in places.iter().filter(|p| p.group == group) {
+                    let title = place.title(explorer.settings().show_share_names);
                     node(
                         ui,
                         explorer,
-                        &place.label,
+                        &title,
                         &place.path,
                         0,
                         &path,

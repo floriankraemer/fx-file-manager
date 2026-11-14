@@ -208,6 +208,17 @@ const ROWS: &[Row] = &[
             ui.checkbox(&mut f.draft.show_age_column, l);
         },
     },
+    // Only Windows maps network shares to drive letters.
+    #[cfg(windows)]
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.sidebar",
+        label: "settings.share_names",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.show_share_names, l);
+        },
+    },
     Row {
         category: Category::Fonts,
         group: "settings.group.font",

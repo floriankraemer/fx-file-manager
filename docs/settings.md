@@ -31,6 +31,8 @@ See [translating](translating.md) for how to fix or add a translation.
 - `theme` (default `"nord-dark"`): id of the active theme.
   See [themes](themes.md) for the built-in themes and the format of user themes.
   The old values `"dark"` and `"light"` are still read and map to `nord-dark` and `nord-light`.
+- `show_share_names` (default `true`, Windows only): show the network share after a mapped drive letter in the sidebar, for example `A: (\\server\data)`.
+  The share name comes from the Windows connection list, so an offline share does not slow the sidebar.
 
 ## Fonts
 
@@ -115,6 +117,7 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `properties` | `alt+enter` |
 | `open_settings` | `ctrl+comma` |
 | `about` | `f1` |
+| `exit` | none (Alt+F4 closes the window) |
 
 Menus and tooltips show the first shortcut of each command.
 

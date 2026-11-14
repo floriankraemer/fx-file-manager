@@ -10,6 +10,18 @@ pub struct Place {
     pub label: String,
     pub path: PathBuf,
     pub group: PlaceGroup,
+    /// UNC path behind a mapped network drive, e.g. `\\server\share`.
+    pub share: Option<String>,
+}
+
+impl Place {
+    /// Sidebar text: the label, followed by the network share when `show_share` is set and there is one.
+    pub fn title(&self, show_share: bool) -> String {
+        match &self.share {
+            Some(share) if show_share => format!("{} ({share})", self.label),
+            _ => self.label.clone(),
+        }
+    }
 }
 
 /// Sidebar section a place belongs to.
@@ -99,17 +111,19 @@ fn existing(candidates: impl Iterator<Item = (String, PathBuf)>) -> Vec<Place> {
             label,
             path,
             group: PlaceGroup::Places,
+            share: None,
         })
         .collect()
 }
 
 #[cfg(windows)]
 fn roots() -> Vec<Place> {
-    (b'C'..=b'Z')
+    (b'A'..=b'Z')
         .filter_map(|letter| {
             let label = format!("{}:", char::from(letter));
             let path = PathBuf::from(format!("{label}\\"));
-            path.is_dir().then_some(Place {
+            path.is_dir().then(|| Place {
+                share: fx_core::network_share(&label),
                 label,
                 path,
                 group: PlaceGroup::Drives,
@@ -139,6 +153,7 @@ fn root_place() -> Place {
         label: ROOT_LABEL.to_owned(),
         path: PathBuf::from(ROOT_LABEL),
         group: PlaceGroup::Drives,
+        share: None,
     }
 }
 
@@ -159,6 +174,7 @@ fn child_dirs(dir: &Path) -> Vec<Place> {
                 label,
                 path,
                 group: PlaceGroup::Drives,
+                share: None,
             }
         })
         .collect();
@@ -166,9 +182,23 @@ fn child_dirs(dir: &Path) -> Vec<Place> {
     places
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_appends_share_only_when_enabled() {
+        let mut place = Place {
+            label: "A:".to_owned(),
+            path: PathBuf::from("A:\\"),
+            group: PlaceGroup::Drives,
+            share: Some(r"\\midgard\data".to_owned()),
+        };
+        assert_eq!(place.title(true), r"A: (\\midgard\data)");
+        assert_eq!(place.title(false), "A:");
+        place.share = None;
+        assert_eq!(place.title(true), "A:");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

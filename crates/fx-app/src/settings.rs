@@ -33,6 +33,8 @@ pub struct Settings {
     pub list_single_click: bool,
     /// List the immediate subfolders in the background so entering one paints instantly.
     pub preload_subfolders: bool,
+    /// Show the network share next to a mapped drive letter in the sidebar (Windows).
+    pub show_share_names: bool,
     /// `None` keeps the built-in font.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
@@ -71,6 +73,7 @@ impl Default for Settings {
             tree_single_click: true,
             list_single_click: false,
             preload_subfolders: true,
+            show_share_names: true,
             font_family: None,
             list_font_size: 13.5,
             tree_font_size: 13.5,
@@ -296,6 +299,7 @@ mod tests {
             tree_single_click: false,
             list_single_click: true,
             preload_subfolders: false,
+            show_share_names: false,
             font_family: Some("Inter".to_string()),
             list_font_size: 16.0,
             tree_font_size: 10.5,

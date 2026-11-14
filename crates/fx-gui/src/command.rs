@@ -32,6 +32,7 @@ pub enum Command {
     Properties,
     OpenSettings,
     About,
+    Exit,
 }
 
 pub struct Def {
@@ -241,6 +242,15 @@ pub const COMMANDS: &[Def] = &[
         "command.about",
         "command_group.application",
         &["f1"],
+        false,
+    ),
+    // Unbound by default: Alt+F4 / Cmd+Q already close the window, and a stray Ctrl+Q would cancel running transfers.
+    def(
+        Command::Exit,
+        "exit",
+        "command.exit",
+        "command_group.application",
+        &[],
         false,
     ),
 ];

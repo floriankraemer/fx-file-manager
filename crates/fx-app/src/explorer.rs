@@ -820,6 +820,35 @@ pub fn open_with_system(path: &Path) -> io::Result<()> {
         })
 }
 
+/// Shows the Windows "Open with" dialog for `path` and opens it with the chosen app.
+/// The dialog is modal, so it runs on its own thread and the window stays live. Cancelling is not an error, so the result is not reported.
+#[cfg(windows)]
+pub fn open_with_chooser(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OPENASINFO, SHOpenWithDialog,
+    };
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    thread::spawn(move || {
+        let info = OPENASINFO {
+            pcszFile: file.as_ptr(),
+            pcszClass: std::ptr::null(),
+            oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_EXEC,
+        };
+        // SAFETY: shell dialogs need COM on the calling thread; `file` is NUL-terminated and outlives the call.
+        unsafe {
+            let com = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+            SHOpenWithDialog(std::ptr::null_mut(), &info);
+            if com >= 0 {
+                CoUninitialize();
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
