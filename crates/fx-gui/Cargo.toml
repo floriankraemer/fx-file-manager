@@ -19,6 +19,12 @@ icon-theme = { path = "../icon-theme" }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.13.2"
+
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", default-features = false }
 

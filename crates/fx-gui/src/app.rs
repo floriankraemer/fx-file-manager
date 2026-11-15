@@ -5,12 +5,15 @@ use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
-use eframe::egui::{self, Context, ViewportBuilder, ViewportCommand, ViewportId};
+use eframe::egui::{
+    self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
+};
 use fx_app::{
     Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use views::dnd::{self, Dragged, DropArea};
 
 const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -367,6 +370,7 @@ impl App {
         let ctx = ui.ctx().clone();
         self.explorer.set_window(self.windows[index].id);
         self.track_focus(&ctx, index);
+        dnd::forget_areas(&ctx);
 
         let mut actions = Vec::new();
         let idle = self.windows[index].dialog.is_none() && self.settings.is_none();
@@ -384,6 +388,123 @@ impl App {
         for action in actions {
             self.dispatch(&ctx, index, action);
         }
+        self.highlight_drop_target(&ctx, index);
+        self.drop_os_files(&ctx, index);
+        self.finish_drag(&ctx, index);
+    }
+
+    /// The viewport window `index` is shown in; the first window lives in the root viewport.
+    fn viewport_at(&self, index: usize) -> ViewportId {
+        if index == 0 {
+            ViewportId::ROOT
+        } else {
+            viewport_of(self.windows[index].id)
+        }
+    }
+
+    /// Where a drag from window `source` lands: a tree folder in any window, else a window's listing.
+    fn drop_target(&self, ctx: &Context, source: usize, sources: &[PathBuf]) -> Option<DropArea> {
+        let pointer = dnd::global_pointer(ctx, self.viewport_at(source))?;
+        self.area_at(ctx, pointer, Some(self.viewport_at(source)), sources)
+    }
+
+    fn area_at(
+        &self,
+        ctx: &Context,
+        pointer: Pos2,
+        source: Option<ViewportId>,
+        sources: &[PathBuf],
+    ) -> Option<DropArea> {
+        dnd::drop_target(
+            pointer,
+            &dnd::tree_folders(ctx),
+            &self.window_areas(ctx),
+            source,
+            sources,
+        )
+    }
+
+    /// Where files from outside fx land when they hover or drop on window `index`: the tree folder under
+    /// the cursor if there is one, else the window's active folder.
+    fn external_area(&self, ctx: &Context, index: usize) -> Option<DropArea> {
+        let own = self.viewport_at(index);
+        dnd::screen_pointer(ctx)
+            .and_then(|pointer| self.area_at(ctx, pointer, None, &[]))
+            .filter(|area| area.viewport == own)
+            .or_else(|| {
+                self.window_areas(ctx)
+                    .into_iter()
+                    .find(|area| area.viewport == own)
+            })
+    }
+
+    /// Each window's active folder over its global content rectangle.
+    fn window_areas(&self, ctx: &Context) -> Vec<DropArea> {
+        (0..self.windows.len())
+            .filter_map(|i| {
+                let viewport = self.viewport_at(i);
+                let rect = dnd::content_rect(ctx, viewport)?;
+                let folder = self.explorer.window_folder(self.windows[i].id)?;
+                Some(DropArea {
+                    viewport,
+                    folder,
+                    rect,
+                })
+            })
+            .collect()
+    }
+
+    /// Outlines what a drag would land on, while it hovers window `index`.
+    fn highlight_drop_target(&self, ctx: &Context, index: usize) {
+        if dnd::os_hovering(ctx) {
+            ctx.request_repaint();
+            if let Some(area) = self.external_area(ctx, index) {
+                dnd::highlight(ctx, area.rect);
+            }
+            return;
+        }
+        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
+            return;
+        };
+        let Some(source) = self.windows.iter().position(|w| w.id == dragged.from) else {
+            return;
+        };
+        if source == index {
+            return;
+        }
+        if let Some(target) = self.drop_target(ctx, source, &dragged.paths)
+            && target.viewport == self.viewport_at(index)
+        {
+            dnd::highlight(ctx, target.rect);
+        }
+    }
+
+    /// Copies files dropped from outside fx into the tree folder or listing they landed on.
+    fn drop_os_files(&mut self, ctx: &Context, index: usize) {
+        let paths = dnd::os_dropped_paths(ctx);
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(area) = self.external_area(ctx, index) {
+            self.explorer.drop_into(paths, &area.folder, true);
+        }
+    }
+
+    /// Ends a drag that started in window `index` once its button is released.
+    /// Released over a tree folder or a listing of another window, the paths are copied or moved there.
+    fn finish_drag(&mut self, ctx: &Context, index: usize) {
+        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
+            return;
+        };
+        if dragged.from != self.windows[index].id || !dnd::released(ctx, self.viewport_at(index)) {
+            return;
+        }
+        if let Some(target) = self.drop_target(ctx, index, &dragged.paths) {
+            let copy = dnd::copying(ctx, self.explorer.settings().drag_copy_modifier);
+            self.explorer
+                .drop_into(dragged.paths.clone(), &target.folder, copy);
+        }
+        DragAndDrop::clear_payload(ctx);
     }
 
     /// When window `index` gains focus, revalidates its folder and bookmarks and makes it the focused window.
