@@ -344,6 +344,33 @@ fn allocated_ranges(f: &File, size: u64) -> io::Result<Vec<(u64, u64)>> {
     }
 }
 
+/// Positional copy of `start..end` (or to EOF) through `buf`.
+fn copy_range(
+    ctx: &FileCtx<'_>,
+    input: &File,
+    out: &File,
+    (start, end): (u64, u64),
+    buf: &mut [u8],
+    meter: &mut Meter<'_>,
+) -> io::Result<()> {
+    let mut off = start;
+    while off < end {
+        ctx.shared.checkpoint()?;
+        let want = (end - off).min(buf.len() as u64) as usize;
+        let n = input.seek_read(&mut buf[..want], off)?;
+        if n == 0 {
+            break;
+        }
+        let mut written = 0;
+        while written < n {
+            written += out.seek_write(&buf[written..n], off + written as u64)?;
+        }
+        meter.add(n as u64);
+        off += n as u64;
+    }
+    Ok(())
+}
+
 fn sparse_copy(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
     let (input, out) = create_like(src, dst)?;
     let unsupported = |e: io::Error| io::Error::new(io::ErrorKind::Unsupported, e);
@@ -354,22 +381,8 @@ fn sparse_copy(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
     let mut meter = ctx.meter();
     let result = (|| {
         let mut buf = vec![0u8; CHUNK.min(ctx.plan.buf_size.max(64 << 10))];
-        for (start, end) in ranges {
-            let mut off = start;
-            while off < end {
-                ctx.shared.checkpoint()?;
-                let want = (end - off).min(buf.len() as u64) as usize;
-                let n = input.seek_read(&mut buf[..want], off)?;
-                if n == 0 {
-                    break;
-                }
-                let mut written = 0;
-                while written < n {
-                    written += out.seek_write(&buf[written..n], off + written as u64)?;
-                }
-                meter.add(n as u64);
-                off += n as u64;
-            }
+        for range in ranges {
+            copy_range(ctx, &input, &out, range, &mut buf, &mut meter)?;
         }
         finish_like(src, &input, &out, dst)
     })();

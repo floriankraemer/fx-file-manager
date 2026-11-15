@@ -119,23 +119,7 @@ pub(super) fn parallel_copy(
     let next = AtomicUsize::new(0);
     let done: Vec<(Meter<'_>, io::Result<()>)> = thread::scope(|s| {
         let handles: Vec<_> = (0..workers.min(ranges.len()))
-            .map(|_| {
-                s.spawn(|| {
-                    let mut m = ctx.meter();
-                    loop {
-                        let Some(&r) = ranges.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                            return (m, Ok(()));
-                        };
-                        let kind = linux::Kind::CopyFileRange;
-                        if let Err(e) = linux::copy_ranges(ctx, src, out, &[r], &mut m, kind, false)
-                        {
-                            // Stops the other workers at their next range.
-                            next.store(ranges.len(), Ordering::Relaxed);
-                            return (m, Err(e));
-                        }
-                    }
-                })
-            })
+            .map(|_| s.spawn(|| range_worker(ctx, src, out, &ranges, &next)))
             .collect();
         handles
             .into_iter()
@@ -150,6 +134,28 @@ pub(super) fn parallel_copy(
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// Claims ranges from `next` until none is left or one fails; returns this worker's meter and outcome.
+fn range_worker<'a>(
+    ctx: &'a FileCtx<'_>,
+    src: &Src,
+    out: BorrowedFd<'_>,
+    ranges: &[(u64, u64)],
+    next: &AtomicUsize,
+) -> (Meter<'a>, io::Result<()>) {
+    let mut m = ctx.meter();
+    loop {
+        let Some(&r) = ranges.get(next.fetch_add(1, Ordering::Relaxed)) else {
+            return (m, Ok(()));
+        };
+        let kind = linux::Kind::CopyFileRange;
+        if let Err(e) = linux::copy_ranges(ctx, src, out, &[r], &mut m, kind, false) {
+            // Stops the other workers at their next range.
+            next.store(ranges.len(), Ordering::Relaxed);
+            return (m, Err(e));
+        }
+    }
 }
 
 /// Aligned read/write with `O_DIRECT` on both files: no page cache, so no write-back stall.

@@ -325,18 +325,10 @@ fn write_data(
     let mut prepared = false;
     let mut tried = false;
     for method in ctx.plan.chain() {
-        let native = match method {
-            Method::ReadWrite => true,
-            Method::Ficlone
-            | Method::CopyFileRange
-            | Method::Sendfile
-            | Method::IoUring
-            | Method::ParallelRanged
-            | Method::ODirect => cfg!(target_os = "linux"),
-            // CloneFileAt runs before the destination is created (`macos::try_clone`).
-            _ => false,
-        };
-        if !native || !ctx.cache.enabled(method) || !applies(method, src, uncached) {
+        if !runs_on_open_destination(method)
+            || !ctx.cache.enabled(method)
+            || !applies(method, src, uncached)
+        {
             continue;
         }
         if tried {
@@ -351,47 +343,7 @@ fn write_data(
             }
         }
         tried = true;
-        let result = match method {
-            #[cfg(target_os = "linux")]
-            Method::Ficlone => rustix::fs::ioctl_ficlone(out, &src.fd)
-                .map(|()| meter.add(size))
-                .map_err(io::Error::from),
-            #[cfg(target_os = "linux")]
-            Method::CopyFileRange => linux::copy_ranges(
-                ctx,
-                src,
-                out,
-                &regions,
-                meter,
-                linux::Kind::CopyFileRange,
-                uncached,
-            ),
-            #[cfg(target_os = "linux")]
-            Method::Sendfile => linux::copy_ranges(
-                ctx,
-                src,
-                out,
-                &regions,
-                meter,
-                linux::Kind::Sendfile,
-                uncached,
-            ),
-            #[cfg(all(target_os = "linux", feature = "uring"))]
-            Method::IoUring => experimental::uring_copy(ctx, src, out, meter),
-            #[cfg(target_os = "linux")]
-            Method::ParallelRanged => experimental::parallel_copy(
-                ctx,
-                src,
-                out,
-                size,
-                meter,
-                experimental::RANGE,
-                experimental::RANGE_WORKERS,
-            ),
-            #[cfg(target_os = "linux")]
-            Method::ODirect => experimental::direct_copy(ctx, src, out, meter),
-            _ => read_write(ctx, src, out, &regions, meter),
-        };
+        let result = run_method(method, ctx, src, out, &regions, meter, uncached);
         match result {
             Ok(()) => {
                 if src.meta.sparse && !method.clones() {
@@ -410,6 +362,77 @@ fn write_data(
         io::ErrorKind::Unsupported,
         "no copy method of the plan works for this file",
     ))
+}
+
+/// Methods `write_data` runs on the opened destination on this OS.
+fn runs_on_open_destination(method: Method) -> bool {
+    match method {
+        Method::ReadWrite => true,
+        Method::Ficlone
+        | Method::CopyFileRange
+        | Method::Sendfile
+        | Method::IoUring
+        | Method::ParallelRanged
+        | Method::ODirect => cfg!(target_os = "linux"),
+        // CloneFileAt runs before the destination is created (`macos::try_clone`).
+        _ => false,
+    }
+}
+
+/// One attempt of `method`; on failure the destination may hold a partial copy.
+fn run_method(
+    method: Method,
+    ctx: &FileCtx<'_>,
+    src: &Src,
+    out: BorrowedFd<'_>,
+    regions: &[(u64, u64)],
+    meter: &mut crate::copy::pipeline::Meter<'_>,
+    uncached: bool,
+) -> io::Result<()> {
+    match method {
+        #[cfg(target_os = "linux")]
+        Method::Ficlone => rustix::fs::ioctl_ficlone(out, &src.fd)
+            .map(|()| meter.add(src.meta.size))
+            .map_err(io::Error::from),
+        #[cfg(target_os = "linux")]
+        Method::CopyFileRange => linux::copy_ranges(
+            ctx,
+            src,
+            out,
+            regions,
+            meter,
+            linux::Kind::CopyFileRange,
+            uncached,
+        ),
+        #[cfg(target_os = "linux")]
+        Method::Sendfile => linux::copy_ranges(
+            ctx,
+            src,
+            out,
+            regions,
+            meter,
+            linux::Kind::Sendfile,
+            uncached,
+        ),
+        #[cfg(all(target_os = "linux", feature = "uring"))]
+        Method::IoUring => experimental::uring_copy(ctx, src, out, meter),
+        #[cfg(target_os = "linux")]
+        Method::ParallelRanged => experimental::parallel_copy(
+            ctx,
+            src,
+            out,
+            src.meta.size,
+            meter,
+            experimental::RANGE,
+            experimental::RANGE_WORKERS,
+        ),
+        #[cfg(target_os = "linux")]
+        Method::ODirect => experimental::direct_copy(ctx, src, out, meter),
+        _ => {
+            let _ = uncached;
+            read_write(ctx, src, out, regions, meter)
+        }
+    }
 }
 
 /// Whether `method` suits this file; a method that does not is skipped without being disabled.
@@ -760,37 +783,8 @@ mod linux {
         uncached: bool,
     ) -> io::Result<()> {
         let mut copied = 0u64;
-        for &(start, end) in regions {
-            let mut off = start;
-            if kind == Kind::Sendfile {
-                // sendfile writes at the output's file position.
-                seek(out, SeekFrom::Start(start))?;
-            }
-            while off < end {
-                ctx.shared.checkpoint()?;
-                let len = (end - off).min(CHUNK as u64) as usize;
-                let before = off;
-                let n = match kind {
-                    Kind::CopyFileRange => {
-                        let mut off_out = off;
-                        copy_file_range(&src.fd, Some(&mut off), out, Some(&mut off_out), len)
-                    }
-                    Kind::Sendfile => sendfile(out, &src.fd, Some(&mut off), len),
-                };
-                let n = match n {
-                    Ok(0) => break,
-                    Ok(n) => n as u64,
-                    Err(Errno::INTR) => continue,
-                    Err(e) => return Err(e.into()),
-                };
-                // sendfile/copy_file_range advance `off` themselves; keep it exact either way.
-                off = before + n;
-                copied += n;
-                meter.add(n);
-                if uncached {
-                    let _ = fadvise(&src.fd, before, NonZeroU64::new(n), Advice::DontNeed);
-                }
-            }
+        for &region in regions {
+            copied += copy_region(ctx, src, out, region, meter, kind, uncached)?;
         }
         // 5.3-5.18 returned 0 without copying on some virtual filesystems.
         if copied == 0 && src.meta.size > 0 && kind == Kind::CopyFileRange {
@@ -800,6 +794,60 @@ mod linux {
             ));
         }
         Ok(())
+    }
+
+    /// Copies one `(start, end)` region until `end` or EOF; returns the bytes copied.
+    fn copy_region(
+        ctx: &FileCtx<'_>,
+        src: &Src,
+        out: BorrowedFd<'_>,
+        (start, end): (u64, u64),
+        meter: &mut Meter<'_>,
+        kind: Kind,
+        uncached: bool,
+    ) -> io::Result<u64> {
+        let mut copied = 0u64;
+        let mut off = start;
+        if kind == Kind::Sendfile {
+            // sendfile writes at the output's file position.
+            seek(out, SeekFrom::Start(start))?;
+        }
+        while off < end {
+            ctx.shared.checkpoint()?;
+            let len = (end - off).min(CHUNK as u64) as usize;
+            let before = off;
+            let n = match copy_chunk(kind, src, out, &mut off, len) {
+                Ok(0) => break,
+                Ok(n) => n as u64,
+                Err(Errno::INTR) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            // sendfile/copy_file_range advance `off` themselves; keep it exact either way.
+            off = before + n;
+            copied += n;
+            meter.add(n);
+            if uncached {
+                let _ = fadvise(&src.fd, before, NonZeroU64::new(n), Advice::DontNeed);
+            }
+        }
+        Ok(copied)
+    }
+
+    /// One in-kernel transfer of up to `len` bytes from `off`.
+    fn copy_chunk(
+        kind: Kind,
+        src: &Src,
+        out: BorrowedFd<'_>,
+        off: &mut u64,
+        len: usize,
+    ) -> rustix::io::Result<usize> {
+        match kind {
+            Kind::CopyFileRange => {
+                let mut off_out = *off;
+                copy_file_range(&src.fd, Some(off), out, Some(&mut off_out), len)
+            }
+            Kind::Sendfile => sendfile(out, &src.fd, Some(off), len),
+        }
     }
 
     /// `security.*` labels belong to the destination's policy, so their failures are ignored.
@@ -928,47 +976,50 @@ mod macos {
             return Ok(None);
         }
         ctx.shared.checkpoint()?;
-        match fclonefileat(&src.fd, &dst.fd, dst_name, CloneFlags::NOFOLLOW) {
-            Ok(()) => {
-                let finish = || -> io::Result<Vec<io::Error>> {
-                    let mut warnings = Vec::new();
-                    // The clone carries the source times already; this only covers volumes that do not.
-                    if let Err(e) = utimensat(
-                        &dst.fd,
-                        dst_name,
-                        &timestamps(&src.meta),
-                        AtFlags::SYMLINK_NOFOLLOW,
-                    ) {
-                        warnings.push(e.into());
-                    }
-                    if ctx.durable {
-                        rustix::fs::fsync(dst.open_file_for_sync(dst_name)?)?;
-                    }
-                    Ok(warnings)
-                };
-                match finish() {
-                    Ok(warnings) => {
-                        ctx.meter().add(src.meta.size);
-                        Ok(Some(Copied {
-                            cloned: true,
-                            warnings,
-                        }))
-                    }
-                    Err(e) => {
-                        let _ = unlinkat(&dst.fd, dst_name, AtFlags::empty());
-                        Err(e)
-                    }
-                }
+        if let Err(e) = fclonefileat(&src.fd, &dst.fd, dst_name, CloneFlags::NOFOLLOW) {
+            let e = io::Error::from(e);
+            if e.kind() == io::ErrorKind::AlreadyExists || !is_unsupported(&e) {
+                return Err(e);
+            }
+            ctx.cache.disable(Method::CloneFileAt);
+            return Ok(None);
+        }
+        match finish_clone(ctx, src, dst, dst_name) {
+            Ok(warnings) => {
+                ctx.meter().add(src.meta.size);
+                Ok(Some(Copied {
+                    cloned: true,
+                    warnings,
+                }))
             }
             Err(e) => {
-                let e = io::Error::from(e);
-                if e.kind() == io::ErrorKind::AlreadyExists || !is_unsupported(&e) {
-                    return Err(e);
-                }
-                ctx.cache.disable(Method::CloneFileAt);
-                Ok(None)
+                let _ = unlinkat(&dst.fd, dst_name, AtFlags::empty());
+                Err(e)
             }
         }
+    }
+
+    /// Times and durability of a fresh clone; an error here means the clone must be removed.
+    fn finish_clone(
+        ctx: &FileCtx<'_>,
+        src: &Src,
+        dst: &Dir,
+        dst_name: &OsStr,
+    ) -> io::Result<Vec<io::Error>> {
+        let mut warnings = Vec::new();
+        // The clone carries the source times already; this only covers volumes that do not.
+        if let Err(e) = utimensat(
+            &dst.fd,
+            dst_name,
+            &timestamps(&src.meta),
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            warnings.push(e.into());
+        }
+        if ctx.durable {
+            rustix::fs::fsync(dst.open_file_for_sync(dst_name)?)?;
+        }
+        Ok(warnings)
     }
 
     impl Dir {
