@@ -5,12 +5,13 @@ use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
-use eframe::egui::{self, Context, ViewportBuilder, ViewportCommand, ViewportId};
+use eframe::egui::{self, Context, DragAndDrop, ViewportBuilder, ViewportCommand, ViewportId};
 use fx_app::{
     Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use views::dnd::{self, Dragged};
 
 const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -367,6 +368,7 @@ impl App {
         let ctx = ui.ctx().clone();
         self.explorer.set_window(self.windows[index].id);
         self.track_focus(&ctx, index);
+        self.highlight_drop_target(&ctx, index);
 
         let mut actions = Vec::new();
         let idle = self.windows[index].dialog.is_none() && self.settings.is_none();
@@ -384,6 +386,72 @@ impl App {
         for action in actions {
             self.dispatch(&ctx, index, action);
         }
+        self.finish_drag(&ctx, index);
+    }
+
+    /// The viewport window `index` is shown in; the first window lives in the root viewport.
+    fn viewport_at(&self, index: usize) -> ViewportId {
+        if index == 0 {
+            ViewportId::ROOT
+        } else {
+            viewport_of(self.windows[index].id)
+        }
+    }
+
+    /// Global content rectangles of the windows whose viewports report one.
+    fn window_rects(&self, ctx: &Context) -> Vec<(WindowId, egui::Rect)> {
+        (0..self.windows.len())
+            .filter_map(|i| {
+                let rect = dnd::content_rect(ctx, self.viewport_at(i))?;
+                Some((self.windows[i].id, rect))
+            })
+            .collect()
+    }
+
+    /// Outlines window `index` while a drag from another window hovers it.
+    fn highlight_drop_target(&self, ctx: &Context, index: usize) {
+        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
+            return;
+        };
+        if dragged.from == self.windows[index].id {
+            return;
+        }
+        let Some(source) = self.windows.iter().position(|w| w.id == dragged.from) else {
+            return;
+        };
+        let Some(pointer) = dnd::global_pointer(ctx, self.viewport_at(source)) else {
+            return;
+        };
+        let Some(bounds) = dnd::content_rect(ctx, self.viewport_at(index)) else {
+            return;
+        };
+        if bounds.contains(pointer) {
+            dnd::highlight_window(ctx);
+        }
+    }
+
+    /// Ends a drag that started in window `index` once its button is released.
+    /// Released over another window, the paths are copied or moved into that window's folder.
+    fn finish_drag(&mut self, ctx: &Context, index: usize) {
+        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
+            return;
+        };
+        let own = self.windows[index].id;
+        if dragged.from != own || !dnd::released(ctx, self.viewport_at(index)) {
+            return;
+        }
+        if let Some(target) = self.drop_target(ctx, index) {
+            let copy = dnd::copying(ctx, self.explorer.settings().drag_copy_modifier);
+            self.explorer
+                .drop_into_window(target, dragged.paths.clone(), copy);
+        }
+        DragAndDrop::clear_payload(ctx);
+    }
+
+    /// The other window under the pointer, if any.
+    fn drop_target(&self, ctx: &Context, index: usize) -> Option<WindowId> {
+        let pointer = dnd::global_pointer(ctx, self.viewport_at(index))?;
+        dnd::window_at(pointer, &self.window_rects(ctx), self.windows[index].id)
     }
 
     /// When window `index` gains focus, revalidates its folder and bookmarks and makes it the focused window.

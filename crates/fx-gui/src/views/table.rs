@@ -350,7 +350,7 @@ fn apply(
     }
     if let Some((sources, dest)) = out.dropped {
         let copy = dnd::copying(ui.ctx(), settings.drag_copy_modifier);
-        explorer.drop_into(sources.0.clone(), &dest, copy);
+        explorer.drop_into(sources.paths.clone(), &dest, copy);
     }
 }
 
@@ -364,7 +364,7 @@ fn start_drag(ui: &Ui, explorer: &mut Explorer, row: usize, selection: &[usize])
         .iter()
         .filter_map(|&r| explorer.entry_path(r))
         .collect();
-    dnd::start(ui.ctx(), paths);
+    dnd::start(ui.ctx(), explorer.window(), paths);
 }
 
 fn age_badge(ui: &mut Ui, text: &str, color: egui::Color32) {

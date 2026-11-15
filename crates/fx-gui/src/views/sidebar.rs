@@ -218,7 +218,7 @@ fn node(
     }
 
     if usable && let Some(sources) = dnd::target(&resp, path) {
-        *walk.action = Some(Action::Drop(sources.0.clone(), path.to_path_buf()));
+        *walk.action = Some(Action::Drop(sources.paths.clone(), path.to_path_buf()));
     }
 
     resp.context_menu(|ui| {
