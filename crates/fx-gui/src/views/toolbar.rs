@@ -2,13 +2,48 @@ use super::menu::bar_button;
 use crate::action::Action;
 use crate::command::{Command, tip};
 use crate::theme;
-use eframe::egui::{CursorIcon, Layout, RichText, Sense, Stroke, TextStyle, Ui, vec2};
+use eframe::egui::text_selection::CCursorRange;
+use eframe::egui::{
+    CursorIcon, Key, Layout, RichText, Sense, Stroke, TextEdit, TextStyle, Ui, vec2,
+};
 use fx_app::{Explorer, breadcrumbs, t};
+use std::path::PathBuf;
+
+/// The path bar while the user types a path instead of clicking crumbs.
+pub struct PathEdit {
+    text: String,
+    /// Tab and folder it was opened for; showing anything else cancels the edit.
+    tab: usize,
+    origin: PathBuf,
+    fresh: bool,
+}
+
+/// The path a user typed or pasted: trimmed, surrounding quotes removed; `None` when empty.
+pub fn parse_typed_path(text: &str) -> Option<PathBuf> {
+    let text = text.trim();
+    let unquoted = ["\"", "'"]
+        .iter()
+        .find_map(|q| text.strip_prefix(q)?.strip_suffix(q))
+        .unwrap_or(text)
+        .trim();
+    (!unquoted.is_empty()).then(|| PathBuf::from(unquoted))
+}
 
 /// Height of every control in the toolbar row.
 const CRUMB_HEIGHT: f32 = 22.0;
 
-pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
+pub fn show(
+    ui: &mut Ui,
+    explorer: &mut Explorer,
+    path_edit: &mut Option<PathEdit>,
+    actions: &mut Vec<Action>,
+) {
+    if path_edit
+        .as_ref()
+        .is_some_and(|e| e.tab != explorer.active_index() || e.origin != explorer.active().path())
+    {
+        *path_edit = None;
+    }
     let (can_back, can_forward, can_up) = {
         let tab = explorer.active();
         (tab.can_back(), tab.can_forward(), tab.can_up())
@@ -60,6 +95,17 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
             }
             ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
+                if let Some(edit) = path_edit {
+                    match edit_path(ui, edit) {
+                        EditResult::Editing => {}
+                        EditResult::Cancel => *path_edit = None,
+                        EditResult::Go(path) => {
+                            goto = Some(path);
+                            *path_edit = None;
+                        }
+                    }
+                    return;
+                }
                 let crumbs = breadcrumbs(explorer.active().path());
                 let last = crumbs.len().saturating_sub(1);
                 for (i, (label, path)) in crumbs.into_iter().enumerate() {
@@ -70,11 +116,63 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
                         ui.label(RichText::new("›").color(theme::dim()));
                     }
                 }
+                // The rest of the breadcrumb area: click to type a path.
+                let rest = vec2(ui.available_width().max(0.0), CRUMB_HEIGHT);
+                let (_, resp) = ui.allocate_exact_size(rest, Sense::click());
+                let resp = resp
+                    .on_hover_cursor(CursorIcon::Text)
+                    .on_hover_text(t("tip.edit_path"));
+                if resp.clicked() {
+                    *path_edit = Some(PathEdit {
+                        text: explorer.active().path().display().to_string(),
+                        tab: explorer.active_index(),
+                        origin: explorer.active().path().to_path_buf(),
+                        fresh: true,
+                    });
+                }
             });
         });
     });
     if let Some(path) = goto {
         explorer.navigate(path);
+    }
+}
+
+enum EditResult {
+    Editing,
+    Cancel,
+    Go(PathBuf),
+}
+
+/// A focused single-line field filling the breadcrumb area. Enter goes, Escape or losing focus cancels.
+fn edit_path(ui: &mut Ui, edit: &mut PathEdit) -> EditResult {
+    let id = ui.make_persistent_id("path-edit");
+    if edit.fresh {
+        ui.memory_mut(|m| m.request_focus(id));
+    }
+    let out = TextEdit::singleline(&mut edit.text)
+        .id(id)
+        .desired_width(ui.available_width())
+        .show(ui);
+    if edit.fresh {
+        edit.fresh = false;
+        let mut state = out.state;
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::select_all_str(&edit.text)));
+        state.store(ui.ctx(), id);
+        return EditResult::Editing;
+    }
+    let resp = out.response.response;
+    let escape =
+        resp.has_focus() && ui.input_mut(|i| i.consume_key(Default::default(), Key::Escape));
+    if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+        return parse_typed_path(&edit.text).map_or(EditResult::Cancel, EditResult::Go);
+    }
+    if escape || resp.lost_focus() {
+        EditResult::Cancel
+    } else {
+        EditResult::Editing
     }
 }
 
@@ -107,4 +205,21 @@ fn crumb(ui: &mut Ui, label: &str, current: bool) -> bool {
         );
     }
     resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_paths_are_trimmed_and_unquoted() {
+        assert_eq!(parse_typed_path("  /usr/bin \n"), Some("/usr/bin".into()));
+        assert_eq!(
+            parse_typed_path("\"C:\\My Dir\""),
+            Some("C:\\My Dir".into())
+        );
+        assert_eq!(parse_typed_path(" ' /tmp ' "), Some("/tmp".into()));
+        assert_eq!(parse_typed_path("  "), None);
+        assert_eq!(parse_typed_path("\"\""), None);
+    }
 }
