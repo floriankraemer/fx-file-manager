@@ -6,6 +6,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release
 ```
 
+## Quality gates
+
+CI fails when code crosses these thresholds:
+
+- Complexity: clippy's `excessive_nesting`, `cognitive_complexity`, `too_many_lines` and `too_many_arguments`, enabled in the workspace `Cargo.toml` with limits in `clippy.toml`.
+  A nesting of 4 counts every block, so `impl { fn { for { if } } }` is the deepest a method may go.
+- Coupling: `make coupling` runs [cargo-coupling](https://crates.io/crates/cargo-coupling) per crate and fails on any circular module dependency or a health grade below C.
+  Install it with `cargo install --locked cargo-coupling`; settings live in `.coupling.toml`.
+
+Fix a finding by splitting the code, not by raising a threshold or adding `#[allow]`.
+
 The oracle test (`crates/fx-core/tests/oracle.rs`) checks that the native backend returns the same results as the std backend.
 The copy tests (`crates/fx-core/tests/copy.rs`) copy and move temp trees of many small files through every schedule and host method and compare the result with the source.
 
