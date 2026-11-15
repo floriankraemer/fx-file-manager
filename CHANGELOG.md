@@ -3,15 +3,26 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-15
 
 ### Added
 
-- Bookmarks: press Ctrl+D to bookmark the current folder, or use the sidebar context menu to add, rename and remove them.
+- Bookmarks: press Ctrl+D to bookmark the current folder, or use the sidebar context menu to add, rename and remove them (#36).
   Bookmarks whose folder is missing stay in the list, dimmed.
-- fx reopens the windows and tabs of the last session on startup.
+- Right-click a folder in the file list to add it to or remove it from the bookmarks (#39).
+- fx reopens the windows and tabs of the last session on startup (#36).
   The new `restore_session` setting turns this off.
   Bookmarks and the session are stored in `state.toml` next to `settings.toml`.
+
+### Changed
+
+- About opens in its own window, which closes with the window's close button, Esc or the Close button (#39).
+- Docker release builds keep the cargo target directory between builds, so unchanged dependencies are not recompiled (#38).
+
+### Fixed
+
+- The close button on tabs works, and clicking a tab's title selects it (#37).
+- Tabs have even padding on both sides (#37).
 
 ## [0.2.0] - 2026-11-15
 
@@ -43,5 +54,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 First release.
 
+[0.3.0]: https://github.com/floriankraemer/fx-file-manager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/floriankraemer/fx-file-manager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/floriankraemer/fx-file-manager/releases/tag/v0.1.0
