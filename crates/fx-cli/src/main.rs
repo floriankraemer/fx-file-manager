@@ -344,22 +344,7 @@ fn run_transfer(args: &TransferArgs, op: Op) -> Result<(), Box<dyn std::error::E
     let done = AtomicBool::new(false);
     let summary = std::thread::scope(|s| {
         if show {
-            s.spawn(|| {
-                while !done.load(Ordering::Relaxed) {
-                    let p = handle.snapshot();
-                    let more = if p.walk_complete { "" } else { "+" };
-                    let secs = p.elapsed.as_secs_f64().max(1e-3);
-                    eprint!(
-                        "\r{}/{}{more} files · {} · {}/s\x1b[K",
-                        p.files_done,
-                        p.files_total,
-                        fmt_bytes(p.bytes_done),
-                        fmt_bytes((p.bytes_done as f64 / secs) as u64),
-                    );
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-                eprint!("\r\x1b[K");
-            });
+            s.spawn(|| show_progress(&handle, &done));
         }
         let summary = handle.run(&req);
         done.store(true, Ordering::Relaxed);
@@ -370,6 +355,24 @@ fn run_transfer(args: &TransferArgs, op: Op) -> Result<(), Box<dyn std::error::E
         return Err(format!("{} errors", summary.error_count()).into());
     }
     Ok(())
+}
+
+/// Redraws one status line on stderr until `done` is set, then clears it.
+fn show_progress(handle: &TransferHandle, done: &AtomicBool) {
+    while !done.load(Ordering::Relaxed) {
+        let p = handle.snapshot();
+        let more = if p.walk_complete { "" } else { "+" };
+        let secs = p.elapsed.as_secs_f64().max(1e-3);
+        eprint!(
+            "\r{}/{}{more} files · {} · {}/s\x1b[K",
+            p.files_done,
+            p.files_total,
+            fmt_bytes(p.bytes_done),
+            fmt_bytes((p.bytes_done as f64 / secs) as u64),
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    eprint!("\r\x1b[K");
 }
 
 fn report(s: &Summary) {
