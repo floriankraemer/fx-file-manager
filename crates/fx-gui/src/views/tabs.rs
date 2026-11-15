@@ -86,3 +86,115 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
         explorer.close_tab(i);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::show;
+    use egui::{PointerButton, Pos2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use fx_app::Explorer;
+    use std::path::PathBuf;
+
+    /// An explorer with tabs `a`, `b`, `c` (last one active) on real directories.
+    fn explorer() -> Explorer {
+        let root = std::env::temp_dir().join(format!("fx-gui-tabs-{}", std::process::id()));
+        let dir = |name: &str| -> PathBuf {
+            let path = root.join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        let mut explorer = Explorer::new(dir("a"), || {});
+        explorer.new_tab(dir("b"));
+        explorer.new_tab(dir("c"));
+        explorer
+    }
+
+    /// Renders the strip inside a top panel, as the app does.
+    fn harness() -> Harness<'static, Explorer> {
+        let mut harness = Harness::new_ui_state(
+            |ui, explorer| {
+                egui::Panel::top("tabs").show(ui, |ui| show(ui, explorer));
+            },
+            explorer(),
+        );
+        crate::theme::apply(&harness.ctx, &fx_app::Settings::default());
+        harness.run();
+        harness
+    }
+
+    /// Like a real user: move, wait, press, wait, release, each in its own frame.
+    fn click_at(harness: &mut Harness<'_, Explorer>, pos: Pos2, button: PointerButton) {
+        harness.hover_at(pos);
+        harness.run();
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: Default::default(),
+            });
+            harness.run();
+        }
+    }
+
+    fn center(harness: &Harness<'_, Explorer>, label: &str) -> Pos2 {
+        harness.get_by_label(label).rect().center()
+    }
+
+    fn titles(explorer: &Explorer) -> Vec<String> {
+        explorer.tabs().iter().map(|t| t.title()).collect()
+    }
+
+    #[test]
+    fn close_button_closes_an_inactive_tab() {
+        let mut harness = harness();
+        let close = harness
+            .get_all_by_label("×")
+            .next()
+            .unwrap()
+            .rect()
+            .center();
+        click_at(&mut harness, close, PointerButton::Primary);
+        assert_eq!(titles(harness.state()), ["b", "c"]);
+        assert_eq!(harness.state().active_index(), 1);
+    }
+
+    #[test]
+    fn close_button_closes_the_active_tab() {
+        let mut harness = harness();
+        let close = harness
+            .get_all_by_label("×")
+            .last()
+            .unwrap()
+            .rect()
+            .center();
+        click_at(&mut harness, close, PointerButton::Primary);
+        assert_eq!(titles(harness.state()), ["a", "b"]);
+    }
+
+    #[test]
+    fn clicking_a_title_selects_the_tab() {
+        let mut harness = harness();
+        let pos = center(&harness, "a");
+        click_at(&mut harness, pos, PointerButton::Primary);
+        assert_eq!(titles(harness.state()).len(), 3);
+        assert_eq!(harness.state().active_index(), 0);
+    }
+
+    #[test]
+    fn clicking_tab_padding_selects_the_tab() {
+        let mut harness = harness();
+        let pos = harness.get_by_label("a").rect().left_center() - egui::vec2(6.0, 0.0);
+        click_at(&mut harness, pos, PointerButton::Primary);
+        assert_eq!(harness.state().active_index(), 0);
+    }
+
+    #[test]
+    fn middle_click_closes_the_tab() {
+        let mut harness = harness();
+        let pos = center(&harness, "a");
+        click_at(&mut harness, pos, PointerButton::Middle);
+        assert_eq!(titles(harness.state()), ["b", "c"]);
+    }
+}

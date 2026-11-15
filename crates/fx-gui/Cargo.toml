@@ -18,3 +18,6 @@ fx-core = { path = "../fx-core" }
 icon-theme = { path = "../icon-theme" }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
+
+[dev-dependencies]
+egui_kittest = { version = "0.37.0", default-features = false }
