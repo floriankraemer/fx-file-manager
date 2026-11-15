@@ -1,7 +1,7 @@
 //! Sidebar locations and breadcrumb segments. Pure path logic plus filesystem existence checks.
 
+use crate::settings::home_dir;
 use crate::state::Bookmark;
-use std::env;
 #[cfg(target_os = "linux")]
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -115,12 +115,6 @@ pub fn breadcrumbs(path: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
 fn existing(candidates: impl Iterator<Item = (String, PathBuf)>) -> Vec<Place> {
     candidates
         .filter(|(_, path)| path.is_dir())
@@ -158,7 +152,7 @@ fn roots() -> Vec<Place> {
 fn roots() -> Vec<Place> {
     let mut out = vec![root_place()];
     out.extend(child_dirs(Path::new("/mnt")));
-    if let Some(user) = env::var_os("USER") {
+    if let Some(user) = std::env::var_os("USER") {
         out.extend(child_dirs(&Path::new("/media").join(user)));
     }
     out

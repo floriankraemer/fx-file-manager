@@ -14,9 +14,11 @@ DOCKER_MOUNTS = -v "$(CURDIR)":/workspace -w /workspace \
 # mount, and a root container would leave `target/` owned by root on the host.
 # HOME is redirected because the image's /root is not writable by this uid.
 DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
+COUPLING_CRATES := fx-core fx-app fx-gui fx-cli icon-theme
+
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
-.PHONY: help all debug build build-linux build-windows build-osx release gui cli test lint fmt check coverage \
+.PHONY: help all debug build build-linux build-windows build-osx release gui cli test lint coupling fmt check coverage \
 	linux-image test-container e2e clean
 
 .DEFAULT_GOAL := help
@@ -67,6 +69,13 @@ coverage:
 lint:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
+## Coupling gate (needs cargo-coupling): no module cycles, health grade C or better per crate
+coupling:
+	@for crate in $(COUPLING_CRATES); do \
+		echo "== $$crate"; \
+		$(CARGO) coupling --check --no-git --max-critical=0 --max-circular=0 --min-grade=C crates/$$crate/src || exit 1; \
+	done
+
 ## Format all crates
 fmt:
 	$(CARGO) fmt --all
@@ -74,7 +83,7 @@ fmt:
 ## Everything CI checks (host)
 check:
 	$(CARGO) fmt --all --check
-	$(MAKE) lint test
+	$(MAKE) lint test coupling
 
 ## fmt, clippy and tests inside the Linux image
 test-container: linux-image

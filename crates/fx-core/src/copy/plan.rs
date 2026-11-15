@@ -294,26 +294,7 @@ impl CopyPlan {
 fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPlan {
     let either = |kind| src.storage == kind || dst.storage == kind;
     let same_volume = src.id == dst.id;
-    let cores = cores.max(1);
-    let ssd_workers = match os {
-        Os::Windows => (2 * cores).clamp(8, 32),
-        _ => (2 * cores).clamp(4, 32),
-    };
-    let (large_file, uncached_from) = match os {
-        Os::Windows => (WINDOWS_LARGE_FILE, Some(WINDOWS_LARGE_FILE)),
-        _ => (LARGE_FILE, Some(UNCACHED_FROM)),
-    };
-    let base = CopyPlan {
-        workers: ssd_workers,
-        schedule: Schedule::Streaming,
-        methods: PORTABLE,
-        buf_size: MIB,
-        large_file,
-        uncached_from,
-        durability: Durability::None,
-        experiment: None,
-        verify: false,
-    };
+    let base = ssd_plan(os, cores);
     let slow_buf = if either(StorageKind::Hdd) {
         8 * MIB
     } else if either(StorageKind::Removable) {
@@ -323,36 +304,14 @@ fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPl
     };
 
     if either(StorageKind::Network) {
-        return CopyPlan {
-            workers: NETWORK_WORKERS,
-            methods: match os {
-                Os::Linux => LINUX_SAME_FS,
-                Os::Windows => WINDOWS,
-                Os::Macos | Os::Other => PORTABLE,
-            },
-            // The redirector does its own buffering; NO_BUFFERING is for local disks only.
-            uncached_from: if os == Os::Windows {
-                None
-            } else {
-                uncached_from
-            },
-            ..base
-        };
+        return network_plan(os, base);
     }
-    let clone = dst.caps.clone
-        && match os {
-            // btrfs subvolumes share extents across different st_dev; EXDEV elsewhere disables it once.
-            Os::Linux => src.fs == dst.fs,
-            Os::Macos => same_volume && dst.fs == FsKind::Apfs,
-            Os::Windows => same_volume,
-            Os::Other => false,
-        };
-    if clone {
+    if dst.caps.clone && clone_capable(os, src, dst) {
         return CopyPlan {
             workers: if either(StorageKind::Hdd) || either(StorageKind::Removable) {
                 SLOW_CLONE_WORKERS
             } else {
-                ssd_workers
+                base.workers
             },
             methods: match os {
                 Os::Linux => LINUX_CLONE,
@@ -394,6 +353,60 @@ fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPl
             _ => local,
         },
         ..base
+    }
+}
+
+/// The SSD plan every other rule starts from.
+fn ssd_plan(os: Os, cores: usize) -> CopyPlan {
+    let cores = cores.max(1);
+    let workers = match os {
+        Os::Windows => (2 * cores).clamp(8, 32),
+        _ => (2 * cores).clamp(4, 32),
+    };
+    let (large_file, uncached_from) = match os {
+        Os::Windows => (WINDOWS_LARGE_FILE, Some(WINDOWS_LARGE_FILE)),
+        _ => (LARGE_FILE, Some(UNCACHED_FROM)),
+    };
+    CopyPlan {
+        workers,
+        schedule: Schedule::Streaming,
+        methods: PORTABLE,
+        buf_size: MIB,
+        large_file,
+        uncached_from,
+        durability: Durability::None,
+        experiment: None,
+        verify: false,
+    }
+}
+
+fn network_plan(os: Os, base: CopyPlan) -> CopyPlan {
+    CopyPlan {
+        workers: NETWORK_WORKERS,
+        methods: match os {
+            Os::Linux => LINUX_SAME_FS,
+            Os::Windows => WINDOWS,
+            Os::Macos | Os::Other => PORTABLE,
+        },
+        // The redirector does its own buffering; NO_BUFFERING is for local disks only.
+        uncached_from: if os == Os::Windows {
+            None
+        } else {
+            base.uncached_from
+        },
+        ..base
+    }
+}
+
+/// Whether the OS can clone extents between the two volumes, given the destination supports cloning.
+fn clone_capable(os: Os, src: &VolumeInfo, dst: &VolumeInfo) -> bool {
+    let same_volume = src.id == dst.id;
+    match os {
+        // btrfs subvolumes share extents across different st_dev; EXDEV elsewhere disables it once.
+        Os::Linux => src.fs == dst.fs,
+        Os::Macos => same_volume && dst.fs == FsKind::Apfs,
+        Os::Windows => same_volume,
+        Os::Other => false,
     }
 }
 

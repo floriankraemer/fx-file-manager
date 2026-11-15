@@ -41,13 +41,16 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let resp = command(ui, Glyph::More, "", true, false);
-            Popup::menu(&resp).show(|ui| {
-                if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
-                    actions.push(Action::SelectAll);
-                }
-            });
+            Popup::menu(&resp).show(|ui| more_menu(ui, actions));
         });
     });
+}
+
+/// The overflow ("…") menu at the right end of the bar.
+fn more_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
+    if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
+        actions.push(Action::SelectAll);
+    }
 }
 
 fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {

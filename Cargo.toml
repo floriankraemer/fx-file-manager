@@ -15,3 +15,9 @@ rust-version = "1.95"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# Complexity gate: CI runs clippy with `-D warnings`, so these fail the build. Thresholds in clippy.toml.
+[workspace.lints.clippy]
+cognitive_complexity = "warn"
+excessive_nesting = "warn"
+too_many_lines = "warn"

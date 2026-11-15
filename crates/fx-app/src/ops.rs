@@ -132,14 +132,7 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
             }
             Err(message) => {
                 failed += 1;
-                first_failure.get_or_insert_with(|| {
-                    let key = if permanent {
-                        "notice.delete_failed"
-                    } else {
-                        "notice.trash_failed"
-                    };
-                    crate::tr(key, &[("name", &display_name(path)), ("error", &message)])
-                });
+                first_failure.get_or_insert_with(|| delete_failed(path, permanent, &message));
             }
         }
     }
@@ -182,6 +175,15 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
         created: None,
         removed,
     }
+}
+
+fn delete_failed(path: &Path, permanent: bool, message: &str) -> String {
+    let key = if permanent {
+        "notice.delete_failed"
+    } else {
+        "notice.trash_failed"
+    };
+    crate::tr(key, &[("name", &display_name(path)), ("error", message)])
 }
 
 /// Permanent delete never follows a symlink: the link itself is removed and its target survives.

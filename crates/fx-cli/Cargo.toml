@@ -16,3 +16,6 @@ uring = ["fx-core/uring"]
 [dependencies]
 fx-core = { path = "../fx-core" }
 clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true

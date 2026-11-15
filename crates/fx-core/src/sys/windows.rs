@@ -107,6 +107,40 @@ fn system_time(ticks: i64) -> Option<SystemTime> {
     }
 }
 
+/// Appends one record; `name` is a reused scratch buffer for the WTF-8 name.
+fn push_entry(
+    info: &FILE_ID_BOTH_DIR_INFO,
+    units: &[u16],
+    name: &mut Vec<u8>,
+    metadata: bool,
+    out: &mut Listing,
+) {
+    name.clear();
+    push_wtf8_from_utf16(name, units);
+    let attrs = info.FileAttributes;
+    // EaSize carries the reparse tag when the reparse-point attribute is set.
+    let kind = if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        && info.EaSize & REPARSE_TAG_NAME_SURROGATE != 0
+    {
+        EntryKind::Symlink
+    } else if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        EntryKind::Dir
+    } else {
+        EntryKind::File
+    };
+    out.push_encoded(
+        name,
+        kind,
+        attrs & FILE_ATTRIBUTE_HIDDEN != 0,
+        info.FileId as u64,
+    );
+    if metadata {
+        let e = out.entries.last_mut().expect("just pushed");
+        e.size = u64::try_from(info.EndOfFile).ok();
+        e.modified = system_time(info.LastWriteTime);
+    }
+}
+
 pub(crate) fn enumerate(
     dir: &Path,
     strategy: &Strategy,
@@ -155,30 +189,7 @@ pub(crate) fn enumerate(
                 )
             };
             if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
-                name.clear();
-                push_wtf8_from_utf16(&mut name, units);
-                let attrs = info.FileAttributes;
-                // EaSize carries the reparse tag when the reparse-point attribute is set.
-                let kind = if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                    && info.EaSize & REPARSE_TAG_NAME_SURROGATE != 0
-                {
-                    EntryKind::Symlink
-                } else if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
-                    EntryKind::Dir
-                } else {
-                    EntryKind::File
-                };
-                out.push_encoded(
-                    &name,
-                    kind,
-                    attrs & FILE_ATTRIBUTE_HIDDEN != 0,
-                    info.FileId as u64,
-                );
-                if metadata {
-                    let e = out.entries.last_mut().expect("just pushed");
-                    e.size = u64::try_from(info.EndOfFile).ok();
-                    e.modified = system_time(info.LastWriteTime);
-                }
+                push_entry(info, units, &mut name, metadata, out);
             }
             match info.NextEntryOffset {
                 0 => break,

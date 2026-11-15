@@ -214,10 +214,33 @@ pub(crate) fn render_plural(
                 .or_else(|| lookup(l, &format!("{key}.other")))
         })
         .unwrap_or(key);
-    let n = crate::format::format_number_in(lang, n);
+    let n = format_number_in(lang, n);
     let mut all = vec![("n", n.as_str())];
     all.extend_from_slice(args);
     fill(text, &all)
+}
+
+/// Decimal separator and digit group separator of `lang`.
+// ponytail: table for the six supported languages; swap for ICU4X if many more are added.
+pub(crate) fn separators(lang: Language) -> (char, char) {
+    match lang {
+        Language::De | Language::Es => (',', '.'),
+        Language::Fr | Language::Uk => (',', '\u{a0}'),
+        _ => ('.', ','),
+    }
+}
+
+pub(crate) fn format_number_in(lang: Language, n: u64) -> String {
+    let (_, group) = separators(lang);
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(group);
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -273,18 +296,27 @@ mod tests {
             for (key, (forms, holders)) in &en {
                 let (got_forms, got_holders) = &other[key];
                 assert_eq!(holders, got_holders, "{lang:?} placeholders of {key}");
-                if forms.contains(&None) {
-                    assert_eq!(got_forms, forms, "{lang:?} must not pluralize {key}");
-                } else {
-                    let want: BTreeSet<_> = lang
-                        .plural_forms()
-                        .iter()
-                        .map(|f| Some((*f).to_owned()))
-                        .collect();
-                    assert_eq!(got_forms, &want, "{lang:?} plural forms of {key}");
-                }
+                assert_eq!(
+                    got_forms,
+                    &expected_forms(lang, forms),
+                    "{lang:?} forms of {key}"
+                );
             }
         }
+    }
+
+    /// A key English does not pluralize must stay unpluralized; a plural key needs every CLDR form of `lang`.
+    fn expected_forms(
+        lang: Language,
+        en_forms: &BTreeSet<Option<String>>,
+    ) -> BTreeSet<Option<String>> {
+        if en_forms.contains(&None) {
+            return en_forms.clone();
+        }
+        lang.plural_forms()
+            .iter()
+            .map(|f| Some((*f).to_owned()))
+            .collect()
     }
 
     #[test]

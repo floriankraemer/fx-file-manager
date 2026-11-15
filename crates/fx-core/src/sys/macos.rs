@@ -101,23 +101,35 @@ pub(crate) fn enumerate(
                 // view the same allocation as bytes and only read within record lengths.
                 let bytes =
                     unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), buf_bytes) };
-                let mut off = 0;
-                for _ in 0..n {
-                    let Some(len) = read_u32(bytes, off).map(|l| l as usize) else {
-                        return Err(corrupt());
-                    };
-                    let rec = off
-                        .checked_add(len)
-                        .and_then(|end| bytes.get(off..end))
-                        .ok_or_else(corrupt)?;
-                    if let Some(p) = parse_record(rec) {
-                        push(&fd, &p, metadata, out);
-                    }
-                    off += len;
-                }
+                push_records(&fd, bytes, n, metadata, out)?;
             }
         }
     }
+}
+
+/// Walks the `count` length-prefixed records the kernel packed into `bytes`.
+fn push_records(
+    fd: &Fd,
+    bytes: &[u8],
+    count: c_int,
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
+    let mut off = 0;
+    for _ in 0..count {
+        let Some(len) = read_u32(bytes, off).map(|l| l as usize) else {
+            return Err(corrupt());
+        };
+        let rec = off
+            .checked_add(len)
+            .and_then(|end| bytes.get(off..end))
+            .ok_or_else(corrupt)?;
+        if let Some(p) = parse_record(rec) {
+            push(fd, &p, metadata, out);
+        }
+        off += len;
+    }
+    Ok(())
 }
 
 fn corrupt() -> io::Error {
@@ -177,23 +189,12 @@ fn parse_record(rec: &[u8]) -> Option<Parsed<'_>> {
     };
 
     let kind = if has(libc::ATTR_CMN_OBJTYPE) {
-        match read_u32(rec, OBJTYPE)? {
-            VREG => EntryKind::File,
-            VDIR => EntryKind::Dir,
-            VLNK => EntryKind::Symlink,
-            _ => EntryKind::Other,
-        }
+        entry_kind(read_u32(rec, OBJTYPE)?)
     } else {
         EntryKind::Other
     };
     let modified = if has(libc::ATTR_CMN_MODTIME) {
-        let (sec, nsec) = (read_i64(rec, MODTIME)?, read_i64(rec, MODTIME + 8)?);
-        let nsec = Duration::from_nanos(u64::try_from(nsec).ok()?);
-        Some(if sec >= 0 {
-            UNIX_EPOCH + Duration::from_secs(sec.unsigned_abs()) + nsec
-        } else {
-            UNIX_EPOCH - Duration::from_secs(sec.unsigned_abs()) + nsec
-        })
+        Some(read_timespec(rec, MODTIME)?)
     } else {
         None
     };
@@ -216,6 +217,27 @@ fn parse_record(rec: &[u8]) -> Option<Parsed<'_>> {
         } else {
             None
         },
+    })
+}
+
+/// `vtype` from <sys/vnode.h>.
+fn entry_kind(vtype: u32) -> EntryKind {
+    match vtype {
+        VREG => EntryKind::File,
+        VDIR => EntryKind::Dir,
+        VLNK => EntryKind::Symlink,
+        _ => EntryKind::Other,
+    }
+}
+
+/// A `timespec` (i64 sec, i64 nsec) at `at`; `None` when out of bounds or nsec is negative.
+fn read_timespec(rec: &[u8], at: usize) -> Option<SystemTime> {
+    let (sec, nsec) = (read_i64(rec, at)?, read_i64(rec, at + 8)?);
+    let nsec = Duration::from_nanos(u64::try_from(nsec).ok()?);
+    Some(if sec >= 0 {
+        UNIX_EPOCH + Duration::from_secs(sec.unsigned_abs()) + nsec
+    } else {
+        UNIX_EPOCH - Duration::from_secs(sec.unsigned_abs()) + nsec
     })
 }
 

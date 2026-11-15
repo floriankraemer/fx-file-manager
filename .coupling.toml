@@ -1,0 +1,3 @@
+# cargo-coupling settings for `make coupling` (CI). Test code is not production coupling.
+[analysis]
+exclude_tests = true

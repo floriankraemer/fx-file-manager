@@ -1,0 +1,6 @@
+# Complexity thresholds, enforced in CI through the lints in the workspace Cargo.toml.
+# Nesting counts every block: `impl { fn { for { if { } } } }` is 4, i.e. two control levels in a method.
+excessive-nesting-threshold = 4
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 7

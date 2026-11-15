@@ -1,0 +1,112 @@
+//! Background listing of tab folders. Results carry the tab's generation so stale ones are dropped.
+
+use super::Explorer;
+use crate::view::DirView;
+use fx_core::{ListError, ListOptions, list_dir};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Instant, SystemTime};
+
+pub(super) struct Completed {
+    tab_id: u64,
+    generation: u64,
+    result: Result<DirView, ListError>,
+}
+
+impl Explorer {
+    pub(super) fn start_load(&mut self, w: usize, index: usize) {
+        self.session_dirty = true;
+        let window = &mut self.windows[w];
+        let tab = &mut window.tabs[index];
+        let generation = tab.begin_load();
+        let tab_id = tab.id();
+        let path = tab.path().to_path_buf();
+        // Navigating cancels a running preload; the next completed load starts a new one.
+        window.cancel_preload();
+        if self.settings.preload_subfolders
+            && let Some(view) = window.preloaded.remove(&path)
+        {
+            // Same generation as the fresh load below, which then replaces this possibly stale view.
+            window.tabs[index].apply_load(generation, Ok(view));
+        }
+        self.spawn_load(tab_id, generation, path);
+    }
+
+    pub(super) fn spawn_load(&self, tab_id: u64, generation: u64, path: PathBuf) {
+        let tx = self.tx.clone();
+        let wake = Arc::clone(&self.wake);
+        thread::spawn(move || {
+            let result = list_view(path);
+            // A send only fails once the Explorer is gone, and then nobody needs the result.
+            let _ = tx.send(Completed {
+                tab_id,
+                generation,
+                result,
+            });
+            wake();
+        });
+    }
+
+    /// Applies finished loads to their tabs in any window, then preloads for windows whose active tab just loaded.
+    /// Returns true if any tab changed.
+    pub(super) fn apply_loads(&mut self) -> bool {
+        let mut changed = false;
+        // Windows whose active tab just finished loading and may need a preload.
+        let mut loaded = Vec::new();
+        while let Ok(done) = self.rx.try_recv() {
+            let Some((w, window)) = self
+                .windows
+                .iter_mut()
+                .enumerate()
+                .find(|(_, window)| window.tabs.iter().any(|tab| tab.id() == done.tab_id))
+            else {
+                continue;
+            };
+            let active_id = window.tabs[window.active].id();
+            let tab = window
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id() == done.tab_id)
+                .expect("tab was just found in this window");
+            let ok = done.result.is_ok();
+            let applied = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
+            if applied && ok && tab.id() == active_id {
+                loaded.push(w);
+            }
+            changed |= applied;
+        }
+        // A revalidation of the folder already being preloaded keeps that preload: cached views are
+        // only a first paint that a fresh load always replaces, so redoing up to PRELOAD_MAX listings
+        // on every focus change or mtime tick would buy nothing.
+        for w in loaded {
+            let window = &self.windows[w];
+            if window.preload_parent.as_deref() != Some(window.tabs[window.active].path()) {
+                self.maybe_preload(w);
+            }
+        }
+        changed
+    }
+}
+
+/// Stats the folder before listing it, so a change made while listing leaves the recorded mtime older than the folder's.
+pub(super) fn list_view(path: PathBuf) -> Result<DirView, ListError> {
+    let listed_at = SystemTime::now();
+    let mtime = dir_mtime(&path);
+    let started = Instant::now();
+    list_dir(&path, &list_options())
+        .map(|listed| DirView::new(path, listed, started.elapsed(), mtime, listed_at))
+}
+
+pub(super) fn dir_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+/// Listing is sorted by the view model, so the backend's own sort is skipped.
+fn list_options() -> ListOptions {
+    ListOptions {
+        sort: false,
+        ..ListOptions::default()
+    }
+}
