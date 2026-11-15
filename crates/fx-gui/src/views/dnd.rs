@@ -1,6 +1,6 @@
-//! Dragging list entries onto folders in the list or the tree, and between windows.
+//! Dragging list entries onto folders in the tree, and between windows.
+//! A drop on the listing lands in its active folder; a drop on the tree lands in the folder under the pointer.
 //! The drop moves; holding the `drag_copy_modifier` setting's key copies instead.
-//! Dropping on another window copies or moves into that window's folder.
 
 use crate::theme;
 use eframe::egui::{
@@ -23,7 +23,7 @@ pub fn start(ctx: &Context, from: WindowId, paths: Vec<PathBuf>) {
     }
 }
 
-/// A place a drag can land: a folder row or a whole window's current folder, in global coordinates.
+/// A place a drag can land: a tree folder or a window's listing (its active folder), in global coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DropArea {
     pub viewport: ViewportId,
@@ -31,16 +31,16 @@ pub struct DropArea {
     pub rect: Rect,
 }
 
-/// The area under `pointer` that a drag from `source` lands on. Folder rows win over the window
-/// they sit in. Returns `None` outside every area, inside `source`, or when the folder is one of `sources`.
+/// The area under `pointer` that a drag from `source` lands on. A tree folder wins over the listing
+/// of the window it sits in. Returns `None` outside every area, inside `source`, or when the folder is one of `sources`.
 pub fn drop_target(
     pointer: Pos2,
-    rows: &[DropArea],
+    tree: &[DropArea],
     windows: &[DropArea],
     source: ViewportId,
     sources: &[PathBuf],
 ) -> Option<DropArea> {
-    let area = rows
+    let area = tree
         .iter()
         .rev()
         .find(|a| a.viewport != source && a.rect.contains(pointer))
@@ -57,9 +57,9 @@ pub fn drop_target(
 
 const AREAS_KEY: &str = "dnd-drop-areas";
 
-/// Registers the folder row `resp` shows as a drop area, for drags from any window.
-/// Rows register every frame, so the list is cleared per window in `forget_areas`.
-pub fn record_row(resp: &Response, folder: &Path) {
+/// Registers the tree folder `resp` shows as a drop area, for drags from any window.
+/// Tree folders register every frame, so they are dropped per window in `forget_areas`.
+pub fn record_tree_folder(resp: &Response, folder: &Path) {
     let ctx = &resp.ctx;
     let viewport = ctx.viewport_id();
     let Some(origin) = content_rect(ctx, viewport) else {
@@ -76,7 +76,7 @@ pub fn record_row(resp: &Response, folder: &Path) {
     });
 }
 
-/// Drops the folder rows `ctx`'s viewport registered in the previous frame.
+/// Drops the tree folders `ctx`'s viewport registered in the previous frame.
 pub fn forget_areas(ctx: &Context) {
     let viewport = ctx.viewport_id();
     ctx.data_mut(|d| {
@@ -85,8 +85,8 @@ pub fn forget_areas(ctx: &Context) {
     });
 }
 
-/// The folder rows registered by all windows.
-pub fn rows(ctx: &Context) -> Vec<DropArea> {
+/// The tree folders registered by all windows.
+pub fn tree_folders(ctx: &Context) -> Vec<DropArea> {
     ctx.data(|d| d.get_temp::<Vec<DropArea>>(Id::unique(AREAS_KEY)))
         .unwrap_or_default()
 }
@@ -137,7 +137,7 @@ pub fn copying(ctx: &Context, modifier: DragModifier) -> bool {
 /// Highlights `resp` while entries that may land in `folder` hover it.
 /// Returns them when they are dropped there.
 pub fn target(resp: &Response, folder: &Path) -> Option<Arc<Dragged>> {
-    record_row(resp, folder);
+    record_tree_folder(resp, folder);
     let hovering = resp.dnd_hover_payload::<Dragged>()?;
     // A folder never lands in itself or its own subfolder.
     if hovering.paths.iter().any(|src| folder.starts_with(src)) {
@@ -212,12 +212,12 @@ mod tests {
     }
 
     #[test]
-    fn folder_row_of_another_window_is_the_target() {
-        let rows = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
+    fn tree_folder_of_another_window_is_the_target() {
+        let tree = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
         let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
         let hit = drop_target(
             egui::pos2(260.0, 50.0),
-            &rows,
+            &tree,
             &windows,
             ViewportId::ROOT,
             &[],
@@ -227,11 +227,11 @@ mod tests {
 
     #[test]
     fn other_window_outside_its_rows_targets_its_folder() {
-        let rows = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
+        let tree = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
         let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
         let hit = drop_target(
             egui::pos2(210.0, 90.0),
-            &rows,
+            &tree,
             &windows,
             ViewportId::ROOT,
             &[],
@@ -241,11 +241,11 @@ mod tests {
 
     #[test]
     fn source_window_is_never_the_target() {
-        let rows = [area("a", "/a/sub", rect(10.0, 10.0, 50.0, 30.0))];
+        let tree = [area("a", "/a/sub", rect(10.0, 10.0, 50.0, 30.0))];
         let windows = [area("a", "/a", rect(0.0, 0.0, 100.0, 100.0))];
         let hit = drop_target(
             egui::pos2(20.0, 20.0),
-            &rows,
+            &tree,
             &windows,
             ViewportId::from_hash_of("a"),
             &[],
@@ -268,11 +268,11 @@ mod tests {
 
     #[test]
     fn folder_inside_a_dragged_path_is_no_target() {
-        let rows = [area("b", "/a/x/inner", rect(250.0, 40.0, 290.0, 60.0))];
+        let tree = [area("b", "/a/x/inner", rect(250.0, 40.0, 290.0, 60.0))];
         let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
         let hit = drop_target(
             egui::pos2(260.0, 50.0),
-            &rows,
+            &tree,
             &windows,
             ViewportId::ROOT,
             &[PathBuf::from("/a/x")],

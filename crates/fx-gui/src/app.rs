@@ -405,7 +405,7 @@ impl App {
         let pointer = dnd::global_pointer(ctx, self.viewport_at(source))?;
         dnd::drop_target(
             pointer,
-            &dnd::rows(ctx),
+            &dnd::tree_folders(ctx),
             &self.window_areas(ctx),
             self.viewport_at(source),
             sources,

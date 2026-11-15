@@ -1,4 +1,4 @@
-use super::dnd::{self, Dragged};
+use super::dnd;
 use super::menu;
 use crate::command::{Command, hint};
 use crate::{action::Action, theme};
@@ -10,8 +10,7 @@ use fx_app::{
     format_size, format_time, t, tr,
 };
 use fx_core::{Entry, EntryKind};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use std::time::SystemTime;
 
 fn row_height(density: Density) -> f32 {
@@ -40,7 +39,6 @@ struct Interaction {
     activate: Option<usize>,
     right_clicked: Option<usize>,
     drag_started: Option<usize>,
-    dropped: Option<(Arc<Dragged>, PathBuf)>,
 }
 
 pub fn show(
@@ -97,7 +95,7 @@ pub fn show(
             );
         });
     background_area(ui, &scroll, settings.show_hidden, can_paste, actions);
-    apply(ui, explorer, out, &selection, modifiers, &settings);
+    apply(ui, explorer, out, &selection, modifiers);
 }
 
 fn load_error(ui: &mut Ui, path: &Path, message: &str) {
@@ -234,12 +232,6 @@ fn entry_row(
     if resp.drag_started() {
         out.drag_started = Some(i);
     }
-    if is_dir {
-        let dest = ctx.folder.join(name.as_ref());
-        if let Some(sources) = dnd::target(&resp, &dest) {
-            out.dropped = Some((sources, dest));
-        }
-    }
     let activated = if is_dir && ctx.settings.list_single_click {
         resp.clicked()
     } else {
@@ -330,7 +322,6 @@ fn apply(
     out: Interaction,
     selection: &[usize],
     modifiers: Modifiers,
-    settings: &Settings,
 ) {
     let tab = explorer.active_mut();
     if let Some(i) = out.right_clicked {
@@ -347,10 +338,6 @@ fn apply(
     }
     if let Some(i) = out.drag_started {
         start_drag(ui, explorer, i, selection);
-    }
-    if let Some((sources, dest)) = out.dropped {
-        let copy = dnd::copying(ui.ctx(), settings.drag_copy_modifier);
-        explorer.drop_into(sources.paths.clone(), &dest, copy);
     }
 }
 
