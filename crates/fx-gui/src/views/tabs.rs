@@ -1,4 +1,4 @@
-use super::menu::{BAR_PADDING, bar_button};
+use super::menu::bar_button;
 use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::{Sense, Ui};
@@ -29,26 +29,37 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                     sw: 0,
                     se: 0,
                 })
-                .inner_margin(egui::Margin::symmetric(BAR_PADDING.x as i8, 0));
-            let resp = frame
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(egui::RichText::new(tab.title()).color(if selected {
-                            theme::accent()
-                        } else {
-                            theme::text()
-                        }));
-                        if bar_button(ui, "×", true)
-                            .on_hover_text(tip("tip.close_tab", Command::CloseTab))
-                            .clicked()
-                        {
-                            close = Some(i);
-                        }
+                .inner_margin(egui::Margin {
+                    left: 12,
+                    right: 6,
+                    top: 4,
+                    bottom: 4,
+                });
+            let resp = ui
+                .scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.label(egui::RichText::new(tab.title()).color(if selected {
+                                theme::accent()
+                            } else {
+                                theme::text()
+                            }));
+                            if ui
+                                .scope(|ui| {
+                                    ui.style_mut().spacing.button_padding = egui::vec2(4.0, 2.0);
+                                    ui.add(egui::Button::new("×").frame_when_inactive(false))
+                                })
+                                .inner
+                                .on_hover_text(tip("tip.close_tab", Command::CloseTab))
+                                .clicked()
+                            {
+                                close = Some(i);
+                            }
+                        });
                     });
                 })
-                .response
-                .interact(Sense::click());
+                .response;
             if resp.clicked() {
                 activate = Some(i);
             }
