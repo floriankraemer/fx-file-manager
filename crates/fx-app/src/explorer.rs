@@ -43,6 +43,7 @@ const PRELOAD_MAX: usize = 16;
 const PRELOAD_MAX_ENTRIES: usize = 20_000;
 
 struct PreloadDone {
+    window: WindowId,
     generation: u64,
     path: PathBuf,
     result: Result<DirView, ListError>,
@@ -50,6 +51,7 @@ struct PreloadDone {
 
 /// Outcome of the background mtime check of a tab's folder.
 struct StatChecked {
+    window: WindowId,
     tab_id: u64,
     generation: u64,
     stale: bool,
@@ -61,9 +63,55 @@ struct TreeLoaded {
     result: Result<Vec<TreeNode>, String>,
 }
 
-pub struct Explorer {
+/// Identifies a window for the lifetime of the [`Explorer`]; never reused.
+pub type WindowId = u64;
+
+/// The per-window state: its own tabs, folder tree and preload cache.
+/// Everything else (settings, clipboard, transfers, notices, job runner) is shared by all windows.
+struct Window {
+    id: WindowId,
     tabs: Vec<Tab>,
     active: usize,
+    tree: FolderTree,
+    /// Listings of the active folder's subfolders; only an optimistic first paint, a fresh load always follows.
+    preloaded: HashMap<PathBuf, DirView>,
+    /// Bumped to cancel the running preload thread and to drop its in-flight results.
+    preload_gen: Arc<AtomicU64>,
+    /// Folder whose subfolders the current preload covers; `None` once it was cancelled or never started.
+    preload_parent: Option<PathBuf>,
+    /// At most one mtime check runs at a time.
+    stat_in_flight: bool,
+    next_tick: Instant,
+}
+
+impl Window {
+    fn new(id: WindowId) -> Self {
+        Self {
+            id,
+            tabs: Vec::new(),
+            active: 0,
+            tree: FolderTree::default(),
+            preloaded: HashMap::new(),
+            preload_gen: Arc::new(AtomicU64::new(0)),
+            preload_parent: None,
+            stat_in_flight: false,
+            next_tick: Instant::now() + REVALIDATE_INTERVAL,
+        }
+    }
+
+    /// Cancels the running preload and forgets its results.
+    fn cancel_preload(&mut self) {
+        self.preload_gen.fetch_add(1, Ordering::AcqRel);
+        self.preload_parent = None;
+    }
+}
+
+pub struct Explorer {
+    windows: Vec<Window>,
+    /// Index into `windows` of the window the tab/tree/navigation API acts on.
+    current: usize,
+    next_window_id: WindowId,
+    /// Global so tab ids stay unique across windows and results find their tab in any window.
     next_tab_id: u64,
     tx: Sender<Completed>,
     rx: Receiver<Completed>,
@@ -74,7 +122,6 @@ pub struct Explorer {
     job_in_flight: bool,
     /// Copies and moves: several at once, queued per HDD/removable volume.
     transfers: Transfers,
-    tree: FolderTree,
     tree_tx: Sender<TreeLoaded>,
     tree_rx: Receiver<TreeLoaded>,
     /// Bumped when cached children become invalid wholesale; older tree results are dropped.
@@ -85,21 +132,13 @@ pub struct Explorer {
     settings_path: Option<PathBuf>,
     notices: VecDeque<Notice>,
     /// Internal clipboard set by copy/cut: absolute paths and whether paste should move them.
+    /// Shared by all windows, so copy in one window pastes in another.
     // ponytail: app-internal only, not the OS file clipboard; add per-platform clipboard integration if cross-app paste is needed
     clipboard: Option<(Vec<PathBuf>, bool)>,
     preload_tx: Sender<PreloadDone>,
     preload_rx: Receiver<PreloadDone>,
-    /// Listings of the active folder's subfolders; only an optimistic first paint, a fresh load always follows.
-    preloaded: HashMap<PathBuf, DirView>,
-    /// Bumped to cancel the running preload thread and to drop its in-flight results.
-    preload_gen: Arc<AtomicU64>,
-    /// Folder whose subfolders the current preload covers; `None` once it was cancelled or never started.
-    preload_parent: Option<PathBuf>,
     stat_tx: Sender<StatChecked>,
     stat_rx: Receiver<StatChecked>,
-    /// At most one mtime check runs at a time.
-    stat_in_flight: bool,
-    next_tick: Instant,
 }
 
 impl Explorer {
@@ -119,8 +158,9 @@ impl Explorer {
         let (preload_tx, preload_rx) = mpsc::channel();
         let (stat_tx, stat_rx) = mpsc::channel();
         let mut explorer = Self {
-            tabs: Vec::new(),
-            active: 0,
+            windows: vec![Window::new(0)],
+            current: 0,
+            next_window_id: 1,
             next_tab_id: 0,
             tx,
             rx,
@@ -128,7 +168,6 @@ impl Explorer {
             job_rx,
             job_in_flight: false,
             transfers: Transfers::default(),
-            tree: FolderTree::default(),
             tree_tx,
             tree_rx,
             tree_generation: 0,
@@ -139,16 +178,64 @@ impl Explorer {
             clipboard: None,
             preload_tx,
             preload_rx,
-            preloaded: HashMap::new(),
-            preload_gen: Arc::new(AtomicU64::new(0)),
-            preload_parent: None,
             stat_tx,
             stat_rx,
-            stat_in_flight: false,
-            next_tick: Instant::now() + REVALIDATE_INTERVAL,
         };
         explorer.new_tab(start);
         explorer
+    }
+
+    fn win(&self) -> &Window {
+        &self.windows[self.current]
+    }
+
+    fn win_mut(&mut self) -> &mut Window {
+        &mut self.windows[self.current]
+    }
+
+    /// Opens a window with one tab at `path` and starts loading it. The current window does not change.
+    pub fn open_window(&mut self, path: PathBuf) -> WindowId {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+        self.windows.push(Window::new(id));
+        let index = self.windows.len() - 1;
+        self.push_tab(index, path);
+        id
+    }
+
+    /// The last remaining window is never closed. Unknown ids are ignored.
+    pub fn close_window(&mut self, id: WindowId) {
+        if self.windows.len() <= 1 {
+            return;
+        }
+        let Some(index) = self.windows.iter().position(|w| w.id == id) else {
+            return;
+        };
+        let current_id = self.win().id;
+        self.windows[index].cancel_preload();
+        self.windows.remove(index);
+        self.current = self
+            .windows
+            .iter()
+            .position(|w| w.id == current_id)
+            .unwrap_or(0);
+    }
+
+    /// All windows in creation order.
+    pub fn window_ids(&self) -> Vec<WindowId> {
+        self.windows.iter().map(|w| w.id).collect()
+    }
+
+    /// The window the rest of the API acts on.
+    pub fn window(&self) -> WindowId {
+        self.win().id
+    }
+
+    /// Makes `id` the window the rest of the API acts on. Unknown ids are ignored.
+    pub fn set_window(&mut self, id: WindowId) {
+        if let Some(index) = self.windows.iter().position(|w| w.id == id) {
+            self.current = index;
+        }
     }
 
     pub fn settings(&self) -> &Settings {
@@ -159,7 +246,7 @@ impl Explorer {
     /// A save failure becomes an error notice; the new settings stay in effect for this session.
     pub fn set_settings(&mut self, settings: Settings) {
         let hidden_changed = settings.show_hidden != self.settings.show_hidden;
-        for tab in &mut self.tabs {
+        for tab in self.windows.iter_mut().flat_map(|w| &mut w.tabs) {
             if tab.show_hidden() != settings.show_hidden {
                 tab.set_show_hidden(settings.show_hidden);
             }
@@ -170,11 +257,17 @@ impl Explorer {
         let preload_changed = settings.preload_subfolders != self.settings.preload_subfolders;
         self.settings = settings;
         if preload_changed {
-            self.maybe_preload();
+            for w in 0..self.windows.len() {
+                self.maybe_preload(w);
+            }
         }
         if hidden_changed {
             self.tree_generation += 1;
-            let cached: Vec<PathBuf> = self.tree.children.keys().cloned().collect();
+            let cached: Vec<PathBuf> = self
+                .windows
+                .iter()
+                .flat_map(|w| w.tree.children.keys().cloned())
+                .collect();
             for path in cached {
                 self.load_tree(path);
             }
@@ -195,26 +288,30 @@ impl Explorer {
     }
 
     pub fn tree(&self) -> &FolderTree {
-        &self.tree
+        &self.win().tree
     }
 
     /// Expands a collapsed folder (loading its subfolders if needed) or collapses an expanded one. The cache is kept.
     pub fn tree_toggle(&mut self, path: PathBuf) {
-        if !self.tree.expanded.remove(&path) {
+        if !self.win_mut().tree.expanded.remove(&path) {
             self.tree_expand(path);
         }
     }
 
     /// Expands `path`, loading its subfolders unless they are cached. A failed load is retried.
     pub fn tree_expand(&mut self, path: PathBuf) {
-        if !matches!(
-            self.tree.children.get(&path),
+        let tree = &mut self.win_mut().tree;
+        let needs_load = !matches!(
+            tree.children.get(&path),
             Some(Children::Loading | Children::Loaded(_))
-        ) {
-            self.tree.children.insert(path.clone(), Children::Loading);
-            self.load_tree(path.clone());
+        );
+        if needs_load {
+            tree.children.insert(path.clone(), Children::Loading);
         }
-        self.tree.expanded.insert(path);
+        tree.expanded.insert(path.clone());
+        if needs_load {
+            self.load_tree(path);
+        }
     }
 
     /// Expands `root` and every folder between it and `path` (not `path` itself), where `root` is the deepest of `roots` containing `path`.
@@ -236,73 +333,85 @@ impl Explorer {
     }
 
     pub fn tabs(&self) -> &[Tab] {
-        &self.tabs
+        &self.win().tabs
     }
 
     pub fn active_index(&self) -> usize {
-        self.active
+        self.win().active
     }
 
     pub fn active(&self) -> &Tab {
-        &self.tabs[self.active]
+        let w = self.win();
+        &w.tabs[w.active]
     }
 
     pub fn active_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.active]
+        let w = self.win_mut();
+        &mut w.tabs[w.active]
     }
 
     /// Out-of-range indices are ignored.
     pub fn set_active(&mut self, index: usize) {
-        if index < self.tabs.len() {
-            self.active = index;
+        let w = self.win_mut();
+        if index < w.tabs.len() {
+            w.active = index;
         }
     }
 
     /// Opens a tab at `path`, makes it active and starts loading it.
     pub fn new_tab(&mut self, path: PathBuf) {
+        self.push_tab(self.current, path);
+    }
+
+    /// Appends an active tab to window `w` and starts loading it.
+    fn push_tab(&mut self, w: usize, path: PathBuf) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        self.tabs.push(Tab::new(
+        let tab = Tab::new(
             id,
             absolute(path),
             self.settings.show_hidden,
             self.settings.folder_order,
-        ));
-        self.active = self.tabs.len() - 1;
-        self.start_load(self.active);
+        );
+        let window = &mut self.windows[w];
+        window.tabs.push(tab);
+        window.active = window.tabs.len() - 1;
+        let index = window.active;
+        self.start_load(w, index);
     }
 
     /// The last remaining tab is never closed. Out-of-range indices are ignored.
     pub fn close_tab(&mut self, index: usize) {
-        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+        let w = self.win_mut();
+        if w.tabs.len() <= 1 || index >= w.tabs.len() {
             return;
         }
-        self.tabs.remove(index);
-        if index < self.active {
-            self.active -= 1;
+        w.tabs.remove(index);
+        if index < w.active {
+            w.active -= 1;
         } else {
-            self.active = self.active.min(self.tabs.len() - 1);
+            w.active = w.active.min(w.tabs.len() - 1);
         }
     }
 
     /// Navigates the active tab, recording history.
     pub fn navigate(&mut self, path: PathBuf) {
-        let index = self.active;
-        self.tabs[index].navigate_to(absolute(path));
-        self.start_load(index);
+        let index = self.win().active;
+        self.win_mut().tabs[index].navigate_to(absolute(path));
+        self.start_load(self.current, index);
     }
 
     pub fn back(&mut self) {
-        let index = self.active;
-        if self.tabs[index].go_back() {
-            self.start_load(index);
+        let index = self.win().active;
+        if self.win_mut().tabs[index].go_back() {
+            self.start_load(self.current, index);
         }
     }
 
     pub fn forward(&mut self) {
-        let index = self.active;
-        if self.tabs[index].go_forward() {
-            self.start_load(index);
+        let index = self.win().active;
+        if self.win_mut().tabs[index].go_forward() {
+            self.start_load(self.current, index);
         }
     }
 
@@ -314,8 +423,8 @@ impl Explorer {
     }
 
     pub fn refresh(&mut self) {
-        let index = self.active;
-        self.start_load(index);
+        let index = self.win().active;
+        self.start_load(self.current, index);
     }
 
     /// Re-lists the active tab's folder without clearing the view, so there is no loading flash and the selection stays.
@@ -535,55 +644,83 @@ impl Explorer {
     /// Returns true if any tab or notice changed.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
-        let active_id = self.active().id();
-        let mut active_loaded = false;
+        // Windows whose active tab just finished loading and may need a preload.
+        let mut loaded = Vec::new();
         while let Ok(done) = self.rx.try_recv() {
-            let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id() == done.tab_id) else {
+            let Some((w, window)) = self
+                .windows
+                .iter_mut()
+                .enumerate()
+                .find(|(_, window)| window.tabs.iter().any(|tab| tab.id() == done.tab_id))
+            else {
                 continue;
             };
+            let active_id = window.tabs[window.active].id();
+            let tab = window
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id() == done.tab_id)
+                .expect("tab was just found in this window");
             let ok = done.result.is_ok();
             let applied = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
-            active_loaded |= applied && ok && tab.id() == active_id;
+            if applied && ok && tab.id() == active_id {
+                loaded.push(w);
+            }
             changed |= applied;
         }
         // A revalidation of the folder already being preloaded keeps that preload: cached views are
         // only a first paint that a fresh load always replaces, so redoing up to PRELOAD_MAX listings
         // on every focus change or mtime tick would buy nothing.
-        if active_loaded && self.preload_parent.as_deref() != Some(self.active().path()) {
-            self.maybe_preload();
+        for w in loaded {
+            let window = &self.windows[w];
+            if window.preload_parent.as_deref() != Some(window.tabs[window.active].path()) {
+                self.maybe_preload(w);
+            }
         }
         while let Ok(done) = self.preload_rx.try_recv() {
-            if done.generation == self.preload_gen.load(Ordering::Acquire)
+            // A closed window's results are dropped with it.
+            if let Some(window) = self.windows.iter_mut().find(|w| w.id == done.window)
+                && done.generation == window.preload_gen.load(Ordering::Acquire)
                 && let Ok(view) = done.result
                 && view.listing.entries.len() <= PRELOAD_MAX_ENTRIES
             {
-                self.preloaded.insert(done.path, view);
+                window.preloaded.insert(done.path, view);
             }
         }
         while let Ok(checked) = self.stat_rx.try_recv() {
-            self.stat_in_flight = false;
+            if let Some(window) = self.windows.iter_mut().find(|w| w.id == checked.window) {
+                window.stat_in_flight = false;
+            }
             if !checked.stale {
                 continue;
             }
             // A navigation or reload since the check bumped the generation and made it moot.
-            if let Some(tab) = self.tabs.iter().find(|tab| tab.id() == checked.tab_id)
+            if let Some(tab) = self
+                .windows
+                .iter()
+                .flat_map(|w| &w.tabs)
+                .find(|tab| tab.id() == checked.tab_id)
                 && tab.generation() == checked.generation
                 && !matches!(tab.state(), LoadState::Loading)
             {
                 self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
             }
         }
-        self.tick_revalidate();
+        for w in 0..self.windows.len() {
+            self.tick_revalidate(w);
+        }
         while let Ok(done) = self.tree_rx.try_recv() {
             if done.generation != self.tree_generation {
                 continue;
             }
-            if let Some(slot) = self.tree.children.get_mut(&done.path) {
-                *slot = match done.result {
-                    Ok(nodes) => Children::Loaded(nodes),
-                    Err(err) => Children::Failed(err),
-                };
-                changed = true;
+            for window in &mut self.windows {
+                if let Some(slot) = window.tree.children.get_mut(&done.path) {
+                    *slot = match &done.result {
+                        Ok(nodes) => Children::Loaded(nodes.clone()),
+                        Err(err) => Children::Failed(err.clone()),
+                    };
+                    changed = true;
+                }
             }
         }
         while let Ok(outcome) = self.job_rx.try_recv() {
@@ -595,34 +732,46 @@ impl Explorer {
         changed
     }
 
-    /// Shows the notice and reloads every listing the operation touched.
+    /// Shows the notice and reloads every listing the operation touched, in all windows.
     fn apply_outcome(&mut self, outcome: Outcome) {
-        self.preload_gen.fetch_add(1, Ordering::AcqRel);
-        self.preload_parent = None;
-        self.preloaded.retain(|cached, _| {
-            !outcome
-                .touched
-                .iter()
-                .any(|t| t.starts_with(cached) || cached.starts_with(t))
-        });
-        self.notices.push_back(outcome.notice);
-        for path in &outcome.touched {
-            if self.tree.children.contains_key(path) {
-                self.load_tree(path.clone());
-            }
+        for window in &mut self.windows {
+            window.cancel_preload();
+            window.preloaded.retain(|cached, _| {
+                !outcome
+                    .touched
+                    .iter()
+                    .any(|t| t.starts_with(cached) || cached.starts_with(t))
+            });
         }
-        for index in 0..self.tabs.len() {
-            let path = self.tabs[index].path().to_path_buf();
-            if !outcome.touched.contains(&path) {
-                continue;
+        self.notices.push_back(outcome.notice);
+        // One load per path is enough: the result fills every window's slot for it.
+        let tree_paths: Vec<&PathBuf> = outcome
+            .touched
+            .iter()
+            .filter(|path| {
+                self.windows
+                    .iter()
+                    .any(|w| w.tree.children.contains_key(*path))
+            })
+            .collect();
+        for path in tree_paths {
+            self.load_tree(path.clone());
+        }
+        for w in 0..self.windows.len() {
+            for index in 0..self.windows[w].tabs.len() {
+                let tab = &mut self.windows[w].tabs[index];
+                let path = tab.path().to_path_buf();
+                if !outcome.touched.contains(&path) {
+                    continue;
+                }
+                if let Some(created) = &outcome.created
+                    && created.parent() == Some(path.as_path())
+                    && let Some(name) = created.file_name()
+                {
+                    tab.select_after_load(name.to_os_string());
+                }
+                self.start_load(w, index);
             }
-            if let Some(created) = &outcome.created
-                && created.parent() == Some(path.as_path())
-                && let Some(name) = created.file_name()
-            {
-                self.tabs[index].select_after_load(name.to_os_string());
-            }
-            self.start_load(index);
         }
     }
 
@@ -664,19 +813,19 @@ impl Explorer {
         });
     }
 
-    fn start_load(&mut self, index: usize) {
-        let tab = &mut self.tabs[index];
+    fn start_load(&mut self, w: usize, index: usize) {
+        let window = &mut self.windows[w];
+        let tab = &mut window.tabs[index];
         let generation = tab.begin_load();
         let tab_id = tab.id();
         let path = tab.path().to_path_buf();
         // Navigating cancels a running preload; the next completed load starts a new one.
-        self.preload_gen.fetch_add(1, Ordering::AcqRel);
-        self.preload_parent = None;
+        window.cancel_preload();
         if self.settings.preload_subfolders
-            && let Some(view) = self.preloaded.remove(&path)
+            && let Some(view) = window.preloaded.remove(&path)
         {
             // Same generation as the fresh load below, which then replaces this possibly stale view.
-            self.tabs[index].apply_load(generation, Ok(view));
+            window.tabs[index].apply_load(generation, Ok(view));
         }
         self.spawn_load(tab_id, generation, path);
     }
@@ -696,16 +845,17 @@ impl Explorer {
         });
     }
 
-    /// Cancels any running preload, then lists the active folder's subfolders one by one in the background.
+    /// Cancels any running preload of window `w`, then lists its active folder's subfolders one by one in the background.
     /// Skipped when disabled, on network storage, or unless the active tab is loaded.
-    fn maybe_preload(&mut self) {
-        self.preload_gen.fetch_add(1, Ordering::AcqRel);
-        self.preloaded.clear();
-        self.preload_parent = None;
-        if !self.settings.preload_subfolders {
+    fn maybe_preload(&mut self, w: usize) {
+        let enabled = self.settings.preload_subfolders;
+        let window = &mut self.windows[w];
+        window.cancel_preload();
+        window.preloaded.clear();
+        if !enabled {
             return;
         }
-        let tab = self.active();
+        let tab = &window.tabs[window.active];
         let LoadState::Loaded(view) = tab.state() else {
             return;
         };
@@ -721,9 +871,11 @@ impl Explorer {
             .map(|entry| view.path.join(view.listing.name(entry)))
             .take(PRELOAD_MAX)
             .collect();
-        self.preload_parent = Some(view.path.clone());
-        let generation = self.preload_gen.load(Ordering::Acquire);
-        let current = Arc::clone(&self.preload_gen);
+        let parent = view.path.clone();
+        window.preload_parent = Some(parent);
+        let window_id = window.id;
+        let generation = window.preload_gen.load(Ordering::Acquire);
+        let current = Arc::clone(&window.preload_gen);
         let tx = self.preload_tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
@@ -736,6 +888,7 @@ impl Explorer {
                     return;
                 }
                 let _ = tx.send(PreloadDone {
+                    window: window_id,
                     generation,
                     path,
                     result,
@@ -745,28 +898,31 @@ impl Explorer {
         });
     }
 
-    /// Every `REVALIDATE_INTERVAL`, stats the active folder on a worker thread and re-lists it if it changed.
-    fn tick_revalidate(&mut self) {
+    /// Every `REVALIDATE_INTERVAL`, stats window `w`'s active folder on a worker thread and re-lists it if it changed.
+    fn tick_revalidate(&mut self, w: usize) {
+        let window = &mut self.windows[w];
         let now = Instant::now();
-        if now < self.next_tick {
+        if now < window.next_tick {
             return;
         }
-        self.next_tick = now + REVALIDATE_INTERVAL;
-        if self.stat_in_flight {
+        window.next_tick = now + REVALIDATE_INTERVAL;
+        if window.stat_in_flight {
             return;
         }
-        let tab = self.active();
+        let tab = &window.tabs[window.active];
         let LoadState::Loaded(view) = tab.state() else {
             return;
         };
         let (tab_id, generation) = (tab.id(), tab.generation());
         let (path, mtime, listed_at) = (tab.path().to_path_buf(), view.mtime, view.listed_at);
-        self.stat_in_flight = true;
+        let window_id = window.id;
+        window.stat_in_flight = true;
         let tx = self.stat_tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
             let stale = needs_relist(mtime, listed_at, dir_mtime(&path));
             let _ = tx.send(StatChecked {
+                window: window_id,
                 tab_id,
                 generation,
                 stale,
@@ -868,15 +1024,15 @@ mod tests {
     fn settle(explorer: &mut Explorer) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while explorer.busy()
-            || explorer
-                .tree
-                .children
-                .values()
-                .any(|c| matches!(c, Children::Loading))
-            || explorer
-                .tabs()
-                .iter()
-                .any(|tab| matches!(tab.state(), LoadState::Loading))
+            || explorer.windows.iter().any(|w| {
+                w.tree
+                    .children
+                    .values()
+                    .any(|c| matches!(c, Children::Loading))
+                    || w.tabs
+                        .iter()
+                        .any(|tab| matches!(tab.state(), LoadState::Loading))
+            })
         {
             assert!(Instant::now() < deadline, "work did not finish in time");
             explorer.poll();
@@ -929,6 +1085,99 @@ mod tests {
         let mut explorer = Explorer::new(root.to_path_buf(), || {});
         settle(&mut explorer);
         explorer
+    }
+
+    #[test]
+    fn windows_have_their_own_tabs_and_open_keeps_the_current_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("other")).unwrap();
+        let mut explorer = explorer_in(root);
+        let first = explorer.window();
+
+        let second = explorer.open_window(root.join("other"));
+        assert_eq!(explorer.window(), first, "open does not switch");
+        assert_eq!(explorer.window_ids(), vec![first, second]);
+        assert_eq!(explorer.active().path(), root);
+
+        explorer.set_window(second);
+        assert_eq!(explorer.tabs().len(), 1);
+        assert_eq!(explorer.active().path(), root.join("other"));
+        explorer.new_tab(root.to_path_buf());
+        assert_eq!(explorer.tabs().len(), 2);
+
+        explorer.set_window(999);
+        assert_eq!(explorer.window(), second, "unknown id is ignored");
+        explorer.set_window(first);
+        assert_eq!(explorer.tabs().len(), 1, "tabs are per window");
+        let ids: Vec<u64> = explorer
+            .windows
+            .iter()
+            .flat_map(|w| w.tabs.iter().map(Tab::id))
+            .collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id)));
+    }
+
+    #[test]
+    fn clipboard_is_shared_between_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("f.txt"), b"x").unwrap();
+        fs::create_dir(root.join("dst")).unwrap();
+        let mut explorer = explorer_in(root);
+        let a = explorer.window();
+        let b = explorer.open_window(root.join("dst"));
+        settle(&mut explorer);
+
+        explorer.copy_to_clipboard(&[row_of(&explorer, "f.txt")], false);
+        explorer.set_window(b);
+        assert!(explorer.can_paste());
+        explorer.paste(None);
+        settle(&mut explorer);
+        assert_eq!(fs::read(root.join("dst/f.txt")).unwrap(), b"x");
+        explorer.set_window(a);
+        assert!(explorer.can_paste(), "a copy clipboard can be pasted again");
+    }
+
+    #[test]
+    fn the_last_window_is_never_closed_and_current_stays_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut explorer = explorer_in(root);
+        let a = explorer.window();
+        let b = explorer.open_window(root.to_path_buf());
+        let c = explorer.open_window(root.to_path_buf());
+
+        explorer.set_window(c);
+        explorer.close_window(a);
+        assert_eq!(explorer.window_ids(), vec![b, c]);
+        assert_eq!(explorer.window(), c, "current follows its window");
+
+        explorer.close_window(c);
+        assert_eq!(explorer.window_ids(), vec![b]);
+        assert_eq!(explorer.window(), b);
+
+        explorer.close_window(999);
+        explorer.close_window(b);
+        assert_eq!(explorer.window_ids(), vec![b], "the last window stays");
+        assert_eq!(explorer.tabs().len(), 1);
+    }
+
+    #[test]
+    fn loads_complete_in_a_window_that_is_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("other")).unwrap();
+        fs::write(root.join("other/in-other.txt"), b"x").unwrap();
+        let mut explorer = explorer_in(root);
+        let b = explorer.open_window(root.join("other"));
+        settle(&mut explorer);
+
+        let loaded = &explorer.windows[1].tabs[0];
+        assert!(matches!(loaded.state(), LoadState::Loaded(_)));
+        explorer.set_window(b);
+        assert_eq!(names(&explorer), vec!["in-other.txt"]);
     }
 
     #[test]
@@ -1560,7 +1809,7 @@ mod tests {
     }
 
     fn cached(explorer: &Explorer) -> Vec<String> {
-        let mut names: Vec<String> = explorer
+        let mut names: Vec<String> = explorer.windows[0]
             .preloaded
             .keys()
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
@@ -1585,7 +1834,9 @@ mod tests {
         fs::create_dir(root.join("b")).unwrap();
         fs::write(root.join("f.txt"), b"x").unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 2);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 2
+        });
         assert_eq!(cached(&explorer), ["a", "b"]);
     }
 
@@ -1597,7 +1848,9 @@ mod tests {
         fs::create_dir(&child).unwrap();
         fs::write(child.join("old.txt"), b"x").unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 1
+        });
 
         fs::write(child.join("new.txt"), b"x").unwrap();
         explorer.navigate(child);
@@ -1622,7 +1875,7 @@ mod tests {
             explorer.poll();
             thread::sleep(Duration::from_millis(1));
         }
-        assert!(explorer.preloaded.is_empty());
+        assert!(explorer.windows[0].preloaded.is_empty());
         explorer.navigate(root.join("a"));
         assert!(matches!(explorer.active().state(), LoadState::Loading));
     }
@@ -1633,27 +1886,30 @@ mod tests {
         let root = dir.path();
         fs::create_dir(root.join("a")).unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 1
+        });
         explorer.cancel_for_test();
-        let stale = explorer.preload_gen.load(Ordering::Acquire) - 1;
+        let stale = explorer.windows[0].preload_gen.load(Ordering::Acquire) - 1;
         let listed = list_view(root.join("a"));
         explorer
             .preload_tx
             .send(PreloadDone {
+                window: 0,
                 generation: stale,
                 path: root.join("a"),
                 result: listed,
             })
             .unwrap();
         explorer.poll();
-        assert!(explorer.preloaded.is_empty());
+        assert!(explorer.windows[0].preloaded.is_empty());
     }
 
     impl Explorer {
         /// Simulates a newer preload generation superseding the running one.
         fn cancel_for_test(&mut self) {
-            self.preload_gen.fetch_add(1, Ordering::AcqRel);
-            self.preloaded.clear();
+            self.windows[0].preload_gen.fetch_add(1, Ordering::AcqRel);
+            self.windows[0].preloaded.clear();
         }
     }
 
@@ -1666,13 +1922,13 @@ mod tests {
         }
         let mut explorer = explorer_in(root);
         wait_for(&mut explorer, "preload", |e| {
-            e.preloaded.len() == PRELOAD_MAX
+            e.windows[0].preloaded.len() == PRELOAD_MAX
         });
         for _ in 0..50 {
             explorer.poll();
             thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(explorer.preloaded.len(), PRELOAD_MAX);
+        assert_eq!(explorer.windows[0].preloaded.len(), PRELOAD_MAX);
     }
 
     #[cfg(unix)]
@@ -1683,7 +1939,9 @@ mod tests {
         fs::create_dir(root.join("real")).unwrap();
         std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| !e.preloaded.is_empty());
+        wait_for(&mut explorer, "preload", |e| {
+            !e.windows[0].preloaded.is_empty()
+        });
         for _ in 0..50 {
             explorer.poll();
             thread::sleep(Duration::from_millis(1));
@@ -1698,11 +1956,13 @@ mod tests {
         fs::create_dir(root.join("a")).unwrap();
         fs::create_dir(root.join("b")).unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 2);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 2
+        });
         let a = row_of(&explorer, "a");
         explorer.delete(&[a], true);
         settle(&mut explorer);
-        assert!(!explorer.preloaded.contains_key(&root.join("a")));
+        assert!(!explorer.windows[0].preloaded.contains_key(&root.join("a")));
     }
 
     #[test]
@@ -1711,15 +1971,19 @@ mod tests {
         let root = dir.path();
         fs::create_dir(root.join("a")).unwrap();
         let mut explorer = explorer_with(root, Settings::default());
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 1
+        });
 
         explorer.set_settings(Settings {
             preload_subfolders: false,
             ..Settings::default()
         });
-        assert!(explorer.preloaded.is_empty());
+        assert!(explorer.windows[0].preloaded.is_empty());
         explorer.set_settings(Settings::default());
-        wait_for(&mut explorer, "repopulate", |e| e.preloaded.len() == 1);
+        wait_for(&mut explorer, "repopulate", |e| {
+            e.windows[0].preloaded.len() == 1
+        });
     }
 
     #[test]
@@ -1745,15 +2009,20 @@ mod tests {
         let root = dir.path();
         fs::create_dir(root.join("a")).unwrap();
         let mut explorer = explorer_in(root);
-        wait_for(&mut explorer, "preload", |e| e.preloaded.len() == 1);
-        let generation = explorer.preload_gen.load(Ordering::Acquire);
+        wait_for(&mut explorer, "preload", |e| {
+            e.windows[0].preloaded.len() == 1
+        });
+        let generation = explorer.windows[0].preload_gen.load(Ordering::Acquire);
 
         fs::write(root.join("new.txt"), b"x").unwrap();
         explorer.revalidate();
         wait_for(&mut explorer, "revalidated listing", |e| {
             names(e).contains(&"new.txt".to_owned())
         });
-        assert_eq!(explorer.preload_gen.load(Ordering::Acquire), generation);
+        assert_eq!(
+            explorer.windows[0].preload_gen.load(Ordering::Acquire),
+            generation
+        );
         assert_eq!(cached(&explorer), ["a"]);
     }
 
@@ -1781,7 +2050,7 @@ mod tests {
         let root = dir.path();
         let mut explorer = explorer_in(root);
         fs::write(root.join("late.txt"), b"x").unwrap();
-        explorer.next_tick = Instant::now();
+        explorer.windows[0].next_tick = Instant::now();
         wait_for(&mut explorer, "tick", |e| {
             names(e).contains(&"late.txt".to_owned())
         });

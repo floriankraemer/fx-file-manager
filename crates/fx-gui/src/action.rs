@@ -10,6 +10,7 @@ pub enum Action {
     },
     SelectAll,
     Properties,
+    NewWindow,
     OpenSettings,
     OpenAbout,
     Exit,
