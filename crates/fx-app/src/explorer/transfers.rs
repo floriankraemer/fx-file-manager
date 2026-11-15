@@ -1,6 +1,6 @@
 //! The shared clipboard, drag and drop, and the copy/move transfer queue.
 
-use super::Explorer;
+use super::{Explorer, WindowId};
 use crate::ops::{NoticeKind, display_name};
 use crate::transfers::TransferInfo;
 use fx_core::{Op, Request, Resolution};
@@ -60,6 +60,14 @@ impl Explorer {
         let label = crate::tn(key, sources.len() as u64, &[("dest", &display_name(dest))]);
         self.transfers.submit(req, label);
         self.poll_transfers();
+    }
+
+    /// Like `drop_into`, aimed at the active folder of window `id`. Unknown windows are ignored.
+    pub fn drop_into_window(&mut self, id: WindowId, sources: Vec<PathBuf>, copy: bool) {
+        let Some(dest) = self.window_folder(id) else {
+            return;
+        };
+        self.drop_into(sources, &dest, copy);
     }
 
     /// Copy and move jobs for a transfer panel, oldest first.

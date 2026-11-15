@@ -1427,3 +1427,34 @@ fn tick_notices_external_changes() {
         names(e).contains(&"late.txt".to_owned())
     });
 }
+
+#[test]
+fn dropping_into_another_window_copies_into_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/f.txt"), b"x").unwrap();
+    fs::create_dir(root.join("other")).unwrap();
+    let mut explorer = explorer_in(root);
+    let source = explorer.window();
+    let target = explorer.open_window(root.join("other"));
+    explorer.set_window(source);
+
+    explorer.drop_into_window(target, vec![root.join("src/f.txt")], true);
+    settle(&mut explorer);
+    assert_eq!(fs::read(root.join("other/f.txt")).unwrap(), b"x");
+    assert!(root.join("src/f.txt").exists(), "a copy keeps its source");
+}
+
+#[test]
+fn dropping_into_unknown_window_does_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("f.txt"), b"x").unwrap();
+    let mut explorer = explorer_in(root);
+    let gone = explorer.open_window(root.to_path_buf());
+    explorer.close_window(gone);
+
+    explorer.drop_into_window(gone, vec![root.join("f.txt")], true);
+    assert!(explorer.transfers().is_empty());
+}

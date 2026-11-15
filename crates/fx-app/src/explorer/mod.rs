@@ -259,6 +259,12 @@ impl Explorer {
         self.windows.iter().map(|w| w.id).collect()
     }
 
+    /// The active folder of window `id`, if that window exists.
+    pub fn window_folder(&self, id: WindowId) -> Option<PathBuf> {
+        let w = self.windows.iter().find(|w| w.id == id)?;
+        Some(w.tabs[w.active].path().to_path_buf())
+    }
+
     /// The window the rest of the API acts on.
     pub fn window(&self) -> WindowId {
         self.win().id
