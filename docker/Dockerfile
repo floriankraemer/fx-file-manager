@@ -65,6 +65,8 @@ ENV CARGO_TARGET_DIR=/workspace/target
 
 # ---------------------------------------------------------------------------
 # linux-artifact: release binaries, exported as dist/linux/.
+# The target dir is a cache mount so unchanged dependencies stay fresh between
+# builds and cargo skips them; sccache alone still re-runs every rustc call.
 # ---------------------------------------------------------------------------
 FROM linux-builder AS linux-build
 
@@ -74,6 +76,7 @@ ARG FX_BUILD_DATE
 ENV FX_GIT_HASH=$FX_GIT_HASH FX_BUILD_DATE=$FX_BUILD_DATE
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/sccache \
+    --mount=type=cache,id=fx-target-linux,target=/workspace/target \
     cargo build --release -p fx-gui -p fx-cli \
     && mkdir -p /out && cp target/release/fx-gui target/release/fx /out/
 
@@ -98,6 +101,7 @@ ARG FX_BUILD_DATE
 ENV FX_GIT_HASH=$FX_GIT_HASH FX_BUILD_DATE=$FX_BUILD_DATE
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/sccache \
+    --mount=type=cache,id=fx-target-windows,target=/workspace/target \
     cargo build --release --target x86_64-pc-windows-gnu -p fx-gui -p fx-cli \
     && mkdir -p /out && cp target/x86_64-pc-windows-gnu/release/fx-gui.exe target/x86_64-pc-windows-gnu/release/fx.exe /out/
 
