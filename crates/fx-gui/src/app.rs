@@ -5,7 +5,9 @@ use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
-use eframe::egui::{self, Context, DragAndDrop, ViewportBuilder, ViewportCommand, ViewportId};
+use eframe::egui::{
+    self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
+};
 use fx_app::{
     Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, places,
 };
@@ -400,19 +402,43 @@ impl App {
         }
     }
 
-    /// Where a drag from window `source` lands: a folder row in any window, else a window's current folder.
+    /// Where a drag from window `source` lands: a tree folder in any window, else a window's listing.
     fn drop_target(&self, ctx: &Context, source: usize, sources: &[PathBuf]) -> Option<DropArea> {
         let pointer = dnd::global_pointer(ctx, self.viewport_at(source))?;
+        self.area_at(ctx, pointer, Some(self.viewport_at(source)), sources)
+    }
+
+    fn area_at(
+        &self,
+        ctx: &Context,
+        pointer: Pos2,
+        source: Option<ViewportId>,
+        sources: &[PathBuf],
+    ) -> Option<DropArea> {
         dnd::drop_target(
             pointer,
             &dnd::tree_folders(ctx),
             &self.window_areas(ctx),
-            self.viewport_at(source),
+            source,
             sources,
         )
     }
 
-    /// Each window's current folder over its global content rectangle.
+    /// Where files from outside fx land when they hover or drop on window `index`: the tree folder under
+    /// the cursor if there is one, else the window's active folder.
+    fn external_area(&self, ctx: &Context, index: usize) -> Option<DropArea> {
+        let own = self.viewport_at(index);
+        dnd::screen_pointer(ctx)
+            .and_then(|pointer| self.area_at(ctx, pointer, None, &[]))
+            .filter(|area| area.viewport == own)
+            .or_else(|| {
+                self.window_areas(ctx)
+                    .into_iter()
+                    .find(|area| area.viewport == own)
+            })
+    }
+
+    /// Each window's active folder over its global content rectangle.
     fn window_areas(&self, ctx: &Context) -> Vec<DropArea> {
         (0..self.windows.len())
             .filter_map(|i| {
@@ -428,12 +454,12 @@ impl App {
             .collect()
     }
 
-    /// Outlines what a drag or files from outside would land on, when it hovers window `index`.
+    /// Outlines what a drag would land on, while it hovers window `index`.
     fn highlight_drop_target(&self, ctx: &Context, index: usize) {
-        let viewport = self.viewport_at(index);
         if dnd::os_hovering(ctx) {
-            if let Some(rect) = dnd::content_rect(ctx, viewport) {
-                dnd::highlight(ctx, rect);
+            ctx.request_repaint();
+            if let Some(area) = self.external_area(ctx, index) {
+                dnd::highlight(ctx, area.rect);
             }
             return;
         }
@@ -447,23 +473,25 @@ impl App {
             return;
         }
         if let Some(target) = self.drop_target(ctx, source, &dragged.paths)
-            && target.viewport == viewport
+            && target.viewport == self.viewport_at(index)
         {
             dnd::highlight(ctx, target.rect);
         }
     }
 
-    /// Copies files dropped from outside fx into window `index`'s current folder.
+    /// Copies files dropped from outside fx into the tree folder or listing they landed on.
     fn drop_os_files(&mut self, ctx: &Context, index: usize) {
         let paths = dnd::os_dropped_paths(ctx);
-        if !paths.is_empty() {
-            self.explorer
-                .drop_into_window(self.windows[index].id, paths, true);
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(area) = self.external_area(ctx, index) {
+            self.explorer.drop_into(paths, &area.folder, true);
         }
     }
 
     /// Ends a drag that started in window `index` once its button is released.
-    /// Released over another window's folder or folder row, the paths are copied or moved there.
+    /// Released over a tree folder or a listing of another window, the paths are copied or moved there.
     fn finish_drag(&mut self, ctx: &Context, index: usize) {
         let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
             return;

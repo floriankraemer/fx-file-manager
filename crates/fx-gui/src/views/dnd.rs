@@ -37,17 +37,17 @@ pub fn drop_target(
     pointer: Pos2,
     tree: &[DropArea],
     windows: &[DropArea],
-    source: ViewportId,
+    source: Option<ViewportId>,
     sources: &[PathBuf],
 ) -> Option<DropArea> {
     let area = tree
         .iter()
         .rev()
-        .find(|a| a.viewport != source && a.rect.contains(pointer))
+        .find(|a| Some(a.viewport) != source && a.rect.contains(pointer))
         .or_else(|| {
             windows
                 .iter()
-                .find(|a| a.viewport != source && a.rect.contains(pointer))
+                .find(|a| Some(a.viewport) != source && a.rect.contains(pointer))
         })?;
     if sources.iter().any(|src| area.folder.starts_with(src)) {
         return None;
@@ -118,6 +118,35 @@ pub fn global_pointer(ctx: &Context, viewport: ViewportId) -> Option<Pos2> {
 /// The global content rectangle of `viewport`, if the platform reports it.
 pub fn content_rect(ctx: &Context, viewport: ViewportId) -> Option<Rect> {
     ctx.input_for(viewport, |i| i.viewport().inner_rect)
+}
+
+/// Converts physical screen pixels to egui's global points.
+pub fn to_points(pixels: (i32, i32), pixels_per_point: f32) -> Pos2 {
+    egui::pos2(
+        pixels.0 as f32 / pixels_per_point,
+        pixels.1 as f32 / pixels_per_point,
+    )
+}
+
+/// Where the cursor is on screen, in points. Files dragged in from other programs carry no
+/// position in winit's events, so this reads the cursor directly; other platforms have no reading.
+pub fn screen_pointer(ctx: &Context) -> Option<Pos2> {
+    cursor_pixels().map(|px| to_points(px, ctx.pixels_per_point()))
+}
+
+#[cfg(windows)]
+fn cursor_pixels() -> Option<(i32, i32)> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = POINT { x: 0, y: 0 };
+    // SAFETY: GetCursorPos writes one POINT through the valid pointer it is given.
+    let ok = unsafe { GetCursorPos(&mut point) } != 0;
+    ok.then_some((point.x, point.y))
+}
+
+#[cfg(not(windows))]
+fn cursor_pixels() -> Option<(i32, i32)> {
+    None
 }
 
 /// True in the frame `viewport` saw the pointer button released.
@@ -219,7 +248,7 @@ mod tests {
             egui::pos2(260.0, 50.0),
             &tree,
             &windows,
-            ViewportId::ROOT,
+            Some(ViewportId::ROOT),
             &[],
         );
         assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b/sub")));
@@ -233,7 +262,7 @@ mod tests {
             egui::pos2(210.0, 90.0),
             &tree,
             &windows,
-            ViewportId::ROOT,
+            Some(ViewportId::ROOT),
             &[],
         );
         assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b")));
@@ -247,7 +276,7 @@ mod tests {
             egui::pos2(20.0, 20.0),
             &tree,
             &windows,
-            ViewportId::from_hash_of("a"),
+            Some(ViewportId::from_hash_of("a")),
             &[],
         );
         assert_eq!(hit, None);
@@ -260,7 +289,7 @@ mod tests {
             egui::pos2(150.0, 50.0),
             &[],
             &windows,
-            ViewportId::ROOT,
+            Some(ViewportId::ROOT),
             &[],
         );
         assert_eq!(hit, None);
@@ -274,7 +303,7 @@ mod tests {
             egui::pos2(260.0, 50.0),
             &tree,
             &windows,
-            ViewportId::ROOT,
+            Some(ViewportId::ROOT),
             &[PathBuf::from("/a/x")],
         );
         assert_eq!(hit, None);
@@ -287,9 +316,41 @@ mod tests {
             egui::pos2(-150.0, 50.0),
             &[],
             &windows,
-            ViewportId::ROOT,
+            Some(ViewportId::ROOT),
             &[],
         );
         assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b")));
+    }
+
+    #[test]
+    fn tree_folder_area_follows_its_row_on_screen() {
+        use egui_kittest::Harness;
+        let mut harness = Harness::new_ui(|ui| {
+            let resp =
+                ui.allocate_rect(rect(10.0, 10.0, 100.0, 30.0), egui::Sense::click_and_drag());
+            target(&resp, Path::new("/x"));
+        });
+        harness
+            .input_mut()
+            .viewports
+            .entry(ViewportId::ROOT)
+            .or_default()
+            .inner_rect = Some(rect(100.0, 100.0, 800.0, 600.0));
+        harness.run();
+        let areas = tree_folders(&harness.ctx);
+        assert_eq!(areas.len(), 1);
+        assert_eq!(areas[0].rect, rect(110.0, 110.0, 200.0, 130.0));
+    }
+
+    #[test]
+    fn external_drop_targets_tree_folder_without_source_window() {
+        let tree = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
+        let hit = drop_target(egui::pos2(260.0, 50.0), &tree, &[], None, &[]);
+        assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b/sub")));
+    }
+
+    #[test]
+    fn screen_pixels_become_points() {
+        assert_eq!(to_points((300, 200), 1.5), egui::pos2(200.0, 400.0 / 3.0));
     }
 }
