@@ -471,6 +471,11 @@ impl Explorer {
             .iter()
             .filter_map(|&row| self.entry_path(row))
             .collect();
+        self.delete_paths(paths, permanent);
+    }
+
+    /// Like `delete`, for paths that are not rows of the active listing (e.g. folders in the tree).
+    pub fn delete_paths(&mut self, paths: Vec<PathBuf>, permanent: bool) {
         if paths.is_empty() {
             return self.notify(NoticeKind::Error, crate::t("notice.nothing_to_delete"));
         }
@@ -761,6 +766,16 @@ impl Explorer {
             for index in 0..self.windows[w].tabs.len() {
                 let tab = &mut self.windows[w].tabs[index];
                 let path = tab.path().to_path_buf();
+                if outcome.removed.iter().any(|gone| path.starts_with(gone)) {
+                    let target = path
+                        .ancestors()
+                        .find(|a| a.exists())
+                        .unwrap_or(&path)
+                        .to_path_buf();
+                    tab.navigate_to(target);
+                    self.start_load(w, index);
+                    continue;
+                }
                 if !outcome.touched.contains(&path) {
                     continue;
                 }
@@ -1296,6 +1311,23 @@ mod tests {
         explorer.create_folder("New");
         settle(&mut explorer);
         assert_eq!(last_notice(&mut explorer).kind, NoticeKind::Error);
+    }
+
+    #[test]
+    fn tabs_inside_a_deleted_folder_move_to_the_nearest_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("tree").join("deep")).unwrap();
+        let mut explorer = explorer_in(root);
+        explorer.new_tab(root.join("tree").join("deep"));
+        settle(&mut explorer);
+        explorer.set_active(0);
+
+        explorer.delete_paths(vec![root.join("tree")], true);
+        settle(&mut explorer);
+
+        assert_eq!(explorer.tabs()[1].path(), root);
+        assert!(matches!(explorer.tabs()[1].state(), LoadState::Loaded(_)));
     }
 
     #[test]

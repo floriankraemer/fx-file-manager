@@ -104,6 +104,18 @@ impl App {
         }
     }
 
+    /// Asks first when the settings or `permanent` require it, otherwise deletes right away.
+    fn delete(&mut self, index: usize, paths: Vec<PathBuf>, permanent: bool) {
+        let settings = self.explorer.settings();
+        let permanent = permanent || !settings.use_trash;
+        if permanent || settings.confirm_delete {
+            let dialog = Dialog::delete_paths(paths, permanent);
+            self.open_dialog(index, dialog);
+        } else {
+            self.explorer.delete_paths(paths, false);
+        }
+    }
+
     fn dispatch(&mut self, ctx: &Context, index: usize, action: Action) {
         let ex = &mut self.explorer;
         match action {
@@ -116,16 +128,15 @@ impl App {
                 self.open_dialog(index, dialog);
             }
             Action::Delete { permanent } => {
-                let settings = ex.settings();
-                let permanent = permanent || !settings.use_trash;
-                if permanent || settings.confirm_delete {
-                    let dialog = Dialog::delete(ex, permanent);
-                    self.open_dialog(index, dialog);
-                } else {
-                    let rows = ex.active().selection();
-                    ex.delete(&rows, false);
-                }
+                let paths = ex
+                    .active()
+                    .selection()
+                    .iter()
+                    .filter_map(|&row| ex.entry_path(row))
+                    .collect();
+                self.delete(index, paths, permanent);
             }
+            Action::DeletePaths(paths) => self.delete(index, paths, false),
             Action::Properties => {
                 let dialog = Dialog::properties(ex);
                 self.open_dialog(index, dialog);
@@ -360,7 +371,7 @@ impl App {
         egui::Panel::left("places")
             .default_size(240.0)
             .show(ui, |ui| {
-                views::sidebar::show(ui, &mut self.explorer, &self.places);
+                views::sidebar::show(ui, &mut self.explorer, &self.places, &mut actions);
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))

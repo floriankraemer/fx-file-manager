@@ -149,6 +149,7 @@ impl Transfers {
                         notice: notice(&summary, &e.label),
                         touched: e.touched.clone(),
                         created: None,
+                        removed: Vec::new(),
                     });
                     e.summary = Some(summary);
                     changed = true;
