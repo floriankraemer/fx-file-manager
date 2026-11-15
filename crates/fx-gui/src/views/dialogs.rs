@@ -31,6 +31,13 @@ pub enum Dialog {
         text: String,
         fresh: bool,
     },
+    /// `path` pins the bookmark the user picked, so a reorder behind the dialog cannot rename another one.
+    RenameBookmark {
+        index: usize,
+        path: PathBuf,
+        text: String,
+        fresh: bool,
+    },
     Properties(EntryDetails),
     About,
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
@@ -54,6 +61,16 @@ impl Dialog {
             row,
             path,
             text,
+            fresh: true,
+        })
+    }
+
+    pub fn rename_bookmark(explorer: &Explorer, index: usize) -> Option<Self> {
+        let bookmark = explorer.bookmarks().get(index)?;
+        Some(Self::RenameBookmark {
+            index,
+            path: bookmark.path.clone(),
+            text: bookmark.label.clone(),
             fresh: true,
         })
     }
@@ -93,6 +110,12 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename(ctx, explorer, *row, path, text, fresh),
         Dialog::NewFolder { text, fresh } => new_folder(ctx, explorer, text, fresh),
+        Dialog::RenameBookmark {
+            index,
+            path,
+            text,
+            fresh,
+        } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
         Dialog::About => about::show(ctx),
         Dialog::Conflict {
@@ -286,6 +309,34 @@ fn rename(
             if error.is_none() && (ok.clicked() || submit) {
                 if explorer.entry_path(row).as_ref() == Some(path) && *text != file_name(path) {
                     explorer.rename(row, text);
+                }
+                close = true;
+            }
+        });
+        close
+    })
+}
+
+fn rename_bookmark(
+    ctx: &Context,
+    explorer: &mut Explorer,
+    index: usize,
+    path: &PathBuf,
+    text: &mut String,
+    fresh: &mut bool,
+) -> bool {
+    modal(ctx, "rename-bookmark-dialog", |ui| {
+        ui.heading(t("cmd.rename_bookmark"));
+        ui.add_space(6.0);
+        let mut close = false;
+        let submit = name_field(ui, text, fresh, None);
+        let valid = !text.trim().is_empty();
+        button_row(ui, |ui| {
+            let ok = ui.add_enabled(valid, Button::new(t("button.rename")));
+            close |= ui.button(t("button.cancel")).clicked();
+            if valid && (ok.clicked() || submit) {
+                if explorer.bookmarks().get(index).map(|b| &b.path) == Some(path) {
+                    explorer.rename_bookmark(index, text);
                 }
                 close = true;
             }

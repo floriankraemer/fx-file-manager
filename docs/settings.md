@@ -107,6 +107,7 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `back` | `alt+left`, `backspace` |
 | `forward` | `alt+right` |
 | `up` | `alt+up` |
+| `toggle_bookmark` | `ctrl+d` |
 | `move_down` | `down` |
 | `move_up` | `up` |
 | `open_selected` | `enter` |
@@ -125,6 +126,36 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `exit` | none (Alt+F4 closes the window) |
 
 Menus and tooltips show the first shortcut of each command.
+
+## Bookmarks and session
+
+- `restore_session` (default `true`): reopen the windows and tabs of the last session on startup.
+  A folder given on the command line always wins and opens as a single tab instead.
+
+Bookmarks and the open windows are not settings.
+They live in `<config dir>/fx/state.toml`, next to `settings.toml`, and fx rewrites that file itself.
+Ctrl+D (`toggle_bookmark`) bookmarks the current folder or removes its bookmark.
+The sidebar context menu adds, renames and removes bookmarks.
+
+```toml
+[[bookmarks]]
+label = "Project"
+path = "/home/me/src/project"
+
+[[windows]]
+active_tab = 1
+tabs = ["/home/me/src", "/mnt/data"]
+```
+
+- Each `[[windows]]` entry is one window with its tabs and the index of the active tab.
+- Saved folders that no longer exist are skipped when restoring.
+  fx falls back to the start folder when none is left.
+- A bookmark whose folder is missing or unmounted stays in the list and is shown dimmed.
+  Clicking it shows a notice instead of navigating.
+  fx checks the bookmarks again whenever a window gains focus, so a remounted folder works without a restart.
+- Bookmarks are shared by all windows.
+- The session is saved shortly after tabs change and when fx exits.
+- Two separate fx processes do not coordinate: the last one to write wins.
 
 ## Example
 

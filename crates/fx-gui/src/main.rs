@@ -11,7 +11,9 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result {
     let settings = fx_app::Settings::load();
-    let start = fx_app::start_dir(std::env::args_os().nth(1).map(PathBuf::from), &settings);
+    let start = std::env::args_os().nth(1).map(PathBuf::from);
+    let fallback = fx_app::start_dir(None, &settings);
+    let state = fx_app::State::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 750.0])
@@ -21,6 +23,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "fx",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, start, settings)))),
+        Box::new(move |cc| {
+            Ok(Box::new(app::App::new(
+                cc, start, fallback, settings, state,
+            )))
+        }),
     )
 }

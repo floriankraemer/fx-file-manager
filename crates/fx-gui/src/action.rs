@@ -16,6 +16,8 @@ pub enum Action {
     OpenSettings,
     OpenAbout,
     Exit,
+    /// Ask for a new label for the bookmark at this index.
+    RenameBookmark(usize),
     Refresh,
     /// Row of the active tab.
     Open(usize),

@@ -3,6 +3,16 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Bookmarks: press Ctrl+D to bookmark the current folder, or use the sidebar context menu to add, rename and remove them.
+  Bookmarks whose folder is missing stay in the list, dimmed.
+- fx reopens the windows and tabs of the last session on startup.
+  The new `restore_session` setting turns this off.
+  Bookmarks and the session are stored in `state.toml` next to `settings.toml`.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added

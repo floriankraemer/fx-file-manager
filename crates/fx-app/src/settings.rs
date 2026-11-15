@@ -54,6 +54,8 @@ pub struct Settings {
     pub copy_workers: u32,
     /// Read every copied file back and compare checksums.
     pub verify_copies: bool,
+    /// Reopen the windows and tabs of the last session on launch.
+    pub restore_session: bool,
     /// Held while dropping dragged items, copies them instead of moving them.
     pub drag_copy_modifier: DragModifier,
     /// Shortcut overrides: command id to shortcut strings such as `"ctrl+shift+n"`. An empty list unbinds.
@@ -85,6 +87,7 @@ impl Default for Settings {
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
             verify_copies: false,
+            restore_session: true,
             drag_copy_modifier: DragModifier::default(),
             keymap: BTreeMap::new(),
         }
@@ -254,15 +257,7 @@ impl Settings {
     /// Writes a temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
         let text = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("toml.tmp");
-        let mut file = File::create(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, path)
+        write_atomic(path, &text)
     }
 
     /// `<config dir>/fx/themes`, where user theme files live.
@@ -276,6 +271,19 @@ impl Settings {
     }
 }
 
+/// Writes a temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    let mut file = File::create(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&tmp, path)
+}
+
 fn clamp_font_size(size: f32, default: f32) -> f32 {
     if size.is_nan() {
         default
@@ -285,18 +293,18 @@ fn clamp_font_size(size: f32, default: f32) -> f32 {
 }
 
 #[cfg(windows)]
-fn config_dir() -> Option<PathBuf> {
+pub(crate) fn config_dir() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(PathBuf::from)
 }
 
 #[cfg(target_os = "macos")]
-fn config_dir() -> Option<PathBuf> {
+pub(crate) fn config_dir() -> Option<PathBuf> {
     home_dir().map(|home| home.join("Library").join("Application Support"))
 }
 
 /// XDG: `$XDG_CONFIG_HOME` only when absolute, as the spec requires; otherwise `~/.config`.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn config_dir() -> Option<PathBuf> {
+pub(crate) fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute())
@@ -346,6 +354,7 @@ mod tests {
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
             verify_copies: true,
+            restore_session: false,
             drag_copy_modifier: DragModifier::Shift,
             keymap: BTreeMap::from([
                 (
