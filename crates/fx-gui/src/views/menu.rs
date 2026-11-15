@@ -5,7 +5,7 @@
 //! so entries look identical wherever they appear.
 //! Never use `ui.checkbox`, `ui.radio` or a bare `Button` inside a menu.
 
-use eframe::egui::{self, Atom, Button, Color32, Stroke, Style, Ui, Vec2, pos2, vec2};
+use eframe::egui::{self, Atom, Button, Color32, Response, Stroke, Style, Ui, Vec2, pos2, vec2};
 
 /// Padding of top-level menu bar buttons (egui's default is 2x0).
 pub const BAR_PADDING: Vec2 = vec2(8.0, 4.0);
@@ -20,6 +20,15 @@ const INDICATOR: f32 = 14.0;
 pub fn bar_style(style: &mut Style) {
     egui::containers::menu::menu_style(style);
     style.spacing.button_padding = BAR_PADDING;
+}
+
+/// A flat button for bars (menu bar, tab strip, toolbar): `BAR_PADDING`, no frame until hovered.
+pub fn bar_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    ui.scope(|ui| {
+        ui.style_mut().spacing.button_padding = BAR_PADDING;
+        ui.add_enabled(enabled, Button::new(label).frame_when_inactive(false))
+    })
+    .inner
 }
 
 /// A menu entry with a right-aligned shortcut hint. Returns true when clicked.

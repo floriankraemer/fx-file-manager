@@ -1,8 +1,12 @@
+use super::menu::bar_button;
 use crate::action::Action;
 use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::{CursorIcon, Layout, RichText, Sense, Stroke, TextStyle, Ui, vec2};
 use fx_app::{Explorer, breadcrumbs, t};
+
+/// Height of every control in the toolbar row.
+const CRUMB_HEIGHT: f32 = 22.0;
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     let (can_back, can_forward, can_up) = {
@@ -11,29 +15,27 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
     };
     let mut goto = None;
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(can_back, egui::Button::new("←"))
+        // Buttons, filter field and breadcrumbs share one height.
+        ui.spacing_mut().interact_size.y = CRUMB_HEIGHT;
+        if bar_button(ui, "←", can_back)
             .on_hover_text(tip("tip.back", Command::Back))
             .clicked()
         {
             explorer.back();
         }
-        if ui
-            .add_enabled(can_forward, egui::Button::new("→"))
+        if bar_button(ui, "→", can_forward)
             .on_hover_text(tip("tip.forward", Command::Forward))
             .clicked()
         {
             explorer.forward();
         }
-        if ui
-            .add_enabled(can_up, egui::Button::new("↑"))
+        if bar_button(ui, "↑", can_up)
             .on_hover_text(tip("tip.up", Command::Up))
             .clicked()
         {
             explorer.up();
         }
-        if ui
-            .button("⟳")
+        if bar_button(ui, "⟳", true)
             .on_hover_text(tip("tip.refresh", Command::Refresh))
             .clicked()
         {
@@ -42,8 +44,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, actions: &mut Vec<Action>) {
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button("ⓘ")
+            if bar_button(ui, "ⓘ", true)
                 .on_hover_text(tip("tip.about", Command::About))
                 .clicked()
             {
@@ -83,7 +84,7 @@ fn crumb(ui: &mut Ui, label: &str, current: bool) -> bool {
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, theme::text());
-    let size = vec2((galley.size().x + 12.0).max(22.0), 22.0);
+    let size = vec2((galley.size().x + 12.0).max(CRUMB_HEIGHT), CRUMB_HEIGHT);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let color = match (current, hovered) {
