@@ -1,4 +1,4 @@
-use super::commandbar::menu_item;
+use super::menu;
 use crate::command::{Command, hint};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, RichText, Sense, Ui};
@@ -269,38 +269,38 @@ fn row_menu(
     can_paste: bool,
     actions: &mut Vec<Action>,
 ) {
-    if menu_item(ui, t("cmd.open"), "Enter", true) {
+    if menu::item(ui, t("cmd.open"), "Enter", true) {
         actions.push(Action::Open(row));
     }
-    if is_dir && menu_item(ui, t("cmd.open_new_tab"), "", true) {
+    if is_dir && menu::item(ui, t("cmd.open_new_tab"), "", true) {
         actions.push(Action::OpenInNewTab(row));
     }
     #[cfg(windows)]
-    if !is_dir && menu_item(ui, t("cmd.open_with"), "", true) {
+    if !is_dir && menu::item(ui, t("cmd.open_with"), "", true) {
         actions.push(Action::OpenWith(row));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.cut"), &hint(Command::Cut), true) {
+    if menu::item(ui, t("cmd.cut"), &hint(Command::Cut), true) {
         actions.push(Action::Cut);
     }
-    if menu_item(ui, t("cmd.copy"), &hint(Command::Copy), true) {
+    if menu::item(ui, t("cmd.copy"), &hint(Command::Copy), true) {
         actions.push(Action::Copy);
     }
-    if is_dir && menu_item(ui, t("cmd.paste_into"), "", can_paste) {
+    if is_dir && menu::item(ui, t("cmd.paste_into"), "", can_paste) {
         actions.push(Action::PasteInto(row));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.rename"), &hint(Command::Rename), selected == 1) {
+    if menu::item(ui, t("cmd.rename"), &hint(Command::Rename), selected == 1) {
         actions.push(Action::Rename);
     }
-    if menu_item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
+    if menu::item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
         actions.push(Action::Delete { permanent: false });
     }
     ui.separator();
-    if menu_item(ui, t("cmd.copy_path"), "", true) {
+    if menu::item(ui, t("cmd.copy_path"), "", true) {
         actions.push(Action::CopyPath);
     }
-    if menu_item(
+    if menu::item(
         ui,
         t("cmd.properties"),
         &hint(Command::Properties),
@@ -311,28 +311,24 @@ fn row_menu(
 }
 
 fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mut Vec<Action>) {
-    if menu_item(ui, t("cmd.new_folder"), &hint(Command::NewFolder), true) {
+    if menu::item(ui, t("cmd.new_folder"), &hint(Command::NewFolder), true) {
         actions.push(Action::NewFolder);
     }
-    if menu_item(ui, t("cmd.paste"), &hint(Command::Paste), can_paste) {
+    if menu::item(ui, t("cmd.paste"), &hint(Command::Paste), can_paste) {
         actions.push(Action::Paste);
     }
-    if menu_item(ui, t("cmd.refresh"), &hint(Command::Refresh), true) {
+    if menu::item(ui, t("cmd.refresh"), &hint(Command::Refresh), true) {
         actions.push(Action::Refresh);
     }
-    if menu_item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
+    if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
         actions.push(Action::SelectAll);
     }
     ui.separator();
-    let mut hidden = show_hidden;
-    if ui
-        .checkbox(&mut hidden, t("settings.show_hidden"))
-        .changed()
-    {
-        actions.push(Action::SetShowHidden(hidden));
+    if menu::check(ui, t("settings.show_hidden"), show_hidden) {
+        actions.push(Action::SetShowHidden(!show_hidden));
     }
     ui.separator();
-    if menu_item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
+    if menu::item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
         actions.push(Action::OpenSettings);
     }
 }
