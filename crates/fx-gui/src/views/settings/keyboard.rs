@@ -1,6 +1,6 @@
 //! The Keyboard page: the command list with its shortcuts and the strip that edits them.
 
-use super::layout::note;
+use super::rows::note;
 use super::{BUTTON_MIN_WIDTH, CONTROL_HEIGHT, ROW_GAP, State, TABLE_ROW};
 use crate::command::{self, Command, Def, Shortcut};
 use crate::theme;

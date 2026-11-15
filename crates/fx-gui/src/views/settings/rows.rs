@@ -1,6 +1,5 @@
 //! The option registry: every option row of the form pages, and the controls they draw.
 
-use super::layout::note;
 use super::{CHECK_INDENT, COMBO_WIDTH, Category, FIELD_WIDTH};
 use crate::theme;
 use eframe::egui::{self, RichText, Sense, TextEdit, Ui};
@@ -477,4 +476,16 @@ fn font_list(ui: &mut Ui, family: &mut Option<String>, filter_id: egui::Id) {
             ui.selectable_value(family, Some(name.clone()), name);
         }
     }
+}
+
+/// A dim help text under a control, `indent` px in.
+pub(super) fn note(ui: &mut Ui, text: &str, indent: f32) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: indent as i8,
+            ..egui::Margin::ZERO
+        })
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(text).small().color(theme::dim())).wrap());
+        });
 }

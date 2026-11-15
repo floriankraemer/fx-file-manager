@@ -49,7 +49,14 @@ pub fn show(
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            place_groups(ui, explorer, places, &path, scroll, &mut action, actions);
+            let mut walk = TreeWalk {
+                explorer,
+                current: &path,
+                scroll,
+                action: &mut action,
+                actions,
+            };
+            place_groups(ui, places, &mut walk);
         });
     if let Some(action) = action {
         apply(ui, explorer, action, actions);
@@ -77,16 +84,19 @@ fn reveal_active(ui: &Ui, explorer: &mut Explorer, places: &[Place]) -> (PathBuf
     (path, scroll)
 }
 
-/// Every non-empty group: a heading followed by its top-level folders.
-fn place_groups(
-    ui: &mut Ui,
-    explorer: &Explorer,
-    places: &[Place],
-    current: &Path,
+/// What every row of one tree pass reads, and where the pass collects its result.
+struct TreeWalk<'a> {
+    explorer: &'a Explorer,
+    /// The active folder, highlighted and scrolled to.
+    current: &'a Path,
     scroll: bool,
-    action: &mut Option<Action>,
-    actions: &mut Vec<crate::action::Action>,
-) {
+    action: &'a mut Option<Action>,
+    actions: &'a mut Vec<crate::action::Action>,
+}
+
+/// Every non-empty group: a heading followed by its top-level folders.
+fn place_groups(ui: &mut Ui, places: &[Place], walk: &mut TreeWalk<'_>) {
+    let explorer = walk.explorer;
     ui.spacing_mut().item_spacing.y = 0.0;
     let bookmarks = bookmark_places(explorer.bookmarks());
     for group in GROUPS {
@@ -113,18 +123,7 @@ fn place_groups(
                 index: i,
                 available: explorer.bookmark_available(i) != Some(false),
             });
-            node(
-                ui,
-                explorer,
-                &title,
-                &place.path,
-                bookmark,
-                0,
-                current,
-                scroll,
-                action,
-                actions,
-            );
+            node(ui, walk, &title, &place.path, bookmark, 0);
         }
     }
 }
@@ -170,19 +169,15 @@ struct RowLook<'a> {
     usable: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn node(
     ui: &mut Ui,
-    explorer: &Explorer,
+    walk: &mut TreeWalk<'_>,
     label: &str,
     path: &Path,
     bookmark: Option<BookmarkRow>,
     depth: usize,
-    current: &Path,
-    scroll: bool,
-    action: &mut Option<Action>,
-    actions: &mut Vec<crate::action::Action>,
 ) {
+    let explorer = walk.explorer;
     let tree = explorer.tree();
     let expanded = tree.is_expanded(path);
     let usable = bookmark.is_none_or(|b| b.available);
@@ -197,8 +192,8 @@ fn node(
 
     let row_h = theme::row_height(22.0, explorer.settings().tree_font_size);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
-    let selected = path == current;
-    if selected && scroll {
+    let selected = path == walk.current;
+    if selected && walk.scroll {
         resp.scroll_to_me(None);
     }
     let look = RowLook {
@@ -219,29 +214,28 @@ fn node(
             .is_some_and(|p| p.x < chevron.right() + 1.0);
     let single = explorer.settings().tree_single_click;
     if let Some(clicked) = click_action(&resp, path, usable, single, on_chevron) {
-        *action = Some(clicked);
+        *walk.action = Some(clicked);
     }
 
     if usable && let Some(sources) = dnd::target(&resp, path) {
-        *action = Some(Action::Drop(sources.0.clone(), path.to_path_buf()));
+        *walk.action = Some(Action::Drop(sources.0.clone(), path.to_path_buf()));
     }
 
-    resp.context_menu(|ui| context_menu(ui, explorer, path, bookmark, usable, action, actions));
+    resp.context_menu(|ui| {
+        context_menu(
+            ui,
+            explorer,
+            path,
+            bookmark,
+            usable,
+            walk.action,
+            walk.actions,
+        );
+    });
 
     if expanded && let Some(Children::Loaded(kids)) = children {
         for k in kids {
-            node(
-                ui,
-                explorer,
-                &k.name,
-                &k.path,
-                None,
-                depth + 1,
-                current,
-                scroll,
-                action,
-                actions,
-            );
+            node(ui, walk, &k.name, &k.path, None, depth + 1);
         }
     }
 }

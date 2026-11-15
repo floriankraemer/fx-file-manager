@@ -6,18 +6,6 @@ use crate::theme;
 use eframe::egui::{self, Align, Layout, RichText, Sense, Ui};
 use fx_app::t;
 
-/// A dim help text under a control, `indent` px in.
-pub(super) fn note(ui: &mut Ui, text: &str, indent: f32) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin {
-            left: indent as i8,
-            ..egui::Margin::ZERO
-        })
-        .show(ui, |ui| {
-            ui.add(egui::Label::new(RichText::new(text).small().color(theme::dim())).wrap());
-        });
-}
-
 /// A page or search-result title.
 pub(super) fn title(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).heading().strong());
