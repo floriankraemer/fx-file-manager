@@ -224,19 +224,25 @@ impl Settings {
     }
 
     pub fn load_from(path: &Path) -> Self {
-        let mut settings = match fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
-                eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
-                Self::default()
-            }),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Self::default(),
-            Err(err) => {
-                eprintln!("fx: cannot read settings {}: {err}", path.display());
-                Self::default()
-            }
-        };
+        let mut settings = Self::read(path);
         settings.clamp_font_sizes();
         settings
+    }
+
+    /// Parses `path` as is; any failure yields defaults.
+    fn read(path: &Path) -> Self {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Self::default(),
+            Err(err) => {
+                eprintln!("fx: cannot read settings {}: {err}", path.display());
+                return Self::default();
+            }
+        };
+        toml::from_str(&text).unwrap_or_else(|err| {
+            eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
+            Self::default()
+        })
     }
 
     /// Keeps font sizes within `MIN_FONT_SIZE..=MAX_FONT_SIZE`; NaN falls back to the default.
