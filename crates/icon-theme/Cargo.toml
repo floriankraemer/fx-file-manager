@@ -18,3 +18,6 @@ toml = "0.8"
 # that is not the type `resvg::render` writes into, and the mismatch would
 # only show up as a compile error at some later version bump.
 resvg = { version = "0.45", default-features = false }
+
+[lints]
+workspace = true
