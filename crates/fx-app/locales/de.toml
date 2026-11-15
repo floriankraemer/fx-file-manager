@@ -185,6 +185,8 @@ copy_workers_auto = "Automatisch"
 copy_workers_note = "Automatisch wählt die Anzahl je Speichertyp (SSD, HDD, USB, Netzwerk)."
 verify_copies = "Kopien überprüfen"
 verify_copies_note = "Liest jede kopierte Datei erneut und vergleicht Prüfsummen. Eine Abweichung wird als Fehler gemeldet. Langsamer."
+drag_copy_modifier = "Zum Kopieren beim Ablegen halten"
+drag_copy_modifier_note = "Ohne diese Taste werden die Elemente verschoben."
 
 [settings.cat]
 general = "Allgemein"
@@ -210,6 +212,7 @@ performance = "Leistung"
 clicks = "Klicks"
 deleting = "Löschen"
 conflicts = "Konflikte"
+drag_drop = "Ziehen und Ablegen"
 safety = "Sicherheit"
 
 [folder_order]
@@ -384,3 +387,14 @@ new_window = "Neues Fenster"
 open_settings = "Einstellungen öffnen"
 about = "Über fx"
 exit = "Beenden"
+
+[drag_modifier]
+ctrl = "Strg"
+shift = "Umschalt"
+alt = "Alt (Wahltaste unter macOS)"
+
+[drag]
+move.one = "{n} Element verschieben"
+move.other = "{n} Elemente verschieben"
+copy.one = "{n} Element kopieren"
+copy.other = "{n} Elemente kopieren"

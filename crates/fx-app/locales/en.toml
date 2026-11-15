@@ -186,6 +186,8 @@ copy_workers_auto = "Automatic"
 copy_workers_note = "Automatic picks the count per storage type (SSD, HDD, USB, network)."
 verify_copies = "Verify copies"
 verify_copies_note = "Reads every copied file again and compares checksums. A mismatch is reported as an error. Slower."
+drag_copy_modifier = "Hold to copy when dropping"
+drag_copy_modifier_note = "Dropping without it moves the items."
 
 [settings.cat]
 general = "General"
@@ -211,6 +213,7 @@ performance = "Performance"
 clicks = "Clicks"
 deleting = "Deleting"
 conflicts = "Conflicts"
+drag_drop = "Drag and drop"
 safety = "Safety"
 
 [folder_order]
@@ -385,3 +388,14 @@ new_window = "New window"
 open_settings = "Open settings"
 about = "About fx"
 exit = "Exit"
+
+[drag_modifier]
+ctrl = "Ctrl"
+shift = "Shift"
+alt = "Alt (Option on macOS)"
+
+[drag]
+move.one = "Move {n} item"
+move.other = "Move {n} items"
+copy.one = "Copy {n} item"
+copy.other = "Copy {n} items"

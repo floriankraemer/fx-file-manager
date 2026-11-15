@@ -1,4 +1,4 @@
-use super::menu;
+use super::{dnd, menu};
 use crate::command::{Command, hint};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, RichText, Sense, Ui};
@@ -55,17 +55,20 @@ pub fn show(
     let selected = tab.selected();
     let selection = tab.selection();
     let order = tab.order().to_vec();
+    let folder = tab.path().to_path_buf();
     let modifiers = ui.input(|input| input.modifiers);
     let now = SystemTime::now();
     let mut clicked_sort = None;
     let mut select = None;
     let mut activate = None;
     let mut right_clicked = None;
+    let mut drag_started = None;
+    let mut dropped = None;
 
     let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
-        .sense(Sense::click())
+        .sense(Sense::click_and_drag())
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::remainder().at_least(160.0).clip(true));
     if settings.show_ext_column {
@@ -204,7 +207,16 @@ pub fn show(
                     if resp.clicked() {
                         select = Some(i);
                     }
+                    if resp.drag_started() {
+                        drag_started = Some(i);
+                    }
                     let is_dir = entry.kind == EntryKind::Dir;
+                    if is_dir {
+                        let dest = folder.join(name.as_ref());
+                        if let Some(sources) = dnd::target(&resp, &dest) {
+                            dropped = Some((sources, dest));
+                        }
+                    }
                     if if is_dir && settings.list_single_click {
                         resp.clicked()
                     } else {
@@ -247,6 +259,22 @@ pub fn show(
     }
     if let Some(i) = activate {
         explorer.activate(i);
+    }
+    if let Some(i) = drag_started {
+        // Dragging an unselected row drags just that row, as in other file managers.
+        if selection.binary_search(&i).is_err() {
+            explorer.active_mut().click(i, false, false);
+        }
+        let rows = explorer.active().selection().to_vec();
+        let paths = rows
+            .iter()
+            .filter_map(|&r| explorer.entry_path(r))
+            .collect();
+        dnd::start(ui.ctx(), paths);
+    }
+    if let Some((sources, dest)) = dropped {
+        let copy = dnd::copying(ui.ctx(), settings.drag_copy_modifier);
+        explorer.drop_into(sources.0.clone(), &dest, copy);
     }
 }
 

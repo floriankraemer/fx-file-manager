@@ -54,6 +54,8 @@ pub struct Settings {
     pub copy_workers: u32,
     /// Read every copied file back and compare checksums.
     pub verify_copies: bool,
+    /// Held while dropping dragged items, copies them instead of moving them.
+    pub drag_copy_modifier: DragModifier,
     /// Shortcut overrides: command id to shortcut strings such as `"ctrl+shift+n"`. An empty list unbinds.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub keymap: BTreeMap<String, Vec<String>>,
@@ -83,6 +85,7 @@ impl Default for Settings {
             conflict_policy: ConflictChoice::default(),
             copy_workers: 0,
             verify_copies: false,
+            drag_copy_modifier: DragModifier::default(),
             keymap: BTreeMap::new(),
         }
     }
@@ -123,6 +126,40 @@ pub enum DateFormat {
     #[default]
     Locale,
     Iso,
+}
+
+/// A modifier key that changes what a drop does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DragModifier {
+    Ctrl,
+    Shift,
+    /// Option on macOS.
+    Alt,
+}
+
+impl DragModifier {
+    pub const ALL: [DragModifier; 3] = [DragModifier::Ctrl, DragModifier::Shift, DragModifier::Alt];
+
+    /// In the current UI language.
+    pub fn label(self) -> &'static str {
+        crate::t(match self {
+            DragModifier::Ctrl => "drag_modifier.ctrl",
+            DragModifier::Shift => "drag_modifier.shift",
+            DragModifier::Alt => "drag_modifier.alt",
+        })
+    }
+}
+
+/// The platform's file manager convention: Option in Finder, Ctrl elsewhere.
+impl Default for DragModifier {
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            DragModifier::Alt
+        } else {
+            DragModifier::Ctrl
+        }
+    }
 }
 
 /// Persisted form of [`ConflictPolicy`].
@@ -309,6 +346,7 @@ mod tests {
             conflict_policy: ConflictChoice::OverwriteIfNewer,
             copy_workers: 6,
             verify_copies: true,
+            drag_copy_modifier: DragModifier::Shift,
             keymap: BTreeMap::from([
                 (
                     "rename".to_owned(),

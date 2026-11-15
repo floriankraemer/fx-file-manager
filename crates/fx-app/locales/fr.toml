@@ -185,6 +185,8 @@ copy_workers_auto = "Automatique"
 copy_workers_note = "Automatique choisit le nombre selon le type de stockage (SSD, HDD, USB, réseau)."
 verify_copies = "Vérifier les copies"
 verify_copies_note = "Relit chaque fichier copié et compare les sommes de contrôle. Un écart est signalé comme une erreur. Plus lent."
+drag_copy_modifier = "Maintenir pour copier en déposant"
+drag_copy_modifier_note = "Sans elle, le dépôt déplace les éléments."
 
 [settings.cat]
 general = "Général"
@@ -210,6 +212,7 @@ performance = "Performances"
 clicks = "Clics"
 deleting = "Suppression"
 conflicts = "Conflits"
+drag_drop = "Glisser-déposer"
 safety = "Sécurité"
 
 [folder_order]
@@ -384,3 +387,14 @@ new_window = "Nouvelle fenêtre"
 open_settings = "Ouvrir les paramètres"
 about = "À propos de fx"
 exit = "Quitter"
+
+[drag_modifier]
+ctrl = "Ctrl"
+shift = "Maj"
+alt = "Alt (Option sous macOS)"
+
+[drag]
+move.one = "Déplacer {n} élément"
+move.other = "Déplacer {n} éléments"
+copy.one = "Copier {n} élément"
+copy.other = "Copier {n} éléments"

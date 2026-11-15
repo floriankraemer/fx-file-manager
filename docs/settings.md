@@ -71,6 +71,10 @@ Sizes always use 1024-based steps, and sorting uses raw bytes.
 - `verify_copies` (default `false`): read every copied file again and compare its xxh3 checksum with the source.
   A mismatch removes the bad copy and is reported as an error for that item; a move then keeps its source.
   See [Copy engine](copy-engine.md) for the overhead.
+- `drag_copy_modifier` (default `"ctrl"`, `"alt"` on macOS): the key that copies instead of moves when you drop items.
+  Values: `"ctrl"`, `"shift"`, `"alt"` (Option on macOS).
+  Drag entries from the file list onto a folder in the list or the folder tree; a drop without the key moves them.
+  The label at the pointer shows which one a drop does.
 
 ## Keyboard
 
@@ -134,4 +138,5 @@ language = "system"
 conflict_policy = "ask"
 copy_workers = 0
 verify_copies = false
+drag_copy_modifier = "ctrl"
 ```
