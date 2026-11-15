@@ -32,6 +32,8 @@ pub enum Action {
     Paste,
     /// Paste into the folder at this row of the active tab.
     PasteInto(usize),
+    /// Bookmarks the folder at this row, or removes its bookmark.
+    ToggleBookmark(usize),
     SetSort(SortSpec),
     SetShowHidden(bool),
     SetDensity(Density),

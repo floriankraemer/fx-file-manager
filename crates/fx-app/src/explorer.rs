@@ -389,7 +389,12 @@ impl Explorer {
 
     /// Bookmarks the active tab's folder, or removes that bookmark if it exists.
     pub fn toggle_bookmark_active(&mut self) {
-        let path = self.active().path().to_path_buf();
+        self.toggle_bookmark(self.active().path().to_path_buf());
+    }
+
+    /// Bookmarks `path`, or removes that bookmark if it exists.
+    pub fn toggle_bookmark(&mut self, path: PathBuf) {
+        let path = absolute(path);
         match self.state.bookmarks.iter().position(|b| b.path == path) {
             Some(index) => self.remove_bookmark(index),
             None => self.add_bookmark(path),
@@ -1469,6 +1474,18 @@ mod tests {
         explorer.toggle_bookmark_active();
         assert!(explorer.is_bookmarked(dir.path()));
         explorer.toggle_bookmark_active();
+        assert!(explorer.bookmarks().is_empty());
+    }
+
+    #[test]
+    fn toggle_bookmarks_any_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let folders = mkdirs(dir.path(), &["sub"]);
+        let mut explorer = explorer_in(dir.path());
+        explorer.toggle_bookmark(folders[0].clone());
+        assert!(explorer.is_bookmarked(&folders[0]));
+        assert!(!explorer.is_bookmarked(dir.path()));
+        explorer.toggle_bookmark(folders[0].clone());
         assert!(explorer.bookmarks().is_empty());
     }
 
