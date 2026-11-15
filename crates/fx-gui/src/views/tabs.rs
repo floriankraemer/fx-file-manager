@@ -40,11 +40,13 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                     frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(egui::RichText::new(tab.title()).color(if selected {
+                            // Not selectable: a selectable label senses clicks and would swallow the tab's own click.
+                            let title = egui::RichText::new(tab.title()).color(if selected {
                                 theme::accent()
                             } else {
                                 theme::text()
-                            }));
+                            });
+                            ui.add(egui::Label::new(title).selectable(false));
                             if ui
                                 .scope(|ui| {
                                     ui.style_mut().spacing.button_padding = egui::vec2(4.0, 2.0);
