@@ -120,7 +120,8 @@ pub fn content_rect(ctx: &Context, viewport: ViewportId) -> Option<Rect> {
     ctx.input_for(viewport, |i| i.viewport().inner_rect)
 }
 
-/// Converts physical screen pixels to egui's global points.
+/// Converts physical screen pixels to egui's global points. macOS reports points already.
+#[cfg(not(target_os = "macos"))]
 pub fn to_points(pixels: (i32, i32), pixels_per_point: f32) -> Pos2 {
     egui::pos2(
         pixels.0 as f32 / pixels_per_point,
@@ -129,24 +130,116 @@ pub fn to_points(pixels: (i32, i32), pixels_per_point: f32) -> Pos2 {
 }
 
 /// Where the cursor is on screen, in points. Files dragged in from other programs carry no
-/// position in winit's events, so this reads the cursor directly; other platforms have no reading.
+/// position in winit's events, so this reads the cursor directly. Wayland has no such read.
 pub fn screen_pointer(ctx: &Context) -> Option<Pos2> {
-    cursor_pixels().map(|px| to_points(px, ctx.pixels_per_point()))
+    platform::cursor(ctx.pixels_per_point())
 }
 
 #[cfg(windows)]
-fn cursor_pixels() -> Option<(i32, i32)> {
+mod platform {
+    use super::to_points;
+    use eframe::egui::Pos2;
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    let mut point = POINT { x: 0, y: 0 };
-    // SAFETY: GetCursorPos writes one POINT through the valid pointer it is given.
-    let ok = unsafe { GetCursorPos(&mut point) } != 0;
-    ok.then_some((point.x, point.y))
+
+    pub fn cursor(pixels_per_point: f32) -> Option<Pos2> {
+        let mut point = POINT { x: 0, y: 0 };
+        // SAFETY: GetCursorPos writes one POINT through the valid pointer it is given.
+        let ok = unsafe { GetCursorPos(&mut point) } != 0;
+        ok.then(|| to_points((point.x, point.y), pixels_per_point))
+    }
 }
 
-#[cfg(not(windows))]
-fn cursor_pixels() -> Option<(i32, i32)> {
-    None
+#[cfg(target_os = "macos")]
+mod platform {
+    use eframe::egui::{Pos2, pos2};
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct CgPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventCreate(source: *const c_void) -> *mut c_void;
+        fn CGEventGetLocation(event: *const c_void) -> CgPoint;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    /// Quartz reports the cursor in points with a top-left origin, as egui's global coordinates.
+    pub fn cursor(_pixels_per_point: f32) -> Option<Pos2> {
+        // SAFETY: a null source asks for a fresh event at the cursor; it is released after reading.
+        unsafe {
+            let event = CGEventCreate(std::ptr::null());
+            if event.is_null() {
+                return None;
+            }
+            let at = CGEventGetLocation(event);
+            CFRelease(event);
+            Some(pos2(at.x as f32, at.y as f32))
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+mod platform {
+    use super::to_points;
+    use eframe::egui::Pos2;
+    use std::sync::OnceLock;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    use x11rb::rust_connection::RustConnection;
+
+    /// The X connection and the root window of its first screen, opened once.
+    static X: OnceLock<Option<(RustConnection, u32)>> = OnceLock::new();
+
+    /// Under Wayland the X server only knows the pointer over its own windows, so its reading goes stale.
+    pub fn cursor(pixels_per_point: f32) -> Option<Pos2> {
+        let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+        let display = std::env::var("DISPLAY").ok();
+        if !x11_session(wayland.as_deref(), display.as_deref()) {
+            return None;
+        }
+        let pixels = query_x_pointer()?;
+        Some(to_points(pixels, pixels_per_point))
+    }
+
+    fn x11_session(wayland: Option<&str>, display: Option<&str>) -> bool {
+        display.is_some() && wayland.is_none()
+    }
+
+    fn query_x_pointer() -> Option<(i32, i32)> {
+        let x = X.get_or_init(|| {
+            let (conn, screen) = x11rb::connect(None).ok()?;
+            let root = conn.setup().roots.get(screen)?.root;
+            Some((conn, root))
+        });
+        let (conn, root) = x.as_ref()?;
+        let reply = conn.query_pointer(*root).ok()?.reply().ok()?;
+        Some((i32::from(reply.root_x), i32::from(reply.root_y)))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn x11_is_used_only_outside_wayland() {
+            assert!(x11_session(None, Some(":0")));
+            assert!(!x11_session(Some("wayland-0"), Some(":0")));
+            assert!(!x11_session(None, None));
+        }
+
+        #[test]
+        fn x_server_reports_the_pointer_when_one_is_running() {
+            if x11rb::connect(None).is_err() {
+                return;
+            }
+            assert!(query_x_pointer().is_some());
+        }
+    }
 }
 
 /// True in the frame `viewport` saw the pointer button released.
@@ -349,6 +442,7 @@ mod tests {
         assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b/sub")));
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn screen_pixels_become_points() {
         assert_eq!(to_points((300, 200), 1.5), egui::pos2(200.0, 400.0 / 3.0));
