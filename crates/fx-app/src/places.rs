@@ -1,5 +1,6 @@
 //! Sidebar locations and breadcrumb segments. Pure path logic plus filesystem existence checks.
 
+use crate::state::Bookmark;
 use std::env;
 #[cfg(target_os = "linux")]
 use std::fs;
@@ -29,6 +30,8 @@ impl Place {
 pub enum PlaceGroup {
     /// Home and its standard folders.
     Places,
+    /// Folders the user pinned; they stay listed when the folder is missing.
+    Bookmarks,
     /// Filesystem roots and mounts.
     Drives,
 }
@@ -37,6 +40,7 @@ impl PlaceGroup {
     pub fn title(self) -> &'static str {
         match self {
             Self::Places => crate::t("places.places"),
+            Self::Bookmarks => crate::t("places.bookmarks"),
             Self::Drives => crate::t("places.drives"),
         }
     }
@@ -71,6 +75,19 @@ pub fn places() -> Vec<Place> {
     }
     out.extend(roots());
     out
+}
+
+/// One place per bookmark, in order. Touches no filesystem: a bookmark stays even when its folder is gone.
+pub fn bookmark_places(bookmarks: &[Bookmark]) -> Vec<Place> {
+    bookmarks
+        .iter()
+        .map(|b| Place {
+            label: b.label.clone(),
+            path: b.path.clone(),
+            group: PlaceGroup::Bookmarks,
+            share: None,
+        })
+        .collect()
 }
 
 /// Each segment of `path` with the path that ends at it. The root segment is labelled `/` on Unix.
@@ -198,6 +215,18 @@ mod tests {
         assert_eq!(place.title(false), "A:");
         place.share = None;
         assert_eq!(place.title(true), "A:");
+    }
+
+    #[test]
+    fn bookmarks_become_places_without_touching_the_filesystem() {
+        let places = bookmark_places(&[Bookmark {
+            label: "Gone".to_owned(),
+            path: PathBuf::from("/definitely/not/here"),
+        }]);
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].group, PlaceGroup::Bookmarks);
+        assert_eq!(places[0].label, "Gone");
+        assert_eq!(places[0].share, None);
     }
 
     #[cfg(target_os = "linux")]

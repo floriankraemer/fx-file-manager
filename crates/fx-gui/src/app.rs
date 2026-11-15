@@ -6,7 +6,9 @@ use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
 use eframe::egui::{self, Context, ViewportBuilder, ViewportCommand, ViewportId};
-use fx_app::{Explorer, Language, Notice, NoticeKind, Place, Settings, WindowId, i18n, places};
+use fx_app::{
+    Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, places,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -66,18 +68,33 @@ fn look(s: &Settings) -> Look {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf, settings: Settings) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        start: Option<PathBuf>,
+        fallback: PathBuf,
+        settings: Settings,
+        state: State,
+    ) -> Self {
         i18n::set_language(settings.language);
         fx_app::set_date_format(settings.date_format);
         let applied_look = look(&settings);
         theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
-        let explorer = Explorer::with_settings(start, settings, move || ctx.request_repaint());
-        let first = explorer.window();
+        let explorer =
+            Explorer::with_state(start, fallback, settings, state, State::path(), move || {
+                ctx.request_repaint()
+            });
+        let ids = explorer.window_ids();
+        let first = ids[0];
+        let windows = ids
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| WindowUi::new(id, i == 0))
+            .collect();
         let mut app = Self {
             explorer,
             places: places(),
-            windows: vec![WindowUi::new(first, true)],
+            windows,
             focused: first,
             quitting: false,
             settings: None,
@@ -159,6 +176,10 @@ impl App {
                     self.windows.push(WindowUi::new(id, false));
                 }
             }
+            Action::RenameBookmark(i) => {
+                let dialog = Dialog::rename_bookmark(ex, i);
+                self.open_dialog(index, dialog);
+            }
             Action::OpenAbout => self.open_dialog(index, Some(Dialog::About)),
             Action::Exit => {
                 self.quitting = true;
@@ -230,6 +251,7 @@ impl App {
             Command::Back => ex.back(),
             Command::Forward => ex.forward(),
             Command::Up => ex.up(),
+            Command::ToggleBookmark => ex.toggle_bookmark_active(),
             Command::MoveDown => {
                 ex.active_mut().move_selection(1);
                 return true;
@@ -326,6 +348,7 @@ impl App {
         let focused = ctx.input(|i| i.focused);
         if focused && !self.windows[index].was_focused {
             self.explorer.revalidate();
+            self.explorer.check_bookmarks();
             self.focused = id;
         }
         self.windows[index].was_focused = focused;
@@ -396,6 +419,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn on_exit(&mut self) {
+        self.explorer.save_session();
+    }
+
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
         // Keep polling while idle so background revalidation results show up.

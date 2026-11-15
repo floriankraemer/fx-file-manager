@@ -144,6 +144,15 @@ const ROWS: &[Row] = &[
     },
     Row {
         category: Category::General,
+        group: "settings.group.startup",
+        label: "settings.restore_session",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.restore_session, l);
+        },
+    },
+    Row {
+        category: Category::General,
         group: "settings.group.files",
         label: "settings.show_hidden",
         kind: Kind::Check,

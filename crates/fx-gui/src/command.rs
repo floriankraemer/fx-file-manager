@@ -18,6 +18,7 @@ pub enum Command {
     Back,
     Forward,
     Up,
+    ToggleBookmark,
     MoveDown,
     MoveUp,
     OpenSelected,
@@ -123,6 +124,14 @@ pub const COMMANDS: &[Def] = &[
         "command.up",
         "command_group.navigation",
         &["alt+up"],
+        true,
+    ),
+    def(
+        Command::ToggleBookmark,
+        "toggle_bookmark",
+        "command.toggle_bookmark",
+        "command_group.navigation",
+        &["ctrl+d"],
         true,
     ),
     def(
@@ -520,7 +529,8 @@ mod tests {
         assert!(has("alt+enter", Command::Properties));
         assert!(has("ctrl+comma", Command::OpenSettings));
         assert!(has("f1", Command::About));
-        assert_eq!(keymap.bindings.len(), 24);
+        assert!(has("ctrl+d", Command::ToggleBookmark));
+        assert_eq!(keymap.bindings.len(), 25);
     }
 
     #[test]
