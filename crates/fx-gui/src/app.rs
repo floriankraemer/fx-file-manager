@@ -47,6 +47,8 @@ pub struct App {
     quitting: bool,
     /// The settings window, shown natively while open.
     settings: Option<Box<views::settings::State>>,
+    /// Whether the about window is open.
+    about: bool,
     toast: Option<Toast>,
     applied_look: Look,
     keymap: command::Keymap,
@@ -98,6 +100,7 @@ impl App {
             focused: first,
             quitting: false,
             settings: None,
+            about: false,
             toast: None,
             applied_look,
             keymap: command::Keymap::default(),
@@ -180,7 +183,12 @@ impl App {
                 let dialog = Dialog::rename_bookmark(ex, i);
                 self.open_dialog(index, dialog);
             }
-            Action::OpenAbout => self.open_dialog(index, Some(Dialog::About)),
+            Action::OpenAbout => {
+                if self.about {
+                    views::about::focus(ctx);
+                }
+                self.about = true;
+            }
             Action::Exit => {
                 self.quitting = true;
                 ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
@@ -499,6 +507,9 @@ impl eframe::App for App {
             && views::settings::show(&ctx, &mut self.explorer, state)
         {
             self.settings = None;
+        }
+        if self.about && views::about::show(&ctx) {
+            self.about = false;
         }
     }
 }

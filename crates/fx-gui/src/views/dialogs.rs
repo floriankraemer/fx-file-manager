@@ -1,6 +1,5 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, paste conflicts.
 
-use super::about;
 use crate::theme;
 use eframe::egui::{
     self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
@@ -39,7 +38,6 @@ pub enum Dialog {
         fresh: bool,
     },
     Properties(EntryDetails),
-    About,
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
     Conflict {
         transfer: u64,
@@ -117,7 +115,6 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
-        Dialog::About => about::show(ctx),
         Dialog::Conflict {
             transfer,
             conflict,
