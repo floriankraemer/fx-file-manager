@@ -30,6 +30,7 @@ pub enum Command {
     Paste,
     NewFolder,
     Properties,
+    NewWindow,
     OpenSettings,
     About,
     Exit,
@@ -227,6 +228,14 @@ pub const COMMANDS: &[Def] = &[
         "command_group.clipboard",
         &["ctrl+v"],
         false,
+    ),
+    def(
+        Command::NewWindow,
+        "new_window",
+        "command.new_window",
+        "command_group.application",
+        &["ctrl+n"],
+        true,
     ),
     def(
         Command::OpenSettings,
@@ -511,7 +520,7 @@ mod tests {
         assert!(has("alt+enter", Command::Properties));
         assert!(has("ctrl+comma", Command::OpenSettings));
         assert!(has("f1", Command::About));
-        assert_eq!(keymap.bindings.len(), 23);
+        assert_eq!(keymap.bindings.len(), 24);
     }
 
     #[test]

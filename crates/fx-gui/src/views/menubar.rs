@@ -24,6 +24,10 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         .config(menu::MenuConfig::new().style(menu_entry_style))
         .ui(ui, |ui| {
             ui.menu_button(t("menu.file"), |ui| {
+                if menu_item(ui, t("cmd.new_window"), &hint(Command::NewWindow), true) {
+                    actions.push(Action::NewWindow);
+                    ui.close();
+                }
                 if menu_item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
                     actions.push(Action::OpenSettings);
                     ui.close();

@@ -5,24 +5,46 @@ use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
-use eframe::egui::{self, Context};
-use fx_app::{Explorer, Language, Notice, NoticeKind, Place, Settings, i18n, places};
+use eframe::egui::{self, Context, ViewportBuilder, ViewportCommand, ViewportId};
+use fx_app::{Explorer, Language, Notice, NoticeKind, Place, Settings, WindowId, i18n, places};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// UI state of one explorer window; the first one lives in the root viewport.
+struct WindowUi {
+    id: WindowId,
+    dialog: Option<Dialog>,
+    scroll_to_selection: bool,
+    transfers: views::transfers::State,
+    was_focused: bool,
+}
+
+impl WindowUi {
+    fn new(id: WindowId, was_focused: bool) -> Self {
+        Self {
+            id,
+            dialog: None,
+            scroll_to_selection: false,
+            transfers: views::transfers::State::default(),
+            was_focused,
+        }
+    }
+}
+
 pub struct App {
     explorer: Explorer,
     places: Vec<Place>,
-    scroll_to_selection: bool,
-    dialog: Option<Dialog>,
+    windows: Vec<WindowUi>,
+    /// The window that last had focus; it shows the toast and transfer conflicts.
+    focused: WindowId,
+    /// Set by Exit so closing the root window quits instead of promoting another window.
+    quitting: bool,
     /// The settings window, shown natively while open.
     settings: Option<Box<views::settings::State>>,
     toast: Option<Toast>,
-    transfers: views::transfers::State,
     applied_look: Look,
-    was_focused: bool,
     keymap: command::Keymap,
     /// The `[keymap]` overrides `keymap` was resolved from.
     applied_keymap: BTreeMap<String, Vec<String>>,
@@ -48,16 +70,17 @@ impl App {
         let applied_look = look(&settings);
         theme::apply(&cc.egui_ctx, &settings);
         let ctx = cc.egui_ctx.clone();
+        let explorer = Explorer::with_settings(start, settings, move || ctx.request_repaint());
+        let first = explorer.window();
         let mut app = Self {
-            explorer: Explorer::with_settings(start, settings, move || ctx.request_repaint()),
+            explorer,
             places: places(),
-            scroll_to_selection: false,
-            dialog: None,
+            windows: vec![WindowUi::new(first, true)],
+            focused: first,
+            quitting: false,
             settings: None,
             toast: None,
-            transfers: views::transfers::State::default(),
             applied_look,
-            was_focused: true,
             keymap: command::Keymap::default(),
             applied_keymap: BTreeMap::new(),
         };
@@ -71,30 +94,31 @@ impl App {
         self.explorer.set_settings(settings);
     }
 
-    /// Opens `dialog` unless one is already showing.
-    fn open_dialog(&mut self, dialog: Option<Dialog>) {
-        if self.dialog.is_none() {
-            self.dialog = dialog;
+    /// Opens `dialog` in window `index` unless one is already showing there.
+    fn open_dialog(&mut self, index: usize, dialog: Option<Dialog>) {
+        let slot = &mut self.windows[index].dialog;
+        if slot.is_none() {
+            *slot = dialog;
         }
     }
 
-    fn dispatch(&mut self, ctx: &Context, action: Action) {
+    fn dispatch(&mut self, ctx: &Context, index: usize, action: Action) {
         let ex = &mut self.explorer;
         match action {
             Action::NewFolder => {
                 let dialog = Dialog::new_folder(ex);
-                self.open_dialog(Some(dialog));
+                self.open_dialog(index, Some(dialog));
             }
             Action::Rename => {
                 let dialog = Dialog::rename(ex);
-                self.open_dialog(dialog);
+                self.open_dialog(index, dialog);
             }
             Action::Delete { permanent } => {
                 let settings = ex.settings();
                 let permanent = permanent || !settings.use_trash;
                 if permanent || settings.confirm_delete {
                     let dialog = Dialog::delete(ex, permanent);
-                    self.open_dialog(dialog);
+                    self.open_dialog(index, dialog);
                 } else {
                     let rows = ex.active().selection();
                     ex.delete(&rows, false);
@@ -102,18 +126,31 @@ impl App {
             }
             Action::Properties => {
                 let dialog = Dialog::properties(ex);
-                self.open_dialog(dialog);
+                self.open_dialog(index, dialog);
             }
             Action::OpenSettings => {
                 if self.settings.is_some() {
                     views::settings::focus(ctx);
-                } else if self.dialog.is_none() {
+                } else if self.windows[index].dialog.is_none() {
                     let state = views::settings::State::new(ex.settings());
                     self.settings = Some(Box::new(state));
                 }
             }
-            Action::OpenAbout => self.open_dialog(Some(Dialog::About)),
-            Action::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Action::NewWindow => {
+                let path = ex.active().path().to_path_buf();
+                if ctx.embed_viewports() {
+                    // No native multi-window support: a tab is the closest thing.
+                    ex.new_tab(path);
+                } else {
+                    let id = ex.open_window(path);
+                    self.windows.push(WindowUi::new(id, false));
+                }
+            }
+            Action::OpenAbout => self.open_dialog(index, Some(Dialog::About)),
+            Action::Exit => {
+                self.quitting = true;
+                ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+            }
             Action::SelectAll => ex.active_mut().select_all(),
             Action::Refresh => ex.refresh(),
             Action::Open(row) => ex.activate(row),
@@ -202,6 +239,7 @@ impl App {
             Command::Paste => actions.push(Action::Paste),
             Command::NewFolder => actions.push(Action::NewFolder),
             Command::Properties => actions.push(Action::Properties),
+            Command::NewWindow => actions.push(Action::NewWindow),
             Command::OpenSettings => actions.push(Action::OpenSettings),
             Command::About => actions.push(Action::OpenAbout),
             Command::Exit => actions.push(Action::Exit),
@@ -245,6 +283,104 @@ fn block_input(ctx: &Context) -> bool {
         .clicked()
 }
 
+/// The viewport an extra window is shown in.
+fn viewport_of(id: WindowId) -> ViewportId {
+    ViewportId::from_hash_of(("window", id))
+}
+
+impl App {
+    /// Handles the root window being closed while other windows exist: the next window takes its place.
+    fn promote_next_window(&mut self, ctx: &Context) {
+        let next = viewport_of(self.windows[1].id);
+        let (outer, inner) =
+            ctx.input_for(next, |i| (i.viewport().outer_rect, i.viewport().inner_rect));
+        ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+        let gone = self.windows.remove(0);
+        self.explorer.close_window(gone.id);
+        if let Some(outer) = outer {
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(outer.min));
+        }
+        if let Some(inner) = inner {
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(inner.size()));
+        }
+    }
+
+    /// Draws and drives window `index`; `ui` belongs to the viewport that window is shown in.
+    fn window_frame(&mut self, ui: &mut egui::Ui, index: usize) {
+        let ctx = ui.ctx().clone();
+        let id = self.windows[index].id;
+        self.explorer.set_window(id);
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.windows[index].was_focused {
+            self.explorer.revalidate();
+            self.focused = id;
+        }
+        self.windows[index].was_focused = focused;
+
+        let mut actions = Vec::new();
+        let idle = self.windows[index].dialog.is_none() && self.settings.is_none();
+        self.windows[index].scroll_to_selection = idle && self.handle_keys(&ctx, &mut actions);
+        for action in actions.drain(..) {
+            self.dispatch(&ctx, index, action);
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Title(format!(
+            "fx — {}",
+            self.explorer.active().path().display()
+        )));
+
+        let scroll_to_selection = self.windows[index].scroll_to_selection;
+        egui::Panel::top("menubar").show(ui, |ui| {
+            views::menubar::show(ui, &self.explorer, &mut actions);
+        });
+        egui::Panel::top("tabs").show(ui, |ui| {
+            views::tabs::show(ui, &mut self.explorer);
+        });
+        egui::Panel::top("toolbar").show(ui, |ui| {
+            views::toolbar::show(ui, &mut self.explorer, &mut actions);
+        });
+        egui::Panel::top("commands").show(ui, |ui| {
+            views::commandbar::show(ui, &self.explorer, &mut actions);
+        });
+        egui::Panel::bottom("status").show(ui, |ui| {
+            views::status::show(ui, &self.explorer);
+        });
+        if !self.explorer.transfers().is_empty() {
+            egui::Panel::bottom("transfers").show(ui, |ui| {
+                let state = &mut self.windows[index].transfers;
+                views::transfers::show(ui, &mut self.explorer, state);
+            });
+        }
+        egui::Panel::left("places")
+            .default_size(240.0)
+            .show(ui, |ui| {
+                views::sidebar::show(ui, &mut self.explorer, &self.places);
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))
+            .show(ui, |ui| {
+                views::table::show(ui, &mut self.explorer, scroll_to_selection, &mut actions);
+            });
+
+        if let Some(dialog) = &mut self.windows[index].dialog
+            && dialogs::show(&ctx, dialog, &mut self.explorer)
+        {
+            self.windows[index].dialog = None;
+        }
+        if self.settings.as_ref().is_some_and(|s| !s.embedded()) && block_input(&ctx) {
+            views::settings::focus(&ctx);
+        }
+        if self.focused == id
+            && let Some(current) = &self.toast
+            && !toast::show(&ctx, current)
+        {
+            self.toast = None;
+        }
+        for action in actions {
+            self.dispatch(&ctx, index, action);
+        }
+    }
+}
+
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
@@ -254,19 +390,18 @@ impl eframe::App for App {
             // Progress is sampled, not pushed: 10 Hz is smooth and costs nothing.
             ctx.request_repaint_after(TRANSFER_REFRESH);
         }
-        if self.dialog.is_none() {
-            self.dialog = Dialog::conflict(&self.explorer);
+        if self.windows.len() > 1 && !self.quitting && ctx.input(|i| i.viewport().close_requested())
+        {
+            self.promote_next_window(ctx);
         }
-        let focused = ctx.input(|i| i.focused);
-        if focused && !self.was_focused {
-            self.explorer.revalidate();
+        if !self.windows.iter().any(|w| w.id == self.focused) {
+            self.focused = self.windows[0].id;
         }
-        self.was_focused = focused;
-        let mut actions = Vec::new();
-        self.scroll_to_selection =
-            self.dialog.is_none() && self.settings.is_none() && self.handle_keys(ctx, &mut actions);
-        for action in actions {
-            self.dispatch(ctx, action);
+        self.explorer.set_window(self.focused);
+        if let Some(window) = self.windows.iter_mut().find(|w| w.id == self.focused)
+            && window.dialog.is_none()
+        {
+            window.dialog = Dialog::conflict(&self.explorer);
         }
         fx_app::set_date_format(self.explorer.settings().date_format);
         if self.explorer.settings().keymap != self.applied_keymap {
@@ -285,66 +420,39 @@ impl eframe::App for App {
         if self.toast.is_none() {
             self.toast = self.explorer.take_notice().map(Toast::new);
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-            "fx — {}",
-            self.explorer.active().path().display()
-        )));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let scroll_to_selection = self.scroll_to_selection;
-        let mut actions = Vec::new();
-        egui::Panel::top("menubar").show(ui, |ui| {
-            views::menubar::show(ui, &self.explorer, &mut actions);
-        });
-        egui::Panel::top("tabs").show(ui, |ui| {
-            views::tabs::show(ui, &mut self.explorer);
-        });
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            views::toolbar::show(ui, &mut self.explorer, &mut actions);
-        });
-        egui::Panel::top("commands").show(ui, |ui| {
-            views::commandbar::show(ui, &self.explorer, &mut actions);
-        });
-        egui::Panel::bottom("status").show(ui, |ui| {
-            views::status::show(ui, &self.explorer);
-        });
-        if !self.explorer.transfers().is_empty() {
-            egui::Panel::bottom("transfers").show(ui, |ui| {
-                views::transfers::show(ui, &mut self.explorer, &mut self.transfers);
-            });
-        }
-        egui::Panel::left("places")
-            .default_size(240.0)
-            .show(ui, |ui| {
-                views::sidebar::show(ui, &mut self.explorer, &self.places);
-            });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))
-            .show(ui, |ui| {
-                views::table::show(ui, &mut self.explorer, scroll_to_selection, &mut actions);
-            });
-
         let ctx = ui.ctx().clone();
-        if let Some(dialog) = &mut self.dialog
-            && dialogs::show(&ctx, dialog, &mut self.explorer)
+        self.window_frame(ui, 0);
+
+        let mut closed = Vec::new();
+        for index in 1..self.windows.len() {
+            let id = self.windows[index].id;
+            let builder = ViewportBuilder::default()
+                .with_title("fx")
+                .with_inner_size([1200.0, 750.0]);
+            ctx.show_viewport_immediate(viewport_of(id), builder, |ui, _class| {
+                self.window_frame(ui, index);
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
+                    closed.push(id);
+                }
+            });
+        }
+        for id in closed {
+            self.windows.retain(|w| w.id != id);
+            self.explorer.close_window(id);
+        }
+        if !self.windows.iter().any(|w| w.id == self.focused) {
+            self.focused = self.windows[0].id;
+        }
+
+        // Settings acts on the folder of the window that was focused last.
+        self.explorer.set_window(self.focused);
+        if let Some(state) = &mut self.settings
+            && views::settings::show(&ctx, &mut self.explorer, state)
         {
-            self.dialog = None;
-        }
-        if let Some(state) = &mut self.settings {
-            if views::settings::show(&ctx, &mut self.explorer, state) {
-                self.settings = None;
-            } else if !state.embedded() && block_input(&ctx) {
-                views::settings::focus(&ctx);
-            }
-        }
-        if let Some(current) = &self.toast
-            && !toast::show(&ctx, current)
-        {
-            self.toast = None;
-        }
-        for action in actions {
-            self.dispatch(&ctx, action);
+            self.settings = None;
         }
     }
 }

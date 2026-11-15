@@ -115,6 +115,7 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `paste` | `ctrl+v` |
 | `new_folder` | `ctrl+shift+n` |
 | `properties` | `alt+enter` |
+| `new_window` | `ctrl+n` |
 | `open_settings` | `ctrl+comma` |
 | `about` | `f1` |
 | `exit` | none (Alt+F4 closes the window) |
