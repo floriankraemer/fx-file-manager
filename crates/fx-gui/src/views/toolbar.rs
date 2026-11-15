@@ -5,8 +5,8 @@ use eframe::egui::text_selection::CCursorRange;
 use eframe::egui::{
     CursorIcon, Key, Layout, RichText, Sense, Stroke, TextEdit, TextStyle, Ui, vec2,
 };
-use fx_app::{Explorer, breadcrumbs, t};
-use std::path::PathBuf;
+use fx_app::{Explorer, Tab, breadcrumbs, t};
+use std::path::{Path, PathBuf};
 
 /// The path bar while the user types a path instead of clicking crumbs.
 pub struct PathEdit {
@@ -38,92 +38,118 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, path_edit: &mut Option<PathEdi
     {
         *path_edit = None;
     }
-    let (can_back, can_forward, can_up) = {
-        let tab = explorer.active();
-        (tab.can_back(), tab.can_forward(), tab.can_up())
-    };
     let mut goto = None;
     ui.horizontal(|ui| {
         // Buttons, filter field and breadcrumbs share one height.
         ui.spacing_mut().interact_size.y = CRUMB_HEIGHT;
-        if bar_button(ui, "←", can_back)
-            .on_hover_text(tip("tip.back", Command::Back))
-            .clicked()
-        {
-            explorer.back();
-        }
-        if bar_button(ui, "→", can_forward)
-            .on_hover_text(tip("tip.forward", Command::Forward))
-            .clicked()
-        {
-            explorer.forward();
-        }
-        if bar_button(ui, "↑", can_up)
-            .on_hover_text(tip("tip.up", Command::Up))
-            .clicked()
-        {
-            explorer.up();
-        }
-        if bar_button(ui, "⟳", true)
-            .on_hover_text(tip("tip.refresh", Command::Refresh))
-            .clicked()
-        {
-            explorer.refresh();
-        }
+        nav_buttons(ui, explorer);
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            let tab = explorer.active_mut();
-            let mut filter = tab.filter().to_owned();
-            let edit = egui::TextEdit::singleline(&mut filter)
-                .hint_text(t("filter.hint"))
-                .desired_width(160.0);
-            if ui.add(edit).changed() {
-                tab.set_filter(&filter);
-            }
-            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                if let Some(edit) = path_edit {
-                    match edit_path(ui, edit) {
-                        EditResult::Editing => {}
-                        EditResult::Cancel => *path_edit = None,
-                        EditResult::Go(path) => {
-                            goto = Some(path);
-                            *path_edit = None;
-                        }
-                    }
-                    return;
-                }
-                let crumbs = breadcrumbs(explorer.active().path());
-                let last = crumbs.len().saturating_sub(1);
-                for (i, (label, path)) in crumbs.into_iter().enumerate() {
-                    if crumb(ui, &label, i == last) {
-                        goto = Some(path);
-                    }
-                    if i != last {
-                        ui.label(RichText::new("›").color(theme::dim()));
-                    }
-                }
-                // The rest of the breadcrumb area: click to type a path.
-                let rest = vec2(ui.available_width().max(0.0), CRUMB_HEIGHT);
-                let (_, resp) = ui.allocate_exact_size(rest, Sense::click());
-                let resp = resp
-                    .on_hover_cursor(CursorIcon::Text)
-                    .on_hover_text(t("tip.edit_path"));
-                if resp.clicked() {
-                    *path_edit = Some(PathEdit {
-                        text: explorer.active().path().display().to_string(),
-                        tab: explorer.active_index(),
-                        origin: explorer.active().path().to_path_buf(),
-                        fresh: true,
-                    });
-                }
-            });
+            filter_field(ui, explorer.active_mut());
+            goto = ui
+                .with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
+                    path_area(ui, explorer, path_edit)
+                })
+                .inner;
         });
     });
     if let Some(path) = goto {
         explorer.navigate(path);
     }
+}
+
+/// Back, forward, up and refresh.
+fn nav_buttons(ui: &mut Ui, explorer: &mut Explorer) {
+    let (can_back, can_forward, can_up) = {
+        let tab = explorer.active();
+        (tab.can_back(), tab.can_forward(), tab.can_up())
+    };
+    if bar_button(ui, "←", can_back)
+        .on_hover_text(tip("tip.back", Command::Back))
+        .clicked()
+    {
+        explorer.back();
+    }
+    if bar_button(ui, "→", can_forward)
+        .on_hover_text(tip("tip.forward", Command::Forward))
+        .clicked()
+    {
+        explorer.forward();
+    }
+    if bar_button(ui, "↑", can_up)
+        .on_hover_text(tip("tip.up", Command::Up))
+        .clicked()
+    {
+        explorer.up();
+    }
+    if bar_button(ui, "⟳", true)
+        .on_hover_text(tip("tip.refresh", Command::Refresh))
+        .clicked()
+    {
+        explorer.refresh();
+    }
+}
+
+fn filter_field(ui: &mut Ui, tab: &mut Tab) {
+    let mut filter = tab.filter().to_owned();
+    let edit = egui::TextEdit::singleline(&mut filter)
+        .hint_text(t("filter.hint"))
+        .desired_width(160.0);
+    if ui.add(edit).changed() {
+        tab.set_filter(&filter);
+    }
+}
+
+/// Breadcrumbs, or the path field while the user types; returns the folder to go to.
+fn path_area(
+    ui: &mut Ui,
+    explorer: &Explorer,
+    path_edit: &mut Option<PathEdit>,
+) -> Option<PathBuf> {
+    ui.spacing_mut().item_spacing.x = 2.0;
+    if let Some(edit) = path_edit {
+        let result = edit_path(ui, edit);
+        if !matches!(result, EditResult::Editing) {
+            *path_edit = None;
+        }
+        return match result {
+            EditResult::Go(path) => Some(path),
+            EditResult::Editing | EditResult::Cancel => None,
+        };
+    }
+    let goto = crumbs(ui, explorer.active().path());
+    // The rest of the breadcrumb area: click to type a path.
+    let rest = vec2(ui.available_width().max(0.0), CRUMB_HEIGHT);
+    let (_, resp) = ui.allocate_exact_size(rest, Sense::click());
+    let resp = resp
+        .on_hover_cursor(CursorIcon::Text)
+        .on_hover_text(t("tip.edit_path"));
+    if resp.clicked() {
+        *path_edit = Some(PathEdit {
+            text: explorer.active().path().display().to_string(),
+            tab: explorer.active_index(),
+            origin: explorer.active().path().to_path_buf(),
+            fresh: true,
+        });
+    }
+    goto
+}
+
+/// The clickable path segments; returns the folder of the one clicked.
+fn crumbs(ui: &mut Ui, path: &Path) -> Option<PathBuf> {
+    let crumbs = breadcrumbs(path);
+    let last = crumbs.len().saturating_sub(1);
+    let mut goto = None;
+    for (i, (label, path)) in crumbs.into_iter().enumerate() {
+        if crumb(ui, &label, i == last) {
+            goto = Some(path);
+        }
+        if i != last {
+            ui.label(RichText::new("›").color(theme::dim()));
+        }
+    }
+    goto
 }
 
 enum EditResult {

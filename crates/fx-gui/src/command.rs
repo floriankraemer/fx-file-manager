@@ -499,37 +499,42 @@ mod tests {
     fn defaults_reproduce_the_hard_wired_bindings() {
         let (keymap, problems) = resolve(&BTreeMap::new());
         assert!(problems.is_empty());
-        let has = |text: &str, c: Command| {
+        let expected = [
+            ("ctrl+t", Command::NewTab),
+            ("ctrl+w", Command::CloseTab),
+            ("ctrl+tab", Command::NextTab),
+            ("ctrl+shift+tab", Command::PrevTab),
+            ("f5", Command::Refresh),
+            ("alt+left", Command::Back),
+            ("backspace", Command::Back),
+            ("alt+right", Command::Forward),
+            ("alt+up", Command::Up),
+            ("down", Command::MoveDown),
+            ("up", Command::MoveUp),
+            ("enter", Command::OpenSelected),
+            ("f2", Command::Rename),
+            ("delete", Command::Delete),
+            ("shift+delete", Command::DeletePermanent),
+            ("ctrl+a", Command::SelectAll),
+            ("ctrl+c", Command::Copy),
+            ("ctrl+x", Command::Cut),
+            ("ctrl+v", Command::Paste),
+            ("ctrl+shift+n", Command::NewFolder),
+            ("alt+enter", Command::Properties),
+            ("ctrl+comma", Command::OpenSettings),
+            ("f1", Command::About),
+            ("ctrl+d", Command::ToggleBookmark),
+        ];
+        for (text, command) in expected {
             let s = Shortcut::parse(text).unwrap();
-            keymap
-                .bindings
-                .iter()
-                .any(|b| b.shortcut == s && b.command == c)
-        };
-        assert!(has("ctrl+t", Command::NewTab));
-        assert!(has("ctrl+w", Command::CloseTab));
-        assert!(has("ctrl+tab", Command::NextTab));
-        assert!(has("ctrl+shift+tab", Command::PrevTab));
-        assert!(has("f5", Command::Refresh));
-        assert!(has("alt+left", Command::Back));
-        assert!(has("backspace", Command::Back));
-        assert!(has("alt+right", Command::Forward));
-        assert!(has("alt+up", Command::Up));
-        assert!(has("down", Command::MoveDown));
-        assert!(has("up", Command::MoveUp));
-        assert!(has("enter", Command::OpenSelected));
-        assert!(has("f2", Command::Rename));
-        assert!(has("delete", Command::Delete));
-        assert!(has("shift+delete", Command::DeletePermanent));
-        assert!(has("ctrl+a", Command::SelectAll));
-        assert!(has("ctrl+c", Command::Copy));
-        assert!(has("ctrl+x", Command::Cut));
-        assert!(has("ctrl+v", Command::Paste));
-        assert!(has("ctrl+shift+n", Command::NewFolder));
-        assert!(has("alt+enter", Command::Properties));
-        assert!(has("ctrl+comma", Command::OpenSettings));
-        assert!(has("f1", Command::About));
-        assert!(has("ctrl+d", Command::ToggleBookmark));
+            assert!(
+                keymap
+                    .bindings
+                    .iter()
+                    .any(|b| b.shortcut == s && b.command == command),
+                "{text} -> {command:?}"
+            );
+        }
         assert_eq!(keymap.bindings.len(), 25);
     }
 

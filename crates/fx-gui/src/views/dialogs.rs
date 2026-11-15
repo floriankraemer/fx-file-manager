@@ -300,17 +300,17 @@ fn rename(
         if let Some(err) = &error {
             ui.colored_label(theme::error(), err.to_string());
         }
+        let mut confirmed = false;
         button_row(ui, |ui| {
             let ok = ui.add_enabled(error.is_none(), Button::new(t("button.rename")));
             close |= ui.button(t("button.cancel")).clicked();
-            if error.is_none() && (ok.clicked() || submit) {
-                if explorer.entry_path(row).as_ref() == Some(path) && *text != file_name(path) {
-                    explorer.rename(row, text);
-                }
-                close = true;
-            }
+            confirmed = error.is_none() && (ok.clicked() || submit);
         });
-        close
+        if confirmed && explorer.entry_path(row).as_ref() == Some(path) && *text != file_name(path)
+        {
+            explorer.rename(row, text);
+        }
+        close || confirmed
     })
 }
 
@@ -328,17 +328,16 @@ fn rename_bookmark(
         let mut close = false;
         let submit = name_field(ui, text, fresh, None);
         let valid = !text.trim().is_empty();
+        let mut confirmed = false;
         button_row(ui, |ui| {
             let ok = ui.add_enabled(valid, Button::new(t("button.rename")));
             close |= ui.button(t("button.cancel")).clicked();
-            if valid && (ok.clicked() || submit) {
-                if explorer.bookmarks().get(index).map(|b| &b.path) == Some(path) {
-                    explorer.rename_bookmark(index, text);
-                }
-                close = true;
-            }
+            confirmed = valid && (ok.clicked() || submit);
         });
-        close
+        if confirmed && explorer.bookmarks().get(index).map(|b| &b.path) == Some(path) {
+            explorer.rename_bookmark(index, text);
+        }
+        close || confirmed
     })
 }
 
