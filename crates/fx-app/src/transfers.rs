@@ -140,21 +140,21 @@ impl Transfers {
         let mut outcomes = Vec::new();
         let mut changed = false;
         for e in &mut self.entries {
-            if let Some(t) = &e.running {
-                let s = t.handle().snapshot();
-                e.rate.update(now, s.bytes_done, s.files_done);
-                if t.is_finished() {
-                    let summary = e.running.take().expect("checked above").join();
-                    outcomes.push(Outcome {
-                        notice: notice(&summary, &e.label),
-                        touched: e.touched.clone(),
-                        created: None,
-                        removed: Vec::new(),
-                    });
-                    e.summary = Some(summary);
-                    changed = true;
-                }
+            let Some(t) = &e.running else { continue };
+            let s = t.handle().snapshot();
+            e.rate.update(now, s.bytes_done, s.files_done);
+            if !t.is_finished() {
+                continue;
             }
+            let summary = e.running.take().expect("checked above").join();
+            outcomes.push(Outcome {
+                notice: notice(&summary, &e.label),
+                touched: e.touched.clone(),
+                created: None,
+                removed: Vec::new(),
+            });
+            e.summary = Some(summary);
+            changed = true;
         }
         // Clean results are reported by the notice alone; the rest stays in the panel until dismissed.
         self.entries.retain(|e| {

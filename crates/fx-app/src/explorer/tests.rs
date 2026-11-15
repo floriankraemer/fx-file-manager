@@ -491,8 +491,8 @@ fn loads_complete_in_a_window_that_is_not_current() {
     assert_eq!(names(&explorer), vec!["in-other.txt"]);
 }
 
-#[test]
-fn navigates_sorts_filters_and_manages_tabs() {
+/// `zeta/`, `alpha/inner.md`, `big.bin` (2 KiB), `small.txt` and a hidden `.hidden`, already loaded.
+fn sample_tree() -> (tempfile::TempDir, PathBuf, Explorer) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     fs::create_dir(root.join("zeta")).unwrap();
@@ -506,7 +506,12 @@ fn navigates_sorts_filters_and_manages_tabs() {
     let mut explorer = Explorer::new(root.clone(), || {});
     settle(&mut explorer);
     assert_eq!(names(&explorer), ["alpha", "zeta", "big.bin", "small.txt"]);
+    (dir, root, explorer)
+}
 
+#[test]
+fn sorts_by_size_both_ways() {
+    let (_dir, _root, mut explorer) = sample_tree();
     explorer.active_mut().set_sort_column(SortColumn::Size);
     assert_eq!(names(&explorer)[2..], ["small.txt", "big.bin"]);
     explorer.active_mut().set_sort_column(SortColumn::Size);
@@ -516,7 +521,11 @@ fn navigates_sorts_filters_and_manages_tabs() {
         ascending: true,
     });
     assert_eq!(names(&explorer)[2..], ["small.txt", "big.bin"]);
+}
 
+#[test]
+fn navigates_into_back_forward_and_up() {
+    let (_dir, root, mut explorer) = sample_tree();
     explorer.navigate(root.join("alpha"));
     settle(&mut explorer);
     assert_eq!(names(&explorer), ["inner.md"]);
@@ -530,7 +539,11 @@ fn navigates_sorts_filters_and_manages_tabs() {
     explorer.up();
     settle(&mut explorer);
     assert_eq!(explorer.active().path(), root);
+}
 
+#[test]
+fn filters_and_shows_hidden_entries() {
+    let (_dir, _root, mut explorer) = sample_tree();
     explorer.active_mut().set_filter("SMALL");
     assert_eq!(names(&explorer), ["small.txt"]);
     explorer.active_mut().set_filter("");
@@ -538,8 +551,12 @@ fn navigates_sorts_filters_and_manages_tabs() {
     assert!(!names(&explorer).contains(&".hidden".to_owned()));
     explorer.active_mut().set_show_hidden(true);
     assert!(names(&explorer).contains(&".hidden".to_owned()));
+}
 
-    explorer.new_tab(root.clone());
+#[test]
+fn opens_and_closes_tabs_but_keeps_the_last() {
+    let (_dir, root, mut explorer) = sample_tree();
+    explorer.new_tab(root);
     assert_eq!(explorer.tabs().len(), 2);
     assert_eq!(explorer.active_index(), 1);
     explorer.close_tab(0);

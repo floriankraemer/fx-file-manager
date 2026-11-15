@@ -273,18 +273,27 @@ mod tests {
             for (key, (forms, holders)) in &en {
                 let (got_forms, got_holders) = &other[key];
                 assert_eq!(holders, got_holders, "{lang:?} placeholders of {key}");
-                if forms.contains(&None) {
-                    assert_eq!(got_forms, forms, "{lang:?} must not pluralize {key}");
-                } else {
-                    let want: BTreeSet<_> = lang
-                        .plural_forms()
-                        .iter()
-                        .map(|f| Some((*f).to_owned()))
-                        .collect();
-                    assert_eq!(got_forms, &want, "{lang:?} plural forms of {key}");
-                }
+                assert_eq!(
+                    got_forms,
+                    &expected_forms(lang, forms),
+                    "{lang:?} forms of {key}"
+                );
             }
         }
+    }
+
+    /// A key English does not pluralize must stay unpluralized; a plural key needs every CLDR form of `lang`.
+    fn expected_forms(
+        lang: Language,
+        en_forms: &BTreeSet<Option<String>>,
+    ) -> BTreeSet<Option<String>> {
+        if en_forms.contains(&None) {
+            return en_forms.clone();
+        }
+        lang.plural_forms()
+            .iter()
+            .map(|f| Some((*f).to_owned()))
+            .collect()
     }
 
     #[test]
