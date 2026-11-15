@@ -1,5 +1,4 @@
 use super::menu::bar_button;
-use crate::action::Action;
 use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::text_selection::CCursorRange;
@@ -32,12 +31,7 @@ pub fn parse_typed_path(text: &str) -> Option<PathBuf> {
 /// Height of every control in the toolbar row.
 const CRUMB_HEIGHT: f32 = 22.0;
 
-pub fn show(
-    ui: &mut Ui,
-    explorer: &mut Explorer,
-    path_edit: &mut Option<PathEdit>,
-    actions: &mut Vec<Action>,
-) {
+pub fn show(ui: &mut Ui, explorer: &mut Explorer, path_edit: &mut Option<PathEdit>) {
     if path_edit
         .as_ref()
         .is_some_and(|e| e.tab != explorer.active_index() || e.origin != explorer.active().path())
@@ -79,12 +73,6 @@ pub fn show(
         ui.separator();
 
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-            if bar_button(ui, "ⓘ", true)
-                .on_hover_text(tip("tip.about", Command::About))
-                .clicked()
-            {
-                actions.push(Action::OpenAbout);
-            }
             let tab = explorer.active_mut();
             let mut filter = tab.filter().to_owned();
             let edit = egui::TextEdit::singleline(&mut filter)

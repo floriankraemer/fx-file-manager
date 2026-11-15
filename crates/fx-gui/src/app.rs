@@ -349,12 +349,7 @@ impl App {
             views::tabs::show(ui, &mut self.explorer);
         });
         egui::Panel::top("toolbar").show(ui, |ui| {
-            views::toolbar::show(
-                ui,
-                &mut self.explorer,
-                &mut self.windows[index].path_edit,
-                &mut actions,
-            );
+            views::toolbar::show(ui, &mut self.explorer, &mut self.windows[index].path_edit);
         });
         egui::Panel::top("commands").show(ui, |ui| {
             views::commandbar::show(ui, &self.explorer, &mut actions);
