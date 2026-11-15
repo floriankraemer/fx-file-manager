@@ -20,6 +20,7 @@ pub use listing::{Entry, EntryKind, Listing};
 pub use sort::natural_cmp;
 pub use storage::{StorageKind, Strategy};
 #[cfg(windows)]
-pub use volume::network_share;
-pub use volume::{FAT32_MAX_FILE_SIZE, FsCaps, FsKind, VolumeId, VolumeInfo, volume_info};
+pub use sys::network_share;
+pub use sys::volume_info;
+pub use volume::{FAT32_MAX_FILE_SIZE, FsCaps, FsKind, VolumeId, VolumeInfo};
 pub use walk::{WalkOptions, WalkStats, Walked, walk};

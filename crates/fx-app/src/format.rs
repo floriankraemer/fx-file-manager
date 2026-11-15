@@ -1,6 +1,6 @@
 //! Pure display helpers: sizes, timestamps, relative ages, extensions.
 
-use crate::i18n::{Language, current, find_in};
+use crate::i18n::{Language, current, find_in, format_number_in, separators};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,32 +17,9 @@ pub fn set_date_format(format: crate::settings::DateFormat) {
     );
 }
 
-/// Decimal separator and digit group separator of `lang`.
-// ponytail: table for the six supported languages; swap for ICU4X if many more are added.
-fn separators(lang: Language) -> (char, char) {
-    match lang {
-        Language::De | Language::Es => (',', '.'),
-        Language::Fr | Language::Uk => (',', '\u{a0}'),
-        _ => ('.', ','),
-    }
-}
-
 /// `n` with digit groups, e.g. `12,345` or `12.345`.
 pub fn format_number(n: u64) -> String {
     format_number_in(current(), n)
-}
-
-pub(crate) fn format_number_in(lang: Language, n: u64) -> String {
-    let (_, group) = separators(lang);
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(group);
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// `value` with one decimal and the language's decimal separator.

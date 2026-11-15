@@ -1,8 +1,7 @@
 //! The Streaming schedule: the walk and the copy run together on the pool, folder by folder, and
 //! each folder gets its final mode and times once all its children are done.
 
-use super::dirs::{Fds, OpenParents, Pair};
-use super::entry::Entry;
+use super::dirs::{Entry, Fds, OpenParents, Pair};
 use super::preflight::Top;
 use super::{ItemState, Job};
 use crate::EntryKind;

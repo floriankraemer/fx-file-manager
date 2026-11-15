@@ -70,3 +70,14 @@ pub(crate) mod fallback {
         crate::VolumeInfo::unknown(id)
     }
 }
+
+/// Probes the volume holding `path` (one statfs/volume query). Never fails: unknown parts stay `Other`/`Unknown`.
+pub fn volume_info(path: &std::path::Path) -> crate::volume::VolumeInfo {
+    native::volume_info(path)
+}
+
+/// UNC path a mapped drive such as `"A:"` points to, e.g. `\\server\share`. `None` for local drives. No disk or network I/O.
+#[cfg(windows)]
+pub fn network_share(drive: &str) -> Option<String> {
+    native::network_share(drive)
+}

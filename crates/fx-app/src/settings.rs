@@ -1,7 +1,6 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
 use crate::i18n::Language;
-use crate::places::home_dir;
 use fx_core::ConflictPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -296,6 +295,13 @@ fn clamp_font_size(size: f32, default: f32) -> f32 {
     } else {
         size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
+}
+
+/// `$HOME`, else `%USERPROFILE%`.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 #[cfg(windows)]

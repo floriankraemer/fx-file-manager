@@ -1,6 +1,6 @@
 //! Name clashes: exclusive creates, the conflict policy, `name (2)` and overwrite via temp + rename.
 
-use super::entry::Entry;
+use super::dirs::Entry;
 use super::errors::{At, Failure};
 use super::{Job, lock, os, same_inode};
 use crate::EntryKind;

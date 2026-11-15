@@ -53,6 +53,31 @@ impl Pair {
     }
 }
 
+/// One non-directory entry to copy: `name` in `src_dir` becomes `dst_name` in `dst_dir`.
+pub(super) struct Entry<'e> {
+    pub(super) src_dir: &'e os::Dir,
+    pub(super) name: &'e OsStr,
+    pub(super) kind: EntryKind,
+    pub(super) dst_dir: &'e os::Dir,
+    pub(super) dst_name: &'e OsStr,
+    /// Source and destination are the same entry: go straight to `name (2)`.
+    pub(super) keep_both: bool,
+}
+
+impl<'e> Entry<'e> {
+    /// A child copied under its own name.
+    pub(super) fn child(fds: &'e Fds, name: &'e OsStr, kind: EntryKind) -> Self {
+        Self {
+            src_dir: &fds.src,
+            name,
+            kind,
+            dst_dir: &fds.dst,
+            dst_name: name,
+            keep_both: false,
+        }
+    }
+}
+
 /// Top-level parent folders already opened by a schedule, keyed by (source, destination).
 pub(super) type OpenParents = HashMap<(PathBuf, PathBuf), Arc<Fds>>;
 

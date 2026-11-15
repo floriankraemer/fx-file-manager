@@ -1,8 +1,8 @@
 //! The TwoPhase schedule: walk and create the whole tree first, then copy files one at a time in disk
 //! order, batching the reads of small files on a shared spindle.
 
-use super::dirs::{Fds, OpenParents};
-use super::entry::{Entry, Prefetched};
+use super::dirs::{Entry, Fds, OpenParents};
+use super::entry::Prefetched;
 use super::preflight::Top;
 use super::{Job, os};
 use crate::EntryKind;

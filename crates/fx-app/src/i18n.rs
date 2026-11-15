@@ -214,10 +214,33 @@ pub(crate) fn render_plural(
                 .or_else(|| lookup(l, &format!("{key}.other")))
         })
         .unwrap_or(key);
-    let n = crate::format::format_number_in(lang, n);
+    let n = format_number_in(lang, n);
     let mut all = vec![("n", n.as_str())];
     all.extend_from_slice(args);
     fill(text, &all)
+}
+
+/// Decimal separator and digit group separator of `lang`.
+// ponytail: table for the six supported languages; swap for ICU4X if many more are added.
+pub(crate) fn separators(lang: Language) -> (char, char) {
+    match lang {
+        Language::De | Language::Es => (',', '.'),
+        Language::Fr | Language::Uk => (',', '\u{a0}'),
+        _ => ('.', ','),
+    }
+}
+
+pub(crate) fn format_number_in(lang: Language, n: u64) -> String {
+    let (_, group) = separators(lang);
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(group);
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
