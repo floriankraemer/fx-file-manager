@@ -42,12 +42,12 @@ jobs:
           - { arch: x86_64, deb_arch: amd64, runner: ubuntu-latest, appimage: true }
           - { arch: arm64, deb_arch: arm64, runner: ubuntu-24.04-arm, appimage: false }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Stamp version
         run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build binaries
         run: |
@@ -118,7 +118,7 @@ jobs:
           ./appimagetool --appimage-extract-and-run "$appdir" "$name.AppImage"
           sha256sum "$name.AppImage" > "$name.AppImage.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: |
@@ -137,12 +137,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Stamp version
         run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build binaries
         run: |
@@ -175,7 +175,7 @@ jobs:
           zip -r "$name.zip" "$name"
           sha256sum "$name.zip" > "$name.zip.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -189,7 +189,7 @@ jobs:
     runs-on: macos-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Stamp version
         run: perl -pi -e 's/^version = ".*"/version = "$ENV{VERSION}"/ and $done = 1 unless $done' Cargo.toml
@@ -228,7 +228,7 @@ jobs:
           hdiutil create -volname fx -srcfolder "$stage" -ov -format UDZO "$name.dmg"
           shasum -a 256 "$name.dmg" > "$name.dmg.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: |
