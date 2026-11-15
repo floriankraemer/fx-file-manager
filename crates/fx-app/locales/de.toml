@@ -394,6 +394,11 @@ new_window = "Neues Fenster"
 open_settings = "Einstellungen öffnen"
 about = "Über fx"
 exit = "Beenden"
+command_palette = "Befehlspalette"
+
+[palette]
+placeholder = "Befehl eingeben…"
+no_match = "Kein passender Befehl"
 
 [drag_modifier]
 ctrl = "Strg"

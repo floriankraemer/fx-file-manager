@@ -370,6 +370,11 @@ new_window = "新建窗口"
 open_settings = "打开设置"
 about = "关于 fx"
 exit = "退出"
+command_palette = "命令面板"
+
+[palette]
+placeholder = "输入命令…"
+no_match = "没有匹配的命令"
 
 [drag_modifier]
 ctrl = "Ctrl"

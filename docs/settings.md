@@ -79,6 +79,9 @@ Sizes always use 1024-based steps, and sorting uses raw bytes.
 ## Keyboard
 
 The Keyboard page lists every command with its shortcuts.
+Ctrl+Shift+P, or File > Command palette, opens a list of every command by name.
+Typing narrows it, Up and Down select, Enter runs the selected command and Esc closes it.
+Commands that do not apply to the current state are shown disabled.
 **Record** captures the next key combination and replaces the shortcuts of that command, **Unbind** removes them, and **Reset** restores the default.
 Esc cancels a recording.
 A command that shares a shortcut with another one shows a warning; both stay bound, and the more specific modifiers win.

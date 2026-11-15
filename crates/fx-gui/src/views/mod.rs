@@ -7,6 +7,7 @@ pub mod dnd;
 pub mod icons;
 pub mod menu;
 pub mod menubar;
+pub mod palette;
 pub mod settings;
 pub mod sidebar;
 pub mod status;

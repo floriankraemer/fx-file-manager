@@ -394,6 +394,11 @@ new_window = "Nueva ventana"
 open_settings = "Abrir ajustes"
 about = "Acerca de fx"
 exit = "Salir"
+command_palette = "Paleta de comandos"
+
+[palette]
+placeholder = "Escribe un comando…"
+no_match = "Ningún comando coincide"
 
 [drag_modifier]
 ctrl = "Ctrl"

@@ -21,6 +21,7 @@ const TRANSFER_REFRESH: std::time::Duration = std::time::Duration::from_millis(1
 struct WindowUi {
     id: WindowId,
     dialog: Option<Dialog>,
+    palette: Option<views::palette::State>,
     scroll_to_selection: bool,
     transfers: views::transfers::State,
     was_focused: bool,
@@ -32,6 +33,7 @@ impl WindowUi {
         Self {
             id,
             dialog: None,
+            palette: None,
             scroll_to_selection: false,
             transfers: views::transfers::State::default(),
             was_focused,
@@ -142,6 +144,7 @@ impl App {
     fn dispatch(&mut self, ctx: &Context, index: usize, action: Action) {
         let ex = &mut self.explorer;
         match action {
+            Action::OpenCommandPalette => self.open_palette(index),
             Action::NewFolder => {
                 let dialog = Dialog::new_folder(ex);
                 self.open_dialog(index, Some(dialog));
@@ -206,6 +209,31 @@ impl App {
             Action::SetSort(sort) => ex.active_mut().set_sort(sort),
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
+        }
+    }
+
+    /// Opens the command palette in window `index` unless a dialog or the settings are showing.
+    fn open_palette(&mut self, index: usize) {
+        if self.settings.is_none() && self.windows[index].dialog.is_none() {
+            self.windows[index].palette = Some(views::palette::State::new());
+        }
+    }
+
+    /// Shows the palette of window `index` and runs the command the user picked. Returns true if the selection moved.
+    fn palette_frame(&mut self, ctx: &Context, index: usize, actions: &mut Vec<Action>) -> bool {
+        let Some(state) = self.windows[index].palette.as_mut() else {
+            return false;
+        };
+        match views::palette::show(ctx, state, &self.explorer) {
+            views::palette::Outcome::Pending => false,
+            views::palette::Outcome::Close => {
+                self.windows[index].palette = None;
+                false
+            }
+            views::palette::Outcome::Run(command) => {
+                self.windows[index].palette = None;
+                self.run(command, actions)
+            }
         }
     }
 
@@ -287,6 +315,7 @@ impl App {
             Command::Properties => actions.push(Action::Properties),
             Command::NewWindow => actions.push(Action::NewWindow),
             Command::OpenSettings => actions.push(Action::OpenSettings),
+            Command::Palette => actions.push(Action::OpenCommandPalette),
             Command::About => actions.push(Action::OpenAbout),
             Command::Exit => actions.push(Action::Exit),
         }
@@ -373,8 +402,12 @@ impl App {
         dnd::forget_areas(&ctx);
 
         let mut actions = Vec::new();
-        let idle = self.windows[index].dialog.is_none() && self.settings.is_none();
-        self.windows[index].scroll_to_selection = idle && self.handle_keys(&ctx, &mut actions);
+        let palette_moved = self.palette_frame(&ctx, index, &mut actions);
+        let idle = self.windows[index].dialog.is_none()
+            && self.settings.is_none()
+            && self.windows[index].palette.is_none();
+        let keys_moved = idle && self.handle_keys(&ctx, &mut actions);
+        self.windows[index].scroll_to_selection = palette_moved || keys_moved;
         for action in actions.drain(..) {
             self.dispatch(&ctx, index, action);
         }
