@@ -21,7 +21,7 @@ jobs:
       git_hash: ${{ steps.id.outputs.git_hash }}
       build_date: ${{ steps.id.outputs.build_date }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate tag and read version
         id: id
@@ -72,9 +72,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
