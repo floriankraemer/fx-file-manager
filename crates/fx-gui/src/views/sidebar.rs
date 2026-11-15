@@ -1,5 +1,5 @@
-use super::commandbar::menu_item;
 use super::icons::{self, Glyph};
+use super::menu;
 use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
@@ -17,9 +17,15 @@ enum Action {
     OpenInNewTab(PathBuf),
     PasteInto(PathBuf),
     CopyPath(PathBuf),
+    Delete(PathBuf),
 }
 
-pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
+pub fn show(
+    ui: &mut Ui,
+    explorer: &mut Explorer,
+    places: &[Place],
+    actions: &mut Vec<crate::action::Action>,
+) {
     // Reveal the active path whenever it changes; scroll to it on the following frame.
     let key = ui.scope_id().with("revealed");
     let path = explorer.active().path().to_path_buf();
@@ -75,6 +81,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer, places: &[Place]) {
         Some(Action::OpenInNewTab(p)) => explorer.new_tab(p),
         Some(Action::PasteInto(p)) => explorer.paste(Some(p)),
         Some(Action::CopyPath(p)) => ui.ctx().copy_text(p.display().to_string()),
+        Some(Action::Delete(p)) => actions.push(crate::action::Action::DeletePaths(vec![p])),
         None => {}
     }
 }
@@ -171,14 +178,14 @@ fn node(
     }
 
     resp.context_menu(|ui| {
-        if menu_item(ui, t("cmd.open"), "", true) {
+        if menu::item(ui, t("cmd.open"), "", true) {
             *action = Some(Action::Navigate(path.to_path_buf()));
         }
-        if menu_item(ui, t("cmd.open_new_tab"), "", true) {
+        if menu::item(ui, t("cmd.open_new_tab"), "", true) {
             *action = Some(Action::OpenInNewTab(path.to_path_buf()));
         }
         ui.separator();
-        if menu_item(
+        if menu::item(
             ui,
             t("cmd.paste"),
             &hint(Command::Paste),
@@ -186,8 +193,12 @@ fn node(
         ) {
             *action = Some(Action::PasteInto(path.to_path_buf()));
         }
-        if menu_item(ui, t("cmd.copy_path"), "", true) {
+        if menu::item(ui, t("cmd.copy_path"), "", true) {
             *action = Some(Action::CopyPath(path.to_path_buf()));
+        }
+        ui.separator();
+        if menu::item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
+            *action = Some(Action::Delete(path.to_path_buf()));
         }
     });
 

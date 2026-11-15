@@ -104,6 +104,8 @@ pub(crate) struct Outcome {
     pub touched: Vec<PathBuf>,
     /// Entry to select once its folder reloads.
     pub created: Option<PathBuf>,
+    /// Paths that no longer exist; tabs showing them or anything below move up.
+    pub removed: Vec<PathBuf>,
 }
 
 impl Job {
@@ -119,11 +121,15 @@ impl Job {
 /// Continues past per-item failures and reports the count plus the first error.
 fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
     let mut deleted = 0;
+    let mut removed = Vec::new();
     let mut first_failure: Option<String> = None;
     let mut failed = 0;
     for path in paths {
         match remove(path, permanent) {
-            Ok(()) => deleted += 1,
+            Ok(()) => {
+                deleted += 1;
+                removed.push(path.clone());
+            }
             Err(message) => {
                 failed += 1;
                 first_failure.get_or_insert_with(|| {
@@ -174,6 +180,7 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
         notice,
         touched: parents(paths.iter().map(PathBuf::as_path)),
         created: None,
+        removed,
     }
 }
 
@@ -228,6 +235,7 @@ fn rename(from: &Path, to: &Path) -> Outcome {
         notice,
         touched,
         created: None,
+        removed: Vec::new(),
     }
 }
 
@@ -239,6 +247,7 @@ fn create_folder(path: PathBuf) -> Outcome {
             notice: Notice::info(crate::tr("notice.folder_created", &[("name", &name)])),
             touched,
             created: Some(path),
+            removed: Vec::new(),
         },
         Err(err) => Outcome {
             notice: Notice::error(if err.kind() == io::ErrorKind::AlreadyExists {
@@ -251,6 +260,7 @@ fn create_folder(path: PathBuf) -> Outcome {
             }),
             touched,
             created: None,
+            removed: Vec::new(),
         },
     }
 }

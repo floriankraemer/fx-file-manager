@@ -1,3 +1,4 @@
+use super::menu::{BAR_PADDING, bar_button};
 use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::{Sense, Ui};
@@ -28,7 +29,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                     sw: 0,
                     se: 0,
                 })
-                .inner_margin(egui::Margin::symmetric(8, 2));
+                .inner_margin(egui::Margin::symmetric(BAR_PADDING.x as i8, 0));
             let resp = frame
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -38,8 +39,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                         } else {
                             theme::text()
                         }));
-                        if ui
-                            .small_button("×")
+                        if bar_button(ui, "×", true)
                             .on_hover_text(tip("tip.close_tab", Command::CloseTab))
                             .clicked()
                         {
@@ -56,8 +56,7 @@ pub fn show(ui: &mut Ui, explorer: &mut Explorer) {
                 close = Some(i);
             }
         }
-        if ui
-            .button("+")
+        if bar_button(ui, "+", true)
             .on_hover_text(tip("tip.new_tab", Command::NewTab))
             .clicked()
         {

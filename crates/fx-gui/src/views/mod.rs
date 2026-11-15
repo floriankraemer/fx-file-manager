@@ -4,6 +4,7 @@ pub mod about;
 pub mod commandbar;
 pub mod dialogs;
 pub mod icons;
+pub mod menu;
 pub mod menubar;
 pub mod settings;
 pub mod sidebar;

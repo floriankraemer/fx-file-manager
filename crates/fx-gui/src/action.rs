@@ -8,6 +8,8 @@ pub enum Action {
     Delete {
         permanent: bool,
     },
+    /// Delete these paths (not rows), e.g. folders picked in the tree.
+    DeletePaths(Vec<std::path::PathBuf>),
     SelectAll,
     Properties,
     NewWindow,

@@ -18,7 +18,6 @@ const WIDTH: f32 = 380.0;
 pub enum Dialog {
     /// `paths` pin what the user was shown, so a reload behind the dialog cannot redirect the delete.
     Delete {
-        rows: Vec<usize>,
         paths: Vec<PathBuf>,
         permanent: bool,
     },
@@ -43,17 +42,8 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    pub fn delete(explorer: &Explorer, permanent: bool) -> Option<Self> {
-        let rows = explorer.active().selection();
-        let paths: Vec<PathBuf> = rows
-            .iter()
-            .filter_map(|&row| explorer.entry_path(row))
-            .collect();
-        (!paths.is_empty()).then_some(Self::Delete {
-            rows,
-            paths,
-            permanent,
-        })
+    pub fn delete_paths(paths: Vec<PathBuf>, permanent: bool) -> Option<Self> {
+        (!paths.is_empty()).then_some(Self::Delete { paths, permanent })
     }
 
     pub fn rename(explorer: &Explorer) -> Option<Self> {
@@ -95,11 +85,7 @@ impl Dialog {
 /// Draws the dialog. Returns true when it should be closed.
 pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool {
     match dialog {
-        Dialog::Delete {
-            rows,
-            paths,
-            permanent,
-        } => delete(ctx, explorer, rows, paths, *permanent),
+        Dialog::Delete { paths, permanent } => delete(ctx, explorer, paths, *permanent),
         Dialog::Rename {
             row,
             path,
@@ -219,13 +205,7 @@ fn default_focus(ui: &Ui, response: &egui::Response) {
     }
 }
 
-fn delete(
-    ctx: &Context,
-    explorer: &mut Explorer,
-    rows: &[usize],
-    paths: &[PathBuf],
-    permanent: bool,
-) -> bool {
+fn delete(ctx: &Context, explorer: &mut Explorer, paths: &[PathBuf], permanent: bool) -> bool {
     modal(ctx, "delete-dialog", |ui| {
         let count = paths.len();
         let name = file_name(&paths[0]);
@@ -273,13 +253,7 @@ fn delete(
             let cancel = ui.add(Button::new(t("button.cancel")));
             default_focus(ui, if permanent { &cancel } else { &confirm });
             if confirm.clicked() {
-                let unchanged = rows
-                    .iter()
-                    .zip(paths)
-                    .all(|(&row, path)| explorer.entry_path(row).as_ref() == Some(path));
-                if unchanged {
-                    explorer.delete(rows, permanent);
-                }
+                explorer.delete_paths(paths.to_vec(), permanent);
                 close = true;
             }
             close |= cancel.clicked();

@@ -19,6 +19,7 @@ struct WindowUi {
     scroll_to_selection: bool,
     transfers: views::transfers::State,
     was_focused: bool,
+    path_edit: Option<views::toolbar::PathEdit>,
 }
 
 impl WindowUi {
@@ -29,6 +30,7 @@ impl WindowUi {
             scroll_to_selection: false,
             transfers: views::transfers::State::default(),
             was_focused,
+            path_edit: None,
         }
     }
 }
@@ -102,6 +104,18 @@ impl App {
         }
     }
 
+    /// Asks first when the settings or `permanent` require it, otherwise deletes right away.
+    fn delete(&mut self, index: usize, paths: Vec<PathBuf>, permanent: bool) {
+        let settings = self.explorer.settings();
+        let permanent = permanent || !settings.use_trash;
+        if permanent || settings.confirm_delete {
+            let dialog = Dialog::delete_paths(paths, permanent);
+            self.open_dialog(index, dialog);
+        } else {
+            self.explorer.delete_paths(paths, false);
+        }
+    }
+
     fn dispatch(&mut self, ctx: &Context, index: usize, action: Action) {
         let ex = &mut self.explorer;
         match action {
@@ -114,16 +128,15 @@ impl App {
                 self.open_dialog(index, dialog);
             }
             Action::Delete { permanent } => {
-                let settings = ex.settings();
-                let permanent = permanent || !settings.use_trash;
-                if permanent || settings.confirm_delete {
-                    let dialog = Dialog::delete(ex, permanent);
-                    self.open_dialog(index, dialog);
-                } else {
-                    let rows = ex.active().selection();
-                    ex.delete(&rows, false);
-                }
+                let paths = ex
+                    .active()
+                    .selection()
+                    .iter()
+                    .filter_map(|&row| ex.entry_path(row))
+                    .collect();
+                self.delete(index, paths, permanent);
             }
+            Action::DeletePaths(paths) => self.delete(index, paths, false),
             Action::Properties => {
                 let dialog = Dialog::properties(ex);
                 self.open_dialog(index, dialog);
@@ -336,7 +349,7 @@ impl App {
             views::tabs::show(ui, &mut self.explorer);
         });
         egui::Panel::top("toolbar").show(ui, |ui| {
-            views::toolbar::show(ui, &mut self.explorer, &mut actions);
+            views::toolbar::show(ui, &mut self.explorer, &mut self.windows[index].path_edit);
         });
         egui::Panel::top("commands").show(ui, |ui| {
             views::commandbar::show(ui, &self.explorer, &mut actions);
@@ -353,7 +366,7 @@ impl App {
         egui::Panel::left("places")
             .default_size(240.0)
             .show(ui, |ui| {
-                views::sidebar::show(ui, &mut self.explorer, &self.places);
+                views::sidebar::show(ui, &mut self.explorer, &self.places, &mut actions);
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))

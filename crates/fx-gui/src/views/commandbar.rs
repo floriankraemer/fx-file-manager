@@ -1,6 +1,7 @@
 //! Windows-11-style command bar: file commands on the left, Sort/View dropdowns, and an overflow menu on the right.
 
 use super::icons::{self, Glyph};
+use super::menu;
 use crate::command::{Command, hint, tip};
 use crate::{action::Action, theme};
 use eframe::egui::{Align, Layout, Popup, Response, Sense, TextStyle, Ui, vec2};
@@ -41,7 +42,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let resp = command(ui, Glyph::More, "", true, false);
             Popup::menu(&resp).show(|ui| {
-                if menu_item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
+                if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
                     actions.push(Action::SelectAll);
                 }
             });
@@ -57,27 +58,16 @@ fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {
         (SortColumn::Modified, t("col.modified")),
     ];
     for (column, label) in columns {
-        if ui.radio(sort.column == column, label).clicked() {
+        if menu::radio(ui, label, sort.column == column) {
             actions.push(Action::SetSort(SortSpec { column, ..sort }));
         }
     }
     ui.separator();
     for (ascending, label) in [(true, t("sort.ascending")), (false, t("sort.descending"))] {
-        if ui.radio(sort.ascending == ascending, label).clicked() {
+        if menu::radio(ui, label, sort.ascending == ascending) {
             actions.push(Action::SetSort(SortSpec { ascending, ..sort }));
         }
     }
-}
-
-/// A menu entry with a right-aligned shortcut hint. Returns true when clicked.
-pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool) -> bool {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(label)
-            .shortcut_text(shortcut)
-            .frame_when_inactive(false),
-    )
-    .clicked()
 }
 
 /// A flat command button: painted icon, label, optional dropdown chevron.
