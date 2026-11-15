@@ -195,10 +195,14 @@ pub fn show(
                         1
                     };
                     resp.context_menu(|ui| {
+                        let is_dir = entry.kind == EntryKind::Dir;
+                        let bookmarked =
+                            is_dir && explorer.is_bookmarked(&folder.join(name.as_ref()));
                         row_menu(
                             ui,
                             i,
-                            entry.kind == EntryKind::Dir,
+                            is_dir,
+                            bookmarked,
                             selected_count,
                             can_paste,
                             actions,
@@ -293,6 +297,7 @@ fn row_menu(
     ui: &mut Ui,
     row: usize,
     is_dir: bool,
+    bookmarked: bool,
     selected: usize,
     can_paste: bool,
     actions: &mut Vec<Action>,
@@ -316,6 +321,14 @@ fn row_menu(
     }
     if is_dir && menu::item(ui, t("cmd.paste_into"), "", can_paste) {
         actions.push(Action::PasteInto(row));
+    }
+    let bookmark = if bookmarked {
+        "cmd.remove_bookmark"
+    } else {
+        "cmd.add_bookmark"
+    };
+    if is_dir && menu::item(ui, t(bookmark), "", true) {
+        actions.push(Action::ToggleBookmark(row));
     }
     ui.separator();
     if menu::item(ui, t("cmd.rename"), &hint(Command::Rename), selected == 1) {

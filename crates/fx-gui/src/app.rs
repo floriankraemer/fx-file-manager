@@ -189,6 +189,11 @@ impl App {
             Action::Refresh => ex.refresh(),
             Action::Open(row) => ex.activate(row),
             Action::OpenInNewTab(row) => ex.open_in_new_tab(row),
+            Action::ToggleBookmark(row) => {
+                if let Some(path) = ex.entry_path(row) {
+                    ex.toggle_bookmark(path);
+                }
+            }
             #[cfg(windows)]
             Action::OpenWith(row) => {
                 if let Some(path) = ex.entry_path(row) {
