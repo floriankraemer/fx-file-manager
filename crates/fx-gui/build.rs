@@ -1,4 +1,4 @@
-//! Embeds the vendored Material icon theme into the binary.
+//! Embeds the vendored Material icon theme, build info and (on Windows) the exe icon.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -74,8 +74,21 @@ fn build_info() {
     println!("cargo:rustc-env=FX_BUILD_DATE={date}");
 }
 
+/// Gives the Windows executable the app icon shown by Explorer and the taskbar.
+fn windows_icon() {
+    let ico = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/icon.ico");
+    println!("cargo:rerun-if-changed={ico}");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        winresource::WindowsResource::new()
+            .set_icon(ico)
+            .compile()
+            .expect("compile Windows icon resource");
+    }
+}
+
 fn main() {
     build_info();
+    windows_icon();
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
         .join("../../third_party/material-icon-theme")
         .canonicalize()

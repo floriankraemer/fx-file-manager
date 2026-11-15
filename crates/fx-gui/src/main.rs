@@ -17,7 +17,11 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 750.0])
-            .with_title("fx"),
+            .with_title("fx")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))
+                    .expect("embedded app icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     eframe::run_native(
