@@ -1,5 +1,5 @@
 use super::icons::{self, Glyph};
-use super::menu;
+use super::{dnd, menu};
 use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
@@ -18,6 +18,7 @@ enum Action {
     PasteInto(PathBuf),
     CopyPath(PathBuf),
     Delete(PathBuf),
+    Drop(Vec<PathBuf>, PathBuf),
 }
 
 pub fn show(
@@ -82,6 +83,10 @@ pub fn show(
         Some(Action::PasteInto(p)) => explorer.paste(Some(p)),
         Some(Action::CopyPath(p)) => ui.ctx().copy_text(p.display().to_string()),
         Some(Action::Delete(p)) => actions.push(crate::action::Action::DeletePaths(vec![p])),
+        Some(Action::Drop(sources, dest)) => {
+            let copy = dnd::copying(ui.ctx(), explorer.settings().drag_copy_modifier);
+            explorer.drop_into(sources, &dest, copy);
+        }
         None => {}
     }
 }
@@ -175,6 +180,10 @@ fn node(
         } else if single {
             *action = Some(Action::Navigate(path.to_path_buf()));
         }
+    }
+
+    if let Some(sources) = dnd::target(&resp, path) {
+        *action = Some(Action::Drop(sources.0.clone(), path.to_path_buf()));
     }
 
     resp.context_menu(|ui| {

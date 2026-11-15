@@ -3,6 +3,7 @@
 pub mod about;
 pub mod commandbar;
 pub mod dialogs;
+pub mod dnd;
 pub mod icons;
 pub mod menu;
 pub mod menubar;

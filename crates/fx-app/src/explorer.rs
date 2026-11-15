@@ -508,25 +508,31 @@ impl Explorer {
         if cut {
             self.clipboard = None;
         }
+        self.drop_into(sources, &dest, !cut);
+    }
+
+    /// Copies (`copy = true`) or moves `sources` into the folder `dest` as a background transfer.
+    /// A move into the item's own folder does nothing.
+    pub fn drop_into(&mut self, sources: Vec<PathBuf>, dest: &Path, copy: bool) {
         let sources: Vec<PathBuf> = sources
             .into_iter()
-            .filter(|src| !(cut && src.parent() == Some(dest.as_path())))
+            .filter(|src| copy || src.parent() != Some(dest))
             .collect();
         if sources.is_empty() {
             return;
         }
-        let op = if cut { Op::Move } else { Op::Copy };
-        let mut req = Request::into_dir(&sources, &dest, op, self.settings.conflict_policy.into());
+        let op = if copy { Op::Copy } else { Op::Move };
+        let mut req = Request::into_dir(&sources, dest, op, self.settings.conflict_policy.into());
         if self.settings.copy_workers > 0 {
             req.overrides.workers = Some(self.settings.copy_workers as usize);
         }
         req.overrides.verify = self.settings.verify_copies;
-        let key = if cut {
-            "transfer.moving"
-        } else {
+        let key = if copy {
             "transfer.copying"
+        } else {
+            "transfer.moving"
         };
-        let label = crate::tn(key, sources.len() as u64, &[("dest", &display_name(&dest))]);
+        let label = crate::tn(key, sources.len() as u64, &[("dest", &display_name(dest))]);
         self.transfers.submit(req, label);
         self.poll_transfers();
     }
@@ -1464,6 +1470,33 @@ mod tests {
         assert_eq!(last_notice(&mut explorer).text, "Moved 1 item");
         assert!(!root.join("src").exists());
         assert_eq!(fs::read(root.join("moved/src/sub/f.txt")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn dropping_copies_or_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/sub")).unwrap();
+        fs::write(root.join("src/sub/f.txt"), b"x").unwrap();
+        fs::create_dir(root.join("dst")).unwrap();
+        let mut explorer = explorer_in(root);
+
+        explorer.drop_into(vec![root.join("src")], root, false);
+        assert!(
+            explorer.transfers().is_empty(),
+            "a move into its own folder does nothing"
+        );
+
+        explorer.drop_into(vec![root.join("src")], &root.join("dst"), true);
+        settle(&mut explorer);
+        assert_eq!(fs::read(root.join("dst/src/sub/f.txt")).unwrap(), b"x");
+        assert!(root.join("src").exists(), "a copy keeps its source");
+
+        fs::create_dir(root.join("moved")).unwrap();
+        explorer.drop_into(vec![root.join("src")], &root.join("moved"), false);
+        settle(&mut explorer);
+        assert_eq!(last_notice(&mut explorer).text, "Moved 1 item");
+        assert!(!root.join("src").exists());
     }
 
     #[test]

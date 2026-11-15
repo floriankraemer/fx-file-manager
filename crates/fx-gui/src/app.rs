@@ -374,6 +374,7 @@ impl App {
                 views::table::show(ui, &mut self.explorer, scroll_to_selection, &mut actions);
             });
 
+        views::dnd::feedback(&ctx, self.explorer.settings().drag_copy_modifier);
         if let Some(dialog) = &mut self.windows[index].dialog
             && dialogs::show(&ctx, dialog, &mut self.explorer)
         {

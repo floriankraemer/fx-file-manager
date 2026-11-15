@@ -201,6 +201,8 @@ copy_workers_auto = "Автоматично"
 copy_workers_note = "Автоматично вибирає кількість за типом носія (SSD, HDD, USB, мережа)."
 verify_copies = "Перевіряти копії"
 verify_copies_note = "Повторно читає кожен скопійований файл і порівнює контрольні суми. Розбіжність повідомляється як помилка. Повільніше."
+drag_copy_modifier = "Утримувати для копіювання під час перетягування"
+drag_copy_modifier_note = "Без неї перетягування переміщує елементи."
 
 [settings.cat]
 general = "Загальні"
@@ -226,6 +228,7 @@ performance = "Продуктивність"
 clicks = "Клацання"
 deleting = "Видалення"
 conflicts = "Конфлікти"
+drag_drop = "Перетягування"
 safety = "Безпека"
 
 [folder_order]
@@ -432,3 +435,18 @@ new_window = "Нове вікно"
 open_settings = "Відкрити налаштування"
 about = "Про fx"
 exit = "Вийти"
+
+[drag_modifier]
+ctrl = "Ctrl"
+shift = "Shift"
+alt = "Alt (Option у macOS)"
+
+[drag]
+move.one = "Перемістити {n} елемент"
+move.few = "Перемістити {n} елементи"
+move.many = "Перемістити {n} елементів"
+move.other = "Перемістити {n} елемента"
+copy.one = "Копіювати {n} елемент"
+copy.few = "Копіювати {n} елементи"
+copy.many = "Копіювати {n} елементів"
+copy.other = "Копіювати {n} елемента"

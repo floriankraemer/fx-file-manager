@@ -10,8 +10,8 @@ use eframe::egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use fx_app::{
-    ConflictChoice, DateFormat, Density, Explorer, FolderOrder, Language, MAX_FONT_SIZE,
-    MIN_FONT_SIZE, Settings, open_with_system, t,
+    ConflictChoice, DateFormat, Density, DragModifier, Explorer, FolderOrder, Language,
+    MAX_FONT_SIZE, MIN_FONT_SIZE, Settings, open_with_system, t,
 };
 use std::path::PathBuf;
 
@@ -308,6 +308,24 @@ const ROWS: &[Row] = &[
         kind: Kind::Check,
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.list_single_click, l);
+        },
+    },
+    Row {
+        category: Category::Behavior,
+        group: "settings.group.drag_drop",
+        label: "settings.drag_copy_modifier",
+        kind: Kind::Field,
+        show: |ui, f, _| {
+            let modifier = &mut f.draft.drag_copy_modifier;
+            egui::ComboBox::from_id_salt("drag-copy-modifier")
+                .width(COMBO_WIDTH)
+                .selected_text(modifier.label())
+                .show_ui(ui, |ui| {
+                    for choice in DragModifier::ALL {
+                        ui.selectable_value(modifier, choice, choice.label());
+                    }
+                });
+            note(ui, t("settings.drag_copy_modifier_note"), 0.0);
         },
     },
     Row {

@@ -177,6 +177,8 @@ copy_workers_auto = "自动"
 copy_workers_note = "自动会根据存储类型（SSD、HDD、USB、网络）选择数量。"
 verify_copies = "验证复制结果"
 verify_copies_note = "重新读取每个已复制的文件并比较校验和。不一致会作为错误报告。速度较慢。"
+drag_copy_modifier = "放下时按住以复制"
+drag_copy_modifier_note = "不按住时放下会移动项目。"
 
 [settings.cat]
 general = "常规"
@@ -202,6 +204,7 @@ performance = "性能"
 clicks = "单击"
 deleting = "删除"
 conflicts = "冲突"
+drag_drop = "拖放"
 safety = "安全"
 
 [folder_order]
@@ -360,3 +363,12 @@ new_window = "新建窗口"
 open_settings = "打开设置"
 about = "关于 fx"
 exit = "退出"
+
+[drag_modifier]
+ctrl = "Ctrl"
+shift = "Shift"
+alt = "Alt（macOS 上为 Option）"
+
+[drag]
+move.other = "移动 {n} 个项目"
+copy.other = "复制 {n} 个项目"
