@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="fx File Manager logo" width="320"></p>
+
 # fx File Manager
 
 A performance optimized cross platform file manager written in Rust.

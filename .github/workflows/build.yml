@@ -84,13 +84,13 @@ jobs:
           pkgroot="$(mktemp -d)"
           mkdir -p "$pkgroot/opt/fx" "$pkgroot/usr/bin" \
             "$pkgroot/usr/share/applications" \
-            "$pkgroot/usr/share/icons/hicolor/256x256/apps" \
+            "$pkgroot/usr/share/icons/hicolor/512x512/apps" \
             "$pkgroot/DEBIAN"
           cp dist/linux/fx dist/linux/fx-gui "$pkgroot/opt/fx/"
           ln -s /opt/fx/fx-gui "$pkgroot/usr/bin/fx-gui"
           ln -s /opt/fx/fx "$pkgroot/usr/bin/fx"
           cp assets/linux/fx.desktop "$pkgroot/usr/share/applications/fx.desktop"
-          cp assets/icon.png "$pkgroot/usr/share/icons/hicolor/256x256/apps/fx.png"
+          cp assets/icon.png "$pkgroot/usr/share/icons/hicolor/512x512/apps/fx.png"
           sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/${{ matrix.deb_arch }}/g" \
             assets/linux/control > "$pkgroot/DEBIAN/control"
           dpkg-deb --build --root-owner-group "$pkgroot" "$name.deb"
