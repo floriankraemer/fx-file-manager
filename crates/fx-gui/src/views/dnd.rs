@@ -23,16 +23,88 @@ pub fn start(ctx: &Context, from: WindowId, paths: Vec<PathBuf>) {
     }
 }
 
-/// The window that `pointer` (in global coordinates) is over, ignoring `source`.
-pub fn window_at(
+/// A place a drag can land: a folder row or a whole window's current folder, in global coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DropArea {
+    pub viewport: ViewportId,
+    pub folder: PathBuf,
+    pub rect: Rect,
+}
+
+/// The area under `pointer` that a drag from `source` lands on. Folder rows win over the window
+/// they sit in. Returns `None` outside every area, inside `source`, or when the folder is one of `sources`.
+pub fn drop_target(
     pointer: Pos2,
-    windows: &[(WindowId, Rect)],
-    source: WindowId,
-) -> Option<WindowId> {
-    windows
+    rows: &[DropArea],
+    windows: &[DropArea],
+    source: ViewportId,
+    sources: &[PathBuf],
+) -> Option<DropArea> {
+    let area = rows
         .iter()
-        .find(|(id, rect)| *id != source && rect.contains(pointer))
-        .map(|(id, _)| *id)
+        .rev()
+        .find(|a| a.viewport != source && a.rect.contains(pointer))
+        .or_else(|| {
+            windows
+                .iter()
+                .find(|a| a.viewport != source && a.rect.contains(pointer))
+        })?;
+    if sources.iter().any(|src| area.folder.starts_with(src)) {
+        return None;
+    }
+    Some(area.clone())
+}
+
+const AREAS_KEY: &str = "dnd-drop-areas";
+
+/// Registers the folder row `resp` shows as a drop area, for drags from any window.
+/// Rows register every frame, so the list is cleared per window in `forget_areas`.
+pub fn record_row(resp: &Response, folder: &Path) {
+    let ctx = &resp.ctx;
+    let viewport = ctx.viewport_id();
+    let Some(origin) = content_rect(ctx, viewport) else {
+        return;
+    };
+    let area = DropArea {
+        viewport,
+        folder: folder.to_path_buf(),
+        rect: resp.interact_rect.translate(origin.min.to_vec2()),
+    };
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<Vec<DropArea>>(Id::unique(AREAS_KEY))
+            .push(area)
+    });
+}
+
+/// Drops the folder rows `ctx`'s viewport registered in the previous frame.
+pub fn forget_areas(ctx: &Context) {
+    let viewport = ctx.viewport_id();
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<Vec<DropArea>>(Id::unique(AREAS_KEY))
+            .retain(|a| a.viewport != viewport);
+    });
+}
+
+/// The folder rows registered by all windows.
+pub fn rows(ctx: &Context) -> Vec<DropArea> {
+    ctx.data(|d| d.get_temp::<Vec<DropArea>>(Id::unique(AREAS_KEY)))
+        .unwrap_or_default()
+}
+
+/// Paths of files dropped from outside fx into the window this frame belongs to.
+pub fn os_dropped_paths(ctx: &Context) -> Vec<PathBuf> {
+    ctx.input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect()
+    })
+}
+
+/// True while files from outside fx hover this window.
+pub fn os_hovering(ctx: &Context) -> bool {
+    ctx.input(|i| !i.raw.hovered_files.is_empty())
 }
 
 /// The pointer in global coordinates, as seen by `viewport`; `None` when it has no position there.
@@ -65,6 +137,7 @@ pub fn copying(ctx: &Context, modifier: DragModifier) -> bool {
 /// Highlights `resp` while entries that may land in `folder` hover it.
 /// Returns them when they are dropped there.
 pub fn target(resp: &Response, folder: &Path) -> Option<Arc<Dragged>> {
+    record_row(resp, folder);
     let hovering = resp.dnd_hover_payload::<Dragged>()?;
     // A folder never lands in itself or its own subfolder.
     if hovering.paths.iter().any(|src| folder.starts_with(src)) {
@@ -80,14 +153,15 @@ pub fn target(resp: &Response, folder: &Path) -> Option<Arc<Dragged>> {
     resp.dnd_release_payload::<Dragged>()
 }
 
-/// Outlines the window a drag from another window hovers.
-pub fn highlight_window(ctx: &Context) {
+/// Outlines `area` (global coordinates) in this window.
+pub fn highlight(ctx: &Context, area: Rect) {
+    let origin = content_rect(ctx, ctx.viewport_id()).map_or(Pos2::ZERO, |r| r.min);
     let painter = ctx.layer_painter(egui::LayerId::new(
         Order::Foreground,
-        Id::unique("cross-window-drop"),
+        Id::unique("drop-highlight"),
     ));
     painter.rect_stroke(
-        ctx.content_rect().shrink(2.0),
+        area.translate(-origin.to_vec2()).shrink(2.0),
         4.0,
         Stroke::new(2.0, theme::accent()),
         egui::StrokeKind::Inside,
@@ -125,40 +199,97 @@ pub fn feedback(ctx: &Context, modifier: DragModifier) {
 mod tests {
     use super::*;
 
-    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> egui::Rect {
-        egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
+        Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+    }
+
+    fn area(viewport: &str, folder: &str, rect: Rect) -> DropArea {
+        DropArea {
+            viewport: ViewportId::from_hash_of(viewport),
+            folder: PathBuf::from(folder),
+            rect,
+        }
     }
 
     #[test]
-    fn pointer_over_another_window_finds_it() {
-        let windows = [
-            (1, rect(0.0, 0.0, 100.0, 100.0)),
-            (2, rect(200.0, 0.0, 300.0, 100.0)),
-        ];
-        assert_eq!(window_at(egui::pos2(250.0, 50.0), &windows, 1), Some(2));
+    fn folder_row_of_another_window_is_the_target() {
+        let rows = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
+        let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(260.0, 50.0),
+            &rows,
+            &windows,
+            ViewportId::ROOT,
+            &[],
+        );
+        assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b/sub")));
     }
 
     #[test]
-    fn pointer_outside_all_windows_finds_none() {
-        let windows = [
-            (1, rect(0.0, 0.0, 100.0, 100.0)),
-            (2, rect(200.0, 0.0, 300.0, 100.0)),
-        ];
-        assert_eq!(window_at(egui::pos2(150.0, 50.0), &windows, 1), None);
+    fn other_window_outside_its_rows_targets_its_folder() {
+        let rows = [area("b", "/b/sub", rect(250.0, 40.0, 290.0, 60.0))];
+        let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(210.0, 90.0),
+            &rows,
+            &windows,
+            ViewportId::ROOT,
+            &[],
+        );
+        assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b")));
     }
 
     #[test]
     fn source_window_is_never_the_target() {
-        let windows = [(1, rect(0.0, 0.0, 100.0, 100.0))];
-        assert_eq!(window_at(egui::pos2(50.0, 50.0), &windows, 1), None);
+        let rows = [area("a", "/a/sub", rect(10.0, 10.0, 50.0, 30.0))];
+        let windows = [area("a", "/a", rect(0.0, 0.0, 100.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(20.0, 20.0),
+            &rows,
+            &windows,
+            ViewportId::from_hash_of("a"),
+            &[],
+        );
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn pointer_outside_all_areas_has_no_target() {
+        let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(150.0, 50.0),
+            &[],
+            &windows,
+            ViewportId::ROOT,
+            &[],
+        );
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn folder_inside_a_dragged_path_is_no_target() {
+        let rows = [area("b", "/a/x/inner", rect(250.0, 40.0, 290.0, 60.0))];
+        let windows = [area("b", "/b", rect(200.0, 0.0, 300.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(260.0, 50.0),
+            &rows,
+            &windows,
+            ViewportId::ROOT,
+            &[PathBuf::from("/a/x")],
+        );
+        assert_eq!(hit, None);
     }
 
     #[test]
     fn negative_coordinates_hit_a_window_left_of_origin() {
-        let windows = [
-            (1, rect(0.0, 0.0, 100.0, 100.0)),
-            (2, rect(-300.0, 0.0, -100.0, 100.0)),
-        ];
-        assert_eq!(window_at(egui::pos2(-150.0, 50.0), &windows, 1), Some(2));
+        let windows = [area("b", "/b", rect(-300.0, 0.0, -100.0, 100.0))];
+        let hit = drop_target(
+            egui::pos2(-150.0, 50.0),
+            &[],
+            &windows,
+            ViewportId::ROOT,
+            &[],
+        );
+        assert_eq!(hit.map(|a| a.folder), Some(PathBuf::from("/b")));
     }
 }
