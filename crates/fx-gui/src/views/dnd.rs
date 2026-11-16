@@ -23,6 +23,14 @@ pub fn start(ctx: &Context, from: WindowId, paths: Vec<PathBuf>) {
     }
 }
 
+/// Hands the dragged files to the operating system, so programs other than fx can receive them.
+pub fn start_external(paths: Vec<PathBuf>) {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    super::xdnd::start(paths);
+    #[cfg(any(windows, target_os = "macos"))]
+    super::native_drag::start(paths);
+}
+
 /// A place a drag can land: a tree folder or a window's listing (its active folder), in global coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DropArea {
