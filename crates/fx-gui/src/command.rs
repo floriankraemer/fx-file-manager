@@ -5,6 +5,7 @@
 //! settings change, never per frame.
 
 use eframe::egui::{Key, Modifiers};
+use fx_app::Explorer;
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
@@ -33,6 +34,7 @@ pub enum Command {
     Properties,
     NewWindow,
     OpenSettings,
+    Palette,
     About,
     Exit,
 }
@@ -255,6 +257,14 @@ pub const COMMANDS: &[Def] = &[
         false,
     ),
     def(
+        Command::Palette,
+        "command_palette",
+        "command.command_palette",
+        "command_group.application",
+        &["ctrl+shift+p"],
+        true,
+    ),
+    def(
         Command::About,
         "about",
         "command.about",
@@ -414,6 +424,27 @@ pub fn shortcuts(command: Command, overrides: &BTreeMap<String, Vec<String>>) ->
         .collect()
 }
 
+/// Whether `command` applies to the active tab now. Inapplicable commands are shown disabled.
+pub fn enabled(command: Command, explorer: &Explorer) -> bool {
+    let tab = explorer.active();
+    let selected = tab.selection().len();
+    match command {
+        Command::NextTab | Command::PrevTab | Command::CloseTab => explorer.tabs().len() > 1,
+        Command::Back => tab.can_back(),
+        Command::Forward => tab.can_forward(),
+        Command::Up => tab.can_up(),
+        Command::Rename => selected == 1,
+        Command::OpenSelected => tab.selected().is_some(),
+        Command::Delete
+        | Command::DeletePermanent
+        | Command::Copy
+        | Command::Cut
+        | Command::Properties => selected > 0,
+        Command::Paste => explorer.can_paste(),
+        _ => true,
+    }
+}
+
 /// Other commands that share a shortcut with `command`.
 pub fn conflicts(command: Command, overrides: &BTreeMap<String, Vec<String>>) -> Vec<Command> {
     let mine = shortcuts(command, overrides);
@@ -524,6 +555,7 @@ mod tests {
             ("ctrl+comma", Command::OpenSettings),
             ("f1", Command::About),
             ("ctrl+d", Command::ToggleBookmark),
+            ("ctrl+shift+p", Command::Palette),
         ];
         for (text, command) in expected {
             let s = Shortcut::parse(text).unwrap();
@@ -535,7 +567,7 @@ mod tests {
                 "{text} -> {command:?}"
             );
         }
-        assert_eq!(keymap.bindings.len(), 25);
+        assert_eq!(keymap.bindings.len(), 26);
     }
 
     #[test]

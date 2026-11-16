@@ -14,6 +14,7 @@ pub enum Action {
     Properties,
     NewWindow,
     OpenSettings,
+    OpenCommandPalette,
     OpenAbout,
     Exit,
     /// Ask for a new label for the bookmark at this index.

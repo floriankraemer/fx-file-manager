@@ -442,6 +442,11 @@ new_window = "Нове вікно"
 open_settings = "Відкрити налаштування"
 about = "Про fx"
 exit = "Вийти"
+command_palette = "Палітра команд"
+
+[palette]
+placeholder = "Введіть команду…"
+no_match = "Немає відповідних команд"
 
 [drag_modifier]
 ctrl = "Ctrl"

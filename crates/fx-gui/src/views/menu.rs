@@ -33,7 +33,24 @@ pub fn bar_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
 
 /// A menu entry with a right-aligned shortcut hint. Returns true when clicked.
 pub fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool) -> bool {
-    entry(ui, Button::new(label).shortcut_text(shortcut), enabled)
+    item_at(ui, label, shortcut, enabled, false).clicked()
+}
+
+/// An entry that can be highlighted, returning its response so the caller can scroll to or click it.
+pub fn item_at(
+    ui: &mut Ui,
+    label: &str,
+    shortcut: &str,
+    enabled: bool,
+    selected: bool,
+) -> Response {
+    entry(
+        ui,
+        Button::new(label)
+            .shortcut_text(shortcut)
+            .selected(selected),
+        enabled,
+    )
 }
 
 /// A checkable entry; the caller toggles its state when this returns true.
@@ -47,7 +64,7 @@ pub fn check(ui: &mut Ui, label: &str, checked: bool) -> bool {
             stroke,
         );
     });
-    entry(ui, Button::new((mark, label)), true)
+    entry(ui, Button::new((mark, label)), true).clicked()
 }
 
 /// A radio entry; the caller applies the choice when this returns true.
@@ -55,7 +72,7 @@ pub fn radio(ui: &mut Ui, label: &str, selected: bool) -> bool {
     let dot = indicator(selected, |painter, rect, color| {
         painter.circle_filled(rect.center(), 3.0, color);
     });
-    entry(ui, Button::new((dot, label)), true)
+    entry(ui, Button::new((dot, label)), true).clicked()
 }
 
 fn indicator<'a>(on: bool, draw: impl Fn(&egui::Painter, egui::Rect, Color32) + 'a) -> Atom<'a> {
@@ -66,13 +83,12 @@ fn indicator<'a>(on: bool, draw: impl Fn(&egui::Painter, egui::Rect, Color32) + 
     })
 }
 
-fn entry(ui: &mut Ui, button: Button<'_>, enabled: bool) -> bool {
+fn entry(ui: &mut Ui, button: Button<'_>, enabled: bool) -> Response {
     ui.scope(|ui| {
         let style = ui.style_mut();
         style.spacing.button_padding = ENTRY_PADDING;
         style.spacing.item_spacing.y = ENTRY_SPACING_Y;
         ui.add_enabled(enabled, button.frame_when_inactive(false))
-            .clicked()
     })
     .inner
 }

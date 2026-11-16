@@ -13,6 +13,15 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
                 actions.push(Action::NewWindow);
                 ui.close();
             }
+            if menu::item(
+                ui,
+                t("command.command_palette"),
+                &hint(Command::Palette),
+                true,
+            ) {
+                actions.push(Action::OpenCommandPalette);
+                ui.close();
+            }
             if menu::item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
                 actions.push(Action::OpenSettings);
                 ui.close();
