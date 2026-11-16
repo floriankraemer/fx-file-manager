@@ -24,7 +24,7 @@ pub(super) struct Top {
     pub(super) dst_parent: PathBuf,
     pub(super) dst_name: OsString,
     pub(super) kind: EntryKind,
-    /// Source and destination are the same entry: copy as `name (2)`.
+    /// Source and destination are the same entry: copy as `name copy`.
     pub(super) keep_both: bool,
     /// Bytes the item will occupy that are known without walking: a dense top-level file's size.
     pub(super) known_bytes: u64,

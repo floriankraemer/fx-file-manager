@@ -5,7 +5,7 @@ use super::conflicts::first_free;
 use super::preflight::Top;
 use super::{Job, lock, os, same_inode};
 use crate::EntryKind;
-use crate::copy::conflict::Resolution;
+use crate::copy::conflict::{Beside, Resolution};
 use crate::copy::progress::{ErrorOp, Progress, is_cancelled};
 use crate::copy::{Item, Meta};
 use std::fs;
@@ -194,7 +194,10 @@ impl Job<'_> {
 fn rename_beside(src: &Path, dst: &Path) -> io::Result<()> {
     let parent = dst.parent().unwrap_or(dst);
     let name = dst.file_name().unwrap_or_default();
-    first_free(name, |n| os::rename_no_replace(src, &parent.join(n))).map(drop)
+    first_free(name, Beside::Numbered, |n| {
+        os::rename_no_replace(src, &parent.join(n))
+    })
+    .map(drop)
 }
 
 /// A Windows junction whose target inside the moved tree was rewritten onto the copy.

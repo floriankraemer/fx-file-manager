@@ -256,10 +256,45 @@ fn copy_into_itself_is_refused_and_same_folder_keeps_both() {
         Overrides::default(),
     );
     assert_clean(&s);
-    assert_eq!(fs::read(dir.join("f (2).txt")).unwrap(), b"x");
+    assert_eq!(fs::read(dir.join("f copy.txt")).unwrap(), b"x");
     let s = copy(&dir, &dir, ConflictPolicy::Skip, Overrides::default());
     assert_clean(&s);
-    assert_eq!(fs::read(t.path().join("dir (2)/f.txt")).unwrap(), b"x");
+    assert_eq!(fs::read(t.path().join("dir copy/f.txt")).unwrap(), b"x");
+}
+
+#[test]
+fn same_folder_copies_take_free_copy_names() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("d");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("t.tar.gz"), b"file").unwrap();
+    fs::write(dir.join("t.tar copy.gz"), b"taken").unwrap();
+    fs::create_dir(dir.join("sub")).unwrap();
+    fs::write(dir.join("sub/inner.txt"), b"inner").unwrap();
+    fs::create_dir(dir.join("sub copy")).unwrap();
+
+    let s = copy(
+        &dir.join("t.tar.gz"),
+        &dir.join("t.tar.gz"),
+        ConflictPolicy::Ask,
+        Overrides::default(),
+    );
+    assert_clean(&s);
+    assert_eq!(fs::read(dir.join("t.tar copy 2.gz")).unwrap(), b"file");
+    assert_eq!(fs::read(dir.join("t.tar copy.gz")).unwrap(), b"taken");
+
+    let s = copy(
+        &dir.join("sub"),
+        &dir.join("sub"),
+        ConflictPolicy::Ask,
+        Overrides::default(),
+    );
+    assert_clean(&s);
+    assert_eq!(
+        fs::read(dir.join("sub copy 2/inner.txt")).unwrap(),
+        b"inner"
+    );
+    assert!(!dir.join("sub (2)").exists());
 }
 
 #[test]

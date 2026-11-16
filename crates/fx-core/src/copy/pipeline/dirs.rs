@@ -60,7 +60,7 @@ pub(super) struct Entry<'e> {
     pub(super) kind: EntryKind,
     pub(super) dst_dir: &'e os::Dir,
     pub(super) dst_name: &'e OsStr,
-    /// Source and destination are the same entry: go straight to `name (2)`.
+    /// Source and destination are the same entry: go straight to `name copy`.
     pub(super) keep_both: bool,
 }
 

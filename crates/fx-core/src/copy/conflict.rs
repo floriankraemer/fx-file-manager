@@ -1,4 +1,4 @@
-//! Name clashes at the destination: the policies, the pure decision, and `name (2)` candidates.
+//! Name clashes at the destination: the policies, the pure decision, and candidate names beside a clash.
 //!
 //! Existence is detected by the atomic exclusive create itself (`O_EXCL`, `CREATE_NEW`,
 //! `COPY_FILE_FAIL_IF_EXISTS`), never by a check beforehand, so a clash can be neither missed nor invented.
@@ -90,16 +90,72 @@ pub(crate) fn resolve(
     }
 }
 
+/// Where a copy lands beside an existing item of the same name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Beside {
+    /// After a "keep both" answer: `name (2)`, `name (3)`, ...
+    Numbered,
+    /// A file copied onto itself: `name copy.ext`, `name copy 2.ext`, ...
+    Copy,
+    /// A folder copied onto itself: `name copy`, `name copy 2`, ...
+    CopyFolder,
+}
+
+impl Beside {
+    /// The first index `name` takes: `name (2)` and `name copy` are the first candidates.
+    pub(crate) fn first(self) -> u32 {
+        match self {
+            Beside::Numbered => 2,
+            Beside::Copy | Beside::CopyFolder => 1,
+        }
+    }
+
+    pub(crate) fn name(self, name: &OsStr, n: u32) -> OsString {
+        match self {
+            Beside::Numbered => keep_both_name(name, n),
+            Beside::Copy => copy_name(name, n),
+            Beside::CopyFolder => copy_folder_name(name, n),
+        }
+    }
+}
+
 /// `stem (n).ext` for `n >= 2`, keeping non-UTF-8 bytes intact. `t.tar.gz` becomes `t.tar (2).gz`.
 pub fn keep_both_name(name: &OsStr, n: u32) -> OsString {
     let path = Path::new(name);
     let mut out = path.file_stem().unwrap_or(name).to_os_string();
     out.push(format!(" ({n})"));
+    push_extension(&mut out, path);
+    out
+}
+
+/// `stem copy.ext`, then `stem copy 2.ext`, ... `t.tar.gz` becomes `t.tar copy.gz`.
+fn copy_name(name: &OsStr, n: u32) -> OsString {
+    let path = Path::new(name);
+    let mut out = path.file_stem().unwrap_or(name).to_os_string();
+    out.push(copy_suffix(n));
+    push_extension(&mut out, path);
+    out
+}
+
+/// `name copy`, then `name copy 2`, ...; a folder has no extension to keep apart.
+fn copy_folder_name(name: &OsStr, n: u32) -> OsString {
+    let mut out = name.to_os_string();
+    out.push(copy_suffix(n));
+    out
+}
+
+fn copy_suffix(n: u32) -> String {
+    match n {
+        1 => " copy".to_owned(),
+        _ => format!(" copy {n}"),
+    }
+}
+
+fn push_extension(out: &mut OsString, path: &Path) {
     if let Some(ext) = path.extension() {
         out.push(".");
         out.push(ext);
     }
-    out
 }
 
 /// Where an overwrite stages new content before renaming it over `name`, in the same directory.
@@ -175,6 +231,20 @@ mod tests {
             resolve(ConflictPolicy::SkipIdentical, &src, &dst, 1),
             Some(Resolution::Overwrite)
         );
+    }
+
+    #[test]
+    fn copy_beside_names() {
+        let file = |n| Beside::Copy.name("t.tar.gz".as_ref(), n);
+        assert_eq!(file(1), "t.tar copy.gz");
+        assert_eq!(file(2), "t.tar copy 2.gz");
+        assert_eq!(Beside::Copy.name("README".as_ref(), 1), "README copy");
+        assert_eq!(Beside::Copy.name(".bashrc".as_ref(), 1), ".bashrc copy");
+        let folder = |n| Beside::CopyFolder.name("my.dir".as_ref(), n);
+        assert_eq!(folder(1), "my.dir copy");
+        assert_eq!(folder(2), "my.dir copy 2");
+        assert_eq!(Beside::Copy.first(), 1);
+        assert_eq!(Beside::Numbered.first(), 2);
     }
 
     #[test]

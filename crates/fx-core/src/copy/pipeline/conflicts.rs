@@ -1,11 +1,12 @@
-//! Name clashes: exclusive creates, the conflict policy, `name (2)` and overwrite via temp + rename.
+//! Name clashes: exclusive creates, the conflict policy, candidate names beside a clash and overwrite via
+//! temp + rename.
 
 use super::dirs::Entry;
 use super::errors::{At, Failure};
 use super::{Job, lock, os, same_inode};
 use crate::EntryKind;
 use crate::copy::Meta;
-use crate::copy::conflict::{self, Conflict, Resolution, keep_both_name, temp_name};
+use crate::copy::conflict::{self, Beside, Conflict, Resolution, temp_name};
 use crate::copy::plan::Op;
 use crate::copy::progress::ErrorOp;
 use std::ffi::{OsStr, OsString};
@@ -26,13 +27,14 @@ pub(super) fn created<T>(result: io::Result<T>) -> io::Result<Option<T>> {
     }
 }
 
-/// Tries `name (2)`, `name (3)`, … until `create` finds a free one; returns its result and the name.
+/// Tries the `beside` candidates for `name` until `create` finds a free one; returns its result and the name.
 pub(super) fn first_free<T>(
     name: &OsStr,
+    beside: Beside,
     mut create: impl FnMut(&OsStr) -> io::Result<T>,
 ) -> io::Result<(T, OsString)> {
-    for n in 2.. {
-        let candidate = keep_both_name(name, n);
+    for n in beside.first().. {
+        let candidate = beside.name(name, n);
         if let Some(t) = created(create(&candidate))? {
             return Ok((t, candidate));
         }
@@ -76,7 +78,7 @@ impl Job<'_> {
         self.decide(src, src_meta, dst, dst_meta)
     }
 
-    /// How a clash with the source itself resolves: a copy becomes `name (2)`, a move leaves it alone.
+    /// How a clash with the source itself resolves: a copy lands beside it, a move leaves it alone.
     fn same_entry(&self) -> Resolution {
         match self.op {
             Op::Copy => Resolution::KeepBoth,
@@ -97,7 +99,7 @@ impl Job<'_> {
         let (dst_dir, dst_name) = (e.dst_dir, e.dst_name);
         if e.keep_both {
             return self
-                .place_beside(dst_dir, dst_name, src_path, create)
+                .place_beside(dst_dir, dst_name, src_path, Beside::Copy, create)
                 .at(op);
         }
         if let Some(t) = created(create(dst_name)).at(op)? {
@@ -111,7 +113,7 @@ impl Job<'_> {
         match resolution {
             Resolution::Skip => Ok(Placed::Skipped),
             Resolution::KeepBoth => self
-                .place_beside(dst_dir, dst_name, src_path, create)
+                .place_beside(dst_dir, dst_name, src_path, Beside::Numbered, create)
                 .at(op),
             Resolution::Overwrite => place_over(dst_dir, dst_name, create).at(op),
         }
@@ -122,9 +124,10 @@ impl Job<'_> {
         dst_dir: &os::Dir,
         dst_name: &OsStr,
         src_path: &Path,
+        beside: Beside,
         create: impl FnMut(&OsStr) -> io::Result<T>,
     ) -> io::Result<Placed<T>> {
-        let (t, name) = first_free(dst_name, create)?;
+        let (t, name) = first_free(dst_name, beside, create)?;
         self.note_rename(src_path, &dst_dir.path().join(&name));
         Ok(Placed::Done(t, name))
     }
@@ -141,7 +144,9 @@ impl Job<'_> {
     ) -> Result<Option<(os::Dir, bool)>, Failure> {
         let op = ErrorOp::CreateDir;
         if keep_both {
-            return self.create_dir_beside(parent, dst_name, src_path).at(op);
+            return self
+                .create_dir_beside(parent, dst_name, src_path, Beside::CopyFolder)
+                .at(op);
         }
         if let Some(dir) = created(parent.create_child(dst_name)).at(op)? {
             return Ok(Some((dir, true)));
@@ -162,7 +167,9 @@ impl Job<'_> {
                 "a file with this name already exists",
             ))
             .at(op),
-            Resolution::KeepBoth => self.create_dir_beside(parent, dst_name, src_path).at(op),
+            Resolution::KeepBoth => self
+                .create_dir_beside(parent, dst_name, src_path, Beside::Numbered)
+                .at(op),
         }
     }
 
@@ -171,8 +178,9 @@ impl Job<'_> {
         parent: &os::Dir,
         dst_name: &OsStr,
         src_path: &Path,
+        beside: Beside,
     ) -> io::Result<Option<(os::Dir, bool)>> {
-        let (dir, name) = first_free(dst_name, |n| parent.create_child(n))?;
+        let (dir, name) = first_free(dst_name, beside, |n| parent.create_child(n))?;
         self.note_rename(src_path, &parent.path().join(&name));
         Ok(Some((dir, true)))
     }
