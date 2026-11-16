@@ -10,6 +10,7 @@ mod views;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
+    prefer_x11();
     let settings = fx_app::Settings::load();
     let start = std::env::args_os().nth(1).map(PathBuf::from);
     let fallback = fx_app::start_dir(None, &settings);
@@ -34,3 +35,16 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+/// Dragging files out of fx to other programs is implemented for X11 only, so Linux sessions that
+/// offer both Wayland and X11 run fx through X11.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn prefer_x11() {
+    if std::env::var_os("DISPLAY").is_some() {
+        // SAFETY: runs first in `main`, before any other thread exists.
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+    }
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn prefer_x11() {}

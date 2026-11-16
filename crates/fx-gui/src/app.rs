@@ -423,6 +423,7 @@ impl App {
         }
         self.highlight_drop_target(&ctx, index);
         self.drop_os_files(&ctx, index);
+        self.hand_drag_to_os(&ctx, index);
         self.finish_drag(&ctx, index);
     }
 
@@ -521,6 +522,29 @@ impl App {
         if let Some(area) = self.external_area(ctx, index) {
             self.explorer.drop_into(paths, &area.folder, true);
         }
+    }
+
+    /// Passes a drag that started in window `index` to the operating system once the pointer
+    /// leaves every fx window, so other programs can receive the files.
+    fn hand_drag_to_os(&self, ctx: &Context, index: usize) {
+        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
+            return;
+        };
+        if dragged.from != self.windows[index].id {
+            return;
+        }
+        let Some(pointer) = dnd::screen_pointer(ctx) else {
+            return;
+        };
+        if self
+            .window_areas(ctx)
+            .iter()
+            .any(|area| area.rect.contains(pointer))
+        {
+            return;
+        }
+        DragAndDrop::clear_payload(ctx);
+        dnd::start_external(dragged.paths.clone());
     }
 
     /// Ends a drag that started in window `index` once its button is released.
