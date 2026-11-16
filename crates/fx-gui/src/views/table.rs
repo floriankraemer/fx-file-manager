@@ -10,7 +10,7 @@ use fx_app::{
     format_size, format_time, t, tr,
 };
 use fx_core::{Entry, EntryKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 fn row_height(density: Density) -> f32 {
@@ -39,6 +39,8 @@ struct Interaction {
     activate: Option<usize>,
     right_clicked: Option<usize>,
     drag_started: Option<usize>,
+    /// Dragged paths released on a folder row, with that folder.
+    drop: Option<(Vec<PathBuf>, PathBuf)>,
 }
 
 pub fn show(
@@ -226,6 +228,9 @@ fn entry_row(
             actions,
         );
     });
+    if is_dir && let Some(drop) = drop_on_folder(&resp, ctx.folder.join(name.as_ref())) {
+        out.drop = Some(drop);
+    }
     if resp.clicked() {
         out.select = Some(i);
     }
@@ -240,6 +245,12 @@ fn entry_row(
     if activated {
         out.activate = Some(i);
     }
+}
+
+/// Highlights a folder row while entries hover it; returns them with the folder once released there.
+fn drop_on_folder(resp: &egui::Response, folder: PathBuf) -> Option<(Vec<PathBuf>, PathBuf)> {
+    let dragged = dnd::target(resp, &folder)?;
+    Some((dragged.paths.clone(), folder))
 }
 
 fn entry_cells(row: &mut TableRow, entry: &Entry, name: &str, ctx: &RowContext) {
@@ -338,6 +349,10 @@ fn apply(
     }
     if let Some(i) = out.drag_started {
         start_drag(ui, explorer, i, selection);
+    }
+    if let Some((paths, folder)) = out.drop {
+        let copy = dnd::copying(ui.ctx(), explorer.settings().drag_copy_modifier);
+        explorer.drop_into(paths, &folder, copy);
     }
 }
 
