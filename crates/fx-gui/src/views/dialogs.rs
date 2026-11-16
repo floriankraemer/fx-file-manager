@@ -139,13 +139,18 @@ fn conflict_dialog(
         return true;
     }
     modal(ctx, "conflict-dialog", |ui| {
-        let what = if c.dst_is_dir { "A folder" } else { "A file" };
-        ui.heading(format!(
-            "{what} named \"{}\" already exists",
-            file_name(&c.dst)
-        ));
+        let heading_key = if c.dst_is_dir {
+            "conflict.folder_exists"
+        } else {
+            "conflict.file_exists"
+        };
+        ui.heading(tr(heading_key, &[("name", &file_name(&c.dst))]));
         if let Some(parent) = c.dst.parent() {
-            ui.label(RichText::new(format!("in {}", parent.display())).color(theme::dim()));
+            let location = tr(
+                "conflict.location",
+                &[("dir", &parent.display().to_string())],
+            );
+            ui.label(RichText::new(location).color(theme::dim()));
         }
         ui.add_space(6.0);
         let describe = |is_dir: bool, size: u64, modified: Option<std::time::SystemTime>| {
