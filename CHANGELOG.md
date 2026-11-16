@@ -3,6 +3,25 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-16
+
+### Added
+
+- Drag files out of fx into other programs, such as an email client (#46).
+  Windows and macOS use the system drag and drop.
+  On Linux fx acts as an X11 drag source, so it runs through X11 when a session offers both X11 and Wayland.
+- Drag files between fx windows and drop files from other programs into a window's folder (#44).
+- Command palette on Ctrl+Shift+P (#45).
+- The fx logo in the README and as the app icon (#42).
+
+### Fixed
+
+- Dropping dragged files on a folder row of the listing now highlights the row and moves or copies the files into it (#47).
+
+### Changed
+
+- Large modules are split, and CI gates complexity and coupling (#43).
+
 ## [0.3.0] - 2026-11-15
 
 ### Added
@@ -54,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 First release.
 
+[0.4.0]: https://github.com/floriankraemer/fx-file-manager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/floriankraemer/fx-file-manager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/floriankraemer/fx-file-manager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/floriankraemer/fx-file-manager/releases/tag/v0.1.0
