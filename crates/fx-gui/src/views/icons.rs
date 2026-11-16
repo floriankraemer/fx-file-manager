@@ -131,7 +131,6 @@ pub enum Glyph {
     Rename,
     Delete,
     Sort,
-    More,
     Chevron,
     ChevronRight,
 }
@@ -182,11 +181,6 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
             p.line_segment([at(x, -6.0), at(x, 5.0)], s);
             p.line_segment([at(x - 2.5, 2.5), at(x, 5.5)], s);
             p.line_segment([at(x + 2.5, 2.5), at(x, 5.5)], s);
-        }
-        Glyph::More => {
-            for dx in [-5.0, 0.0, 5.0] {
-                p.circle_filled(at(dx, 0.0), 1.5, color);
-            }
         }
         Glyph::ChevronRight => {
             p.line_segment([at(-1.5, -3.0), at(1.5, 0.0)], s);

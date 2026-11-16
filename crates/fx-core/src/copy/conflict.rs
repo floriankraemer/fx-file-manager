@@ -95,14 +95,14 @@ pub(crate) fn resolve(
 pub(crate) enum Beside {
     /// After a "keep both" answer: `name (2)`, `name (3)`, ...
     Numbered,
-    /// A file copied onto itself: `name copy.ext`, `name copy 2.ext`, ...
+    /// A file copied onto itself: `name copy (1).ext`, `name copy (2).ext`, ...
     Copy,
-    /// A folder copied onto itself: `name copy`, `name copy 2`, ...
+    /// A folder copied onto itself: `name copy (1)`, `name copy (2)`, ...
     CopyFolder,
 }
 
 impl Beside {
-    /// The first index `name` takes: `name (2)` and `name copy` are the first candidates.
+    /// The first index `name` takes: `name (2)` and `name copy (1)` are the first candidates.
     pub(crate) fn first(self) -> u32 {
         match self {
             Beside::Numbered => 2,
@@ -128,27 +128,36 @@ pub fn keep_both_name(name: &OsStr, n: u32) -> OsString {
     out
 }
 
-/// `stem copy.ext`, then `stem copy 2.ext`, ... `t.tar.gz` becomes `t.tar copy.gz`.
+/// `stem copy (n).ext`; `t.tar.gz` becomes `t.tar copy (1).gz`. Copying a copy numbers the original again.
 fn copy_name(name: &OsStr, n: u32) -> OsString {
     let path = Path::new(name);
-    let mut out = path.file_stem().unwrap_or(name).to_os_string();
-    out.push(copy_suffix(n));
+    let stem = path.file_stem().unwrap_or(name);
+    let mut out = copy_suffix_stripped(stem);
+    out.push(format!(" copy ({n})"));
     push_extension(&mut out, path);
     out
 }
 
-/// `name copy`, then `name copy 2`, ...; a folder has no extension to keep apart.
+/// `name copy (n)`; a folder has no extension to keep apart.
 fn copy_folder_name(name: &OsStr, n: u32) -> OsString {
-    let mut out = name.to_os_string();
-    out.push(copy_suffix(n));
+    let mut out = copy_suffix_stripped(name);
+    out.push(format!(" copy ({n})"));
     out
 }
 
-fn copy_suffix(n: u32) -> String {
-    match n {
-        1 => " copy".to_owned(),
-        _ => format!(" copy {n}"),
-    }
+/// `name` without a trailing ` copy` or ` copy (N)`, so copies of copies never stack the word.
+fn copy_suffix_stripped(name: &OsStr) -> OsString {
+    let Some(text) = name.to_str() else {
+        return name.to_os_string();
+    };
+    let base = match text
+        .strip_suffix(')')
+        .and_then(|t| t.rsplit_once(" copy ("))
+    {
+        Some((base, digits)) if digits.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => text.strip_suffix(" copy").unwrap_or(text),
+    };
+    OsString::from(if base.is_empty() { text } else { base })
 }
 
 fn push_extension(out: &mut OsString, path: &Path) {
@@ -236,13 +245,29 @@ mod tests {
     #[test]
     fn copy_beside_names() {
         let file = |n| Beside::Copy.name("t.tar.gz".as_ref(), n);
-        assert_eq!(file(1), "t.tar copy.gz");
-        assert_eq!(file(2), "t.tar copy 2.gz");
-        assert_eq!(Beside::Copy.name("README".as_ref(), 1), "README copy");
-        assert_eq!(Beside::Copy.name(".bashrc".as_ref(), 1), ".bashrc copy");
+        assert_eq!(file(1), "t.tar copy (1).gz");
+        assert_eq!(file(2), "t.tar copy (2).gz");
+        assert_eq!(Beside::Copy.name("README".as_ref(), 1), "README copy (1)");
+        assert_eq!(Beside::Copy.name(".bashrc".as_ref(), 1), ".bashrc copy (1)");
+        assert_eq!(
+            Beside::Copy.name("f copy (1).txt".as_ref(), 2),
+            "f copy (2).txt"
+        );
+        assert_eq!(
+            Beside::Copy.name("f copy.txt".as_ref(), 1),
+            "f copy (1).txt"
+        );
+        assert_eq!(
+            Beside::Copy.name("copy.txt".as_ref(), 1),
+            "copy copy (1).txt"
+        );
         let folder = |n| Beside::CopyFolder.name("my.dir".as_ref(), n);
-        assert_eq!(folder(1), "my.dir copy");
-        assert_eq!(folder(2), "my.dir copy 2");
+        assert_eq!(folder(1), "my.dir copy (1)");
+        assert_eq!(folder(2), "my.dir copy (2)");
+        assert_eq!(
+            Beside::CopyFolder.name("d copy (1)".as_ref(), 2),
+            "d copy (2)"
+        );
         assert_eq!(Beside::Copy.first(), 1);
         assert_eq!(Beside::Numbered.first(), 2);
     }

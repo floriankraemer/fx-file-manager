@@ -1,10 +1,10 @@
-//! Windows-11-style command bar: file commands on the left, Sort/View dropdowns, and an overflow menu on the right.
+//! Windows-11-style command bar: file commands on the left, Sort/View dropdowns.
 
 use super::icons::{self, Glyph};
 use super::menu;
-use crate::command::{Command, hint, tip};
+use crate::command::{Command, tip};
 use crate::{action::Action, theme};
-use eframe::egui::{Align, Layout, Popup, Response, Sense, TextStyle, Ui, vec2};
+use eframe::egui::{Popup, Response, Sense, TextStyle, Ui, vec2};
 use fx_app::{Explorer, SortColumn, SortSpec, t};
 
 const HEIGHT: f32 = 28.0;
@@ -38,19 +38,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
 
         let resp = command(ui, Glyph::Sort, t("cmd.sort"), true, true);
         Popup::menu(&resp).show(|ui| sort_menu(ui, explorer.active().sort(), actions));
-
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let resp = command(ui, Glyph::More, "", true, false);
-            Popup::menu(&resp).show(|ui| more_menu(ui, actions));
-        });
     });
-}
-
-/// The overflow ("…") menu at the right end of the bar.
-fn more_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
-    if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
-        actions.push(Action::SelectAll);
-    }
 }
 
 fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {

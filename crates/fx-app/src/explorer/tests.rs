@@ -1427,3 +1427,23 @@ fn tick_notices_external_changes() {
         names(e).contains(&"late.txt".to_owned())
     });
 }
+
+#[test]
+fn pasting_into_the_same_folder_duplicates_with_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("f.txt"), b"x").unwrap();
+    let mut explorer = explorer_in(root);
+    for _ in 0..2 {
+        explorer.copy_to_clipboard(&[row_of(&explorer, "f.txt")], false);
+        explorer.paste(None);
+        settle(&mut explorer);
+    }
+    assert!(root.join("f copy (1).txt").exists());
+    assert!(root.join("f copy (2).txt").exists());
+    let names: Vec<_> = fs::read_dir(root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+}
