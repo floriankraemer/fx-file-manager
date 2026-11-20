@@ -69,6 +69,7 @@ comfortable = "Зручна"
 bookmarks = "Закладки"
 places = "Місця"
 drives = "Диски"
+wsl = "WSL"
 home = "Домашня папка"
 
 [table]

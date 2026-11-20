@@ -69,6 +69,7 @@ comfortable = "舒适"
 bookmarks = "书签"
 places = "位置"
 drives = "驱动器"
+wsl = "WSL"
 home = "主文件夹"
 
 [table]

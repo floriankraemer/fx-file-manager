@@ -11,6 +11,8 @@ mod tab;
 mod transfers;
 mod tree;
 mod view;
+#[cfg(windows)]
+mod wsl;
 
 #[cfg(windows)]
 pub use explorer::open_with_chooser;

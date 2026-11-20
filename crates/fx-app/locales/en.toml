@@ -70,6 +70,7 @@ comfortable = "Comfortable"
 bookmarks = "Bookmarks"
 places = "Places"
 drives = "Drives"
+wsl = "WSL"
 home = "Home"
 
 [table]

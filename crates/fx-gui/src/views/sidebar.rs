@@ -7,10 +7,11 @@ use eframe::egui::{Color32, Rect, Response, RichText, ScrollArea, Sense, Ui, pos
 use fx_app::{Children, Explorer, Place, PlaceGroup, bookmark_places, t, tr};
 use std::path::{Path, PathBuf};
 
-const GROUPS: [PlaceGroup; 3] = [
+const GROUPS: [PlaceGroup; 4] = [
     PlaceGroup::Places,
     PlaceGroup::Bookmarks,
     PlaceGroup::Drives,
+    PlaceGroup::Wsl,
 ];
 const INDENT: f32 = 16.0;
 const CHEVRON_W: f32 = 12.0;

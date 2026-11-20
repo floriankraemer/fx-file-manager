@@ -69,6 +69,7 @@ comfortable = "Cómoda"
 bookmarks = "Marcadores"
 places = "Lugares"
 drives = "Unidades"
+wsl = "WSL"
 home = "Carpeta personal"
 
 [table]

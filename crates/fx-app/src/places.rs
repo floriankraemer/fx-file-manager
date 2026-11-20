@@ -34,6 +34,8 @@ pub enum PlaceGroup {
     Bookmarks,
     /// Filesystem roots and mounts.
     Drives,
+    /// Installed WSL distributions.
+    Wsl,
 }
 
 impl PlaceGroup {
@@ -42,6 +44,7 @@ impl PlaceGroup {
             Self::Places => crate::t("places.places"),
             Self::Bookmarks => crate::t("places.bookmarks"),
             Self::Drives => crate::t("places.drives"),
+            Self::Wsl => crate::t("places.wsl"),
         }
     }
 }
@@ -74,6 +77,8 @@ pub fn places() -> Vec<Place> {
         ));
     }
     out.extend(roots());
+    #[cfg(windows)]
+    out.extend(distro_places(crate::wsl::distro_names()));
     out
 }
 
@@ -129,7 +134,7 @@ fn existing(candidates: impl Iterator<Item = (String, PathBuf)>) -> Vec<Place> {
 
 #[cfg(windows)]
 fn roots() -> Vec<Place> {
-    let mut out: Vec<Place> = (b'A'..=b'Z')
+    (b'A'..=b'Z')
         .filter_map(|letter| {
             let label = format!("{}:", char::from(letter));
             let path = PathBuf::from(format!("{label}\\"));
@@ -140,39 +145,22 @@ fn roots() -> Vec<Place> {
                 group: PlaceGroup::Drives,
             })
         })
-        .collect();
-    out.extend(wsl_distros());
-    out
+        .collect()
 }
 
-#[cfg(windows)]
-fn wsl_distros() -> Vec<Place> {
-    ["\\\\wsl.localhost", "\\\\wsl$"]
-        .into_iter()
-        .find_map(|root| Some(distro_places(root, distro_names(root)?)))
-        .unwrap_or_default()
-}
-
-#[cfg(windows)]
-fn distro_names(root: &str) -> Option<Vec<String>> {
-    let entries = std::fs::read_dir(root).ok()?;
-    Some(
-        entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect(),
-    )
-}
+/// Names of Docker's internal helper distros, which are not meant to be browsed.
+#[cfg(any(windows, test))]
+const HIDDEN_DISTROS: [&str; 2] = ["docker-desktop", "docker-desktop-data"];
 
 #[cfg(any(windows, test))]
-fn distro_places(root: &str, names: Vec<String>) -> Vec<Place> {
+fn distro_places(names: Vec<String>) -> Vec<Place> {
     let mut places: Vec<Place> = names
         .into_iter()
+        .filter(|name| !HIDDEN_DISTROS.contains(&name.as_str()))
         .map(|name| Place {
-            path: PathBuf::from(format!("{root}\\{name}")),
+            path: PathBuf::from(format!("\\\\wsl.localhost\\{name}")),
             label: name,
-            group: PlaceGroup::Drives,
+            group: PlaceGroup::Wsl,
             share: None,
         })
         .collect();
@@ -261,15 +249,17 @@ mod tests {
     }
 
     #[test]
-    fn distros_are_sorted_drives_under_the_given_root() {
-        let found = distro_places(
-            r"\\wsl.localhost",
-            vec!["Ubuntu".to_owned(), "Debian".to_owned()],
-        );
+    fn distros_are_sorted_wsl_places_without_docker_helpers() {
+        let found = distro_places(vec![
+            "Ubuntu".to_owned(),
+            "docker-desktop".to_owned(),
+            "Debian".to_owned(),
+        ]);
+        assert_eq!(found.len(), 2);
         assert_eq!(found[0].label, "Debian");
         assert_eq!(found[0].path, PathBuf::from(r"\\wsl.localhost\Debian"));
         assert_eq!(found[1].label, "Ubuntu");
-        assert_eq!(found[1].group, PlaceGroup::Drives);
+        assert_eq!(found[1].group, PlaceGroup::Wsl);
     }
 
     #[cfg(target_os = "linux")]

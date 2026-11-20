@@ -15,6 +15,8 @@
 
 ## Places and drives
 
-On Windows, installed WSL distros are listed under Drives, read from `\\wsl.localhost` (fallback `\\wsl$`).
+On Windows, installed WSL distros are listed in their own WSL sidebar group, read from the `Lxss` registry key.
+Each entry opens `\\wsl.localhost\<distro>`.
+Docker's helper distros are hidden.
 WSL paths are treated as network storage.
 Dotfiles are not hidden there, since WSL sets no hidden attribute.

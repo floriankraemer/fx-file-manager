@@ -69,6 +69,7 @@ comfortable = "Confortable"
 bookmarks = "Signets"
 places = "Emplacements"
 drives = "Lecteurs"
+wsl = "WSL"
 home = "Dossier personnel"
 
 [table]
