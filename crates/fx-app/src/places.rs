@@ -129,7 +129,7 @@ fn existing(candidates: impl Iterator<Item = (String, PathBuf)>) -> Vec<Place> {
 
 #[cfg(windows)]
 fn roots() -> Vec<Place> {
-    (b'A'..=b'Z')
+    let mut out: Vec<Place> = (b'A'..=b'Z')
         .filter_map(|letter| {
             let label = format!("{}:", char::from(letter));
             let path = PathBuf::from(format!("{label}\\"));
@@ -140,7 +140,44 @@ fn roots() -> Vec<Place> {
                 group: PlaceGroup::Drives,
             })
         })
-        .collect()
+        .collect();
+    out.extend(wsl_distros());
+    out
+}
+
+#[cfg(windows)]
+fn wsl_distros() -> Vec<Place> {
+    ["\\\\wsl.localhost", "\\\\wsl$"]
+        .into_iter()
+        .find_map(|root| Some(distro_places(root, distro_names(root)?)))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn distro_names(root: &str) -> Option<Vec<String>> {
+    let entries = std::fs::read_dir(root).ok()?;
+    Some(
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect(),
+    )
+}
+
+#[cfg(any(windows, test))]
+fn distro_places(root: &str, names: Vec<String>) -> Vec<Place> {
+    let mut places: Vec<Place> = names
+        .into_iter()
+        .map(|name| Place {
+            path: PathBuf::from(format!("{root}\\{name}")),
+            label: name,
+            group: PlaceGroup::Drives,
+            share: None,
+        })
+        .collect();
+    places.sort_by(|a, b| a.label.cmp(&b.label));
+    places
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -221,6 +258,18 @@ mod tests {
         assert_eq!(places[0].group, PlaceGroup::Bookmarks);
         assert_eq!(places[0].label, "Gone");
         assert_eq!(places[0].share, None);
+    }
+
+    #[test]
+    fn distros_are_sorted_drives_under_the_given_root() {
+        let found = distro_places(
+            r"\\wsl.localhost",
+            vec!["Ubuntu".to_owned(), "Debian".to_owned()],
+        );
+        assert_eq!(found[0].label, "Debian");
+        assert_eq!(found[0].path, PathBuf::from(r"\\wsl.localhost\Debian"));
+        assert_eq!(found[1].label, "Ubuntu");
+        assert_eq!(found[1].group, PlaceGroup::Drives);
     }
 
     #[cfg(target_os = "linux")]
