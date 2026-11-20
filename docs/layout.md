@@ -12,3 +12,9 @@
 - Windows: `GetFileInformationByHandleEx` with `FileIdBothDirectoryInfo`.
 - macOS: `getattrlistbulk`.
 - `std_fs` is the portable baseline and the test oracle.
+
+## Places and drives
+
+On Windows, installed WSL distros are listed under Drives, read from `\\wsl.localhost` (fallback `\\wsl$`).
+WSL paths are treated as network storage.
+Dotfiles are not hidden there, since WSL sets no hidden attribute.
