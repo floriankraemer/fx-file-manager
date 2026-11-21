@@ -143,6 +143,7 @@ license = "License"
 repository = "Repository"
 copy_tip = "Copy version and build info"
 translations = "Translations are machine generated. Corrections are welcome as pull requests."
+icons = "Icons: Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
 title = "Settings"

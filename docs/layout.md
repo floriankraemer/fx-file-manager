@@ -5,6 +5,7 @@
 - `crates/fx-gui`: egui/eframe desktop app, binary `fx-gui`.
 - `crates/fx-cli`: console app, binary `fx`.
 - `crates/icon-theme`: embedded Material icon theme for the GUI.
+  Icons the theme lacks come from Lucide, see `icons.md`.
 
 ## Per-OS listing backends
 

@@ -134,6 +134,7 @@ license = "许可证"
 repository = "仓库"
 copy_tip = "复制版本和构建信息"
 translations = "翻译由机器生成。欢迎通过 Pull Request 提交更正。"
+icons = "图标：Material Icon Theme (MIT)、Lucide (ISC)。"
 
 [settings]
 title = "设置"

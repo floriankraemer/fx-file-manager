@@ -35,7 +35,7 @@ pub fn focus(ctx: &Context) {
 pub fn show(ctx: &Context) -> bool {
     let builder = ViewportBuilder::default()
         .with_title(t("menu.about"))
-        .with_inner_size([420.0, 340.0])
+        .with_inner_size([420.0, 360.0])
         .with_resizable(false);
     let mut close = false;
     ctx.show_viewport_immediate(viewport_id(), builder, |ui, _class| {
@@ -78,6 +78,7 @@ fn content(ui: &mut Ui) -> bool {
             .small()
             .color(theme::dim()),
     );
+    ui.label(RichText::new(t("about.icons")).small().color(theme::dim()));
     let mut close = false;
     ui.scope(|ui| {
         ui.spacing_mut().button_padding = ENTRY_PADDING;

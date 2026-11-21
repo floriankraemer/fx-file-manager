@@ -158,6 +158,7 @@ license = "Ліцензія"
 repository = "Репозиторій"
 copy_tip = "Копіювати версію та відомості про збірку"
 translations = "Переклади створено машинним способом. Виправлення вітаються у вигляді pull request."
+icons = "Іконки: Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
 title = "Налаштування"
