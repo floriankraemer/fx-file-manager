@@ -58,4 +58,4 @@ Five-crate workspace with strict layering; dependencies point downward only.
 - Release: bump workspace `version` in `Cargo.toml`, commit, tag `vX.Y.Z[-pre]`; `release.yml` rejects a non-semver or mismatched tag, runs tests, builds via `build.yml` (smoke-tested, version stamped), and creates a **draft** release with `SHA256SUMS` for you to edit and publish.
 - Every push to `master` rebuilds the rolling `latest` pre-release (`latest.yml`). Commits and PR titles follow Conventional Commits; the types pick the next version.
 - Icons: Material icon theme first; anything it lacks uses Lucide (ISC), vendored in `third_party/lucide/` with attribution. Never draw glyphs by hand or use text arrows. See `docs/icons.md`.
-- More detail in `docs/` (`layout.md`, `settings.md`, `themes.md`, `copy-engine.md`, `development.md`).
+- More detail in `docs/` (`layout.md`, `settings.md`, `themes.md`, `copy-engine.md`, `performance.md`, `development.md`).
