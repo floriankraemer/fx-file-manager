@@ -3,6 +3,17 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-21
+
+### Fixed
+
+- The toolbar back, forward, up and refresh buttons use icons instead of text arrows, which could show as empty boxes with the default font (#40).
+  The icons and the toolbar row are also larger.
+
+### Changed
+
+- The About window names the icon sources, Material Icon Theme and Lucide.
+
 ## [0.5.0] - 2026-11-21
 
 ### Changed

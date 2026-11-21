@@ -1589,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "fx-app"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "fx-core",
  "serde",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "fx-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "clap",
  "fx-core",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "fx-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "io-uring",
  "libc",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "fx-gui"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "drag",
  "eframe",
