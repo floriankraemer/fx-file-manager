@@ -8,7 +8,7 @@ version = "0.4.0"
 publish = false
 authors = ["Florian Krämer"]
 repository = "https://github.com/floriankraemer/fx-file-manager"
-license = "MIT"
+license = "GPL-3.0-only"
 rust-version = "1.95"
 
 [profile.release]

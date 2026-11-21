@@ -61,5 +61,5 @@ Commit messages and pull request titles follow [Conventional Commits](https://ww
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+GPL-3.0-only. See [LICENSE](LICENSE).
 Copyright (c) 2026 Florian Krämer.
