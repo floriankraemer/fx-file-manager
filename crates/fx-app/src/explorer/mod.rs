@@ -16,7 +16,6 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-pub use chooser::open_with_chooser;
 pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
 
@@ -87,6 +86,9 @@ pub struct Explorer {
     rx: Receiver<Completed>,
     job_tx: Sender<Outcome>,
     job_rx: Receiver<Outcome>,
+    /// Errors that background helpers, such as the Open with chooser, report back.
+    error_tx: Sender<String>,
+    error_rx: Receiver<String>,
     /// One delete/rename/create at a time: a second request is refused while this is set.
     // ponytail: serial jobs; add a queue if users need to chain operations while one runs
     job_in_flight: bool,
@@ -175,6 +177,7 @@ impl Explorer {
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let (job_tx, job_rx) = mpsc::channel();
+        let (error_tx, error_rx) = mpsc::channel();
         let (tree_tx, tree_rx) = mpsc::channel();
         let (preload_tx, preload_rx) = mpsc::channel();
         let (stat_tx, stat_rx) = mpsc::channel();
@@ -188,6 +191,8 @@ impl Explorer {
             rx,
             job_tx,
             job_rx,
+            error_tx,
+            error_rx,
             job_in_flight: false,
             transfers: Transfers::default(),
             tree_tx,
@@ -309,6 +314,7 @@ impl Explorer {
         }
         changed |= self.apply_tree_loads();
         changed |= self.apply_job_outcomes();
+        changed |= self.apply_helper_errors();
         changed |= self.poll_transfers();
         changed
     }

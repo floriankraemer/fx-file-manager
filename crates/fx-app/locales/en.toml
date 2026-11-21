@@ -245,6 +245,7 @@ paste_into_self = "a folder cannot be pasted into itself"
 invalid_name = "invalid name"
 
 [notice]
+open_with_unavailable = "No application chooser is available. Install xdg-desktop-portal and a portal backend for your desktop."
 save_failed = "Could not save settings: {error}"
 keymap_ignored = "Ignored keymap entry: {entry}"
 nothing_to_delete = "Nothing selected to delete"

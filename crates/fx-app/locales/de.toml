@@ -244,6 +244,7 @@ paste_into_self = "ein Ordner kann nicht in sich selbst eingefügt werden"
 invalid_name = "ungültiger Name"
 
 [notice]
+open_with_unavailable = "Es ist keine Anwendungsauswahl verfügbar. Installiere xdg-desktop-portal und ein Portal-Backend für deine Desktop-Umgebung."
 save_failed = "Einstellungen konnten nicht gespeichert werden: {error}"
 keymap_ignored = "Tastenzuordnung ignoriert: {entry}"
 nothing_to_delete = "Nichts zum Löschen ausgewählt"

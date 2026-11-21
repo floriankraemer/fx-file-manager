@@ -244,6 +244,7 @@ paste_into_self = "una carpeta no se puede pegar dentro de sí misma"
 invalid_name = "nombre no válido"
 
 [notice]
+open_with_unavailable = "No hay ningún selector de aplicaciones disponible. Instala xdg-desktop-portal y un backend de portal para tu escritorio."
 save_failed = "No se pudieron guardar los ajustes: {error}"
 keymap_ignored = "Entrada de atajo ignorada: {entry}"
 nothing_to_delete = "No hay nada seleccionado para eliminar"

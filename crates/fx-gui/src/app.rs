@@ -192,11 +192,7 @@ impl App {
                     ex.toggle_bookmark(path);
                 }
             }
-            Action::OpenWith(row) => {
-                if let Some(path) = ex.entry_path(row) {
-                    fx_app::open_with_chooser(&path);
-                }
-            }
+            Action::OpenWith(row) => ex.open_with(row),
             Action::CopyPath => copy_paths(ctx, ex),
             Action::Copy => ex.copy_to_clipboard(&ex.active().selection(), false),
             Action::Cut => ex.copy_to_clipboard(&ex.active().selection(), true),

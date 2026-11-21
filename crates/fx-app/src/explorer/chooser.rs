@@ -5,14 +5,14 @@ use std::thread;
 
 /// Lets the user pick the application for `path` in the system's chooser and opens the file with it.
 /// The chooser is modal and slow, so it runs on its own thread and the window stays live.
-/// Cancelling or an unavailable chooser is not an error, so no result is reported.
-pub fn open_with_chooser(path: &Path) {
+/// Cancelling is not an error. `on_unavailable` is called, from the chooser's thread, only when the system offers no chooser.
+pub fn open_with_chooser(path: &Path, on_unavailable: impl FnOnce() + Send + 'static) {
     let path = path.to_path_buf();
-    thread::spawn(move || choose_and_open(&path));
+    thread::spawn(move || choose_and_open(&path, on_unavailable));
 }
 
 #[cfg(windows)]
-fn choose_and_open(path: &Path) {
+fn choose_and_open(path: &Path, _on_unavailable: impl FnOnce()) {
     use std::os::windows::ffi::OsStrExt;
     let file: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     show_open_with_dialog(&file);
@@ -44,8 +44,10 @@ fn show_open_with_dialog(file: &[u16]) {
 
 /// The desktop portal's `OpenFile` with `ask` shows the desktop's native chooser, in or out of a sandbox.
 #[cfg(target_os = "linux")]
-fn choose_and_open(path: &Path) {
-    let _ = ask_portal(path);
+fn choose_and_open(path: &Path, on_unavailable: impl FnOnce()) {
+    if ask_portal(path).is_err() {
+        on_unavailable();
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -66,7 +68,7 @@ fn ask_portal(path: &Path) -> zbus::Result<()> {
 
 /// macOS has no chooser command, so AppleScript's `choose application` picks the app and `open -a` runs it.
 #[cfg(target_os = "macos")]
-fn choose_and_open(path: &Path) {
+fn choose_and_open(path: &Path, _on_unavailable: impl FnOnce()) {
     use std::process::Command;
     let picked = Command::new("osascript")
         .args(["-e", "POSIX path of (choose application)"])
@@ -81,4 +83,6 @@ fn choose_and_open(path: &Path) {
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn choose_and_open(_path: &Path) {}
+fn choose_and_open(_path: &Path, on_unavailable: impl FnOnce()) {
+    on_unavailable();
+}

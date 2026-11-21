@@ -236,6 +236,7 @@ paste_into_self = "文件夹不能粘贴到自身中"
 invalid_name = "名称无效"
 
 [notice]
+open_with_unavailable = "没有可用的应用选择器。请安装 xdg-desktop-portal 以及适用于你桌面环境的 portal 后端。"
 save_failed = "无法保存设置：{error}"
 keymap_ignored = "已忽略的快捷键条目：{entry}"
 nothing_to_delete = "未选择要删除的项目"

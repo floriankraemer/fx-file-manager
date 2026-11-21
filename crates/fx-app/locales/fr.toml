@@ -244,6 +244,7 @@ paste_into_self = "un dossier ne peut pas être collé dans lui-même"
 invalid_name = "nom non valide"
 
 [notice]
+open_with_unavailable = "Aucun sélecteur d'application n'est disponible. Installez xdg-desktop-portal et un backend de portail pour votre bureau."
 save_failed = "Impossible d’enregistrer les paramètres : {error}"
 keymap_ignored = "Entrée de raccourci ignorée : {entry}"
 nothing_to_delete = "Aucune sélection à supprimer"

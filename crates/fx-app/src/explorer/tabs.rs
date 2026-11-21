@@ -1,10 +1,12 @@
 //! Tabs of the current window: opening, closing, switching, history navigation and row lookups.
 
+use super::chooser::open_with_chooser;
 use super::{Explorer, absolute, open_with_system};
 use crate::ops::{EntryDetails, details};
 use crate::tab::{LoadState, Tab};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 impl Explorer {
     pub fn tabs(&self) -> &[Tab] {
@@ -138,6 +140,29 @@ impl Explorer {
         } else if let Err(err) = open_with_system(&path) {
             eprintln!("fx: cannot open {}: {err}", path.display());
         }
+    }
+
+    /// Lets the user pick the application for the file at `row`; shows a notice when the system has no chooser.
+    pub fn open_with(&self, row: usize) {
+        let Some(path) = self.entry_path(row) else {
+            return;
+        };
+        let tx = self.error_tx.clone();
+        let wake = Arc::clone(&self.wake);
+        open_with_chooser(&path, move || {
+            let _ = tx.send(crate::t("notice.open_with_unavailable").to_owned());
+            wake();
+        });
+    }
+
+    /// Shows the errors background helpers reported. Returns true if there were any.
+    pub(super) fn apply_helper_errors(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(text) = self.error_rx.try_recv() {
+            self.notify_error(text);
+            changed = true;
+        }
+        changed
     }
 
     /// Opens the folder at `row` in a new tab. Non-folders are ignored.

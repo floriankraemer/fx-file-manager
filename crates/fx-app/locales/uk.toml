@@ -260,6 +260,7 @@ paste_into_self = "папку не можна вставити в саму се�
 invalid_name = "недопустиме ім’я"
 
 [notice]
+open_with_unavailable = "Вибір програми недоступний. Встановіть xdg-desktop-portal і бекенд порталу для вашого робочого середовища."
 save_failed = "Не вдалося зберегти налаштування: {error}"
 keymap_ignored = "Пропущено запис клавіш: {entry}"
 nothing_to_delete = "Нічого не вибрано для видалення"
