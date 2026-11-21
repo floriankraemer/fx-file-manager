@@ -1,6 +1,7 @@
 //! Owns the tabs and the background loader. Navigation goes through here because only Explorer can start loads.
 
 mod bookmarks;
+mod chooser;
 mod file_ops;
 mod loading;
 mod opener;
@@ -15,8 +16,7 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-#[cfg(windows)]
-pub use opener::open_with_chooser;
+pub use chooser::open_with_chooser;
 pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
 

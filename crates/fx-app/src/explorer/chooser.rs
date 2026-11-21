@@ -1,0 +1,84 @@
+//! The operating system's own "Open with" application chooser.
+
+use std::path::Path;
+use std::thread;
+
+/// Lets the user pick the application for `path` in the system's chooser and opens the file with it.
+/// The chooser is modal and slow, so it runs on its own thread and the window stays live.
+/// Cancelling or an unavailable chooser is not an error, so no result is reported.
+pub fn open_with_chooser(path: &Path) {
+    let path = path.to_path_buf();
+    thread::spawn(move || choose_and_open(&path));
+}
+
+#[cfg(windows)]
+fn choose_and_open(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    show_open_with_dialog(&file);
+}
+
+/// Runs the modal "Open with" dialog for the NUL-terminated wide path `file` on the calling thread.
+#[cfg(windows)]
+fn show_open_with_dialog(file: &[u16]) {
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OPENASINFO, SHOpenWithDialog,
+    };
+    let info = OPENASINFO {
+        pcszFile: file.as_ptr(),
+        pcszClass: std::ptr::null(),
+        oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_EXEC,
+    };
+    // SAFETY: shell dialogs need COM on the calling thread; `file` is NUL-terminated and outlives the call.
+    unsafe {
+        let com = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+        SHOpenWithDialog(std::ptr::null_mut(), &info);
+        if com >= 0 {
+            CoUninitialize();
+        }
+    }
+}
+
+/// The desktop portal's `OpenFile` with `ask` shows the desktop's native chooser, in or out of a sandbox.
+#[cfg(target_os = "linux")]
+fn choose_and_open(path: &Path) {
+    let _ = ask_portal(path);
+}
+
+#[cfg(target_os = "linux")]
+fn ask_portal(path: &Path) -> zbus::Result<()> {
+    use std::collections::HashMap;
+    use zbus::zvariant::{Fd, Value};
+    let file = std::fs::File::open(path)?;
+    let options = HashMap::from([("ask", Value::from(true))]);
+    zbus::blocking::Connection::session()?.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.OpenURI"),
+        "OpenFile",
+        &("", Fd::from(&file), options),
+    )?;
+    Ok(())
+}
+
+/// macOS has no chooser command, so AppleScript's `choose application` picks the app and `open -a` runs it.
+#[cfg(target_os = "macos")]
+fn choose_and_open(path: &Path) {
+    use std::process::Command;
+    let picked = Command::new("osascript")
+        .args(["-e", "POSIX path of (choose application)"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success());
+    let Some(out) = picked else {
+        return;
+    };
+    let app = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let _ = Command::new("open").arg("-a").arg(app).arg(path).status();
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn choose_and_open(_path: &Path) {}

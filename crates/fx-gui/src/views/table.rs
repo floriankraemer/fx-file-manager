@@ -395,7 +395,6 @@ fn row_menu(
     if is_dir && menu::item(ui, t("cmd.open_new_tab"), "", true) {
         actions.push(Action::OpenInNewTab(row));
     }
-    #[cfg(windows)]
     if !is_dir && menu::item(ui, t("cmd.open_with"), "", true) {
         actions.push(Action::OpenWith(row));
     }

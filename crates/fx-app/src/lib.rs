@@ -14,7 +14,6 @@ mod view;
 #[cfg(windows)]
 mod wsl;
 
-#[cfg(windows)]
 pub use explorer::open_with_chooser;
 pub use explorer::{Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
 pub use format::{

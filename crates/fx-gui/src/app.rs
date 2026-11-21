@@ -192,7 +192,6 @@ impl App {
                     ex.toggle_bookmark(path);
                 }
             }
-            #[cfg(windows)]
             Action::OpenWith(row) => {
                 if let Some(path) = ex.entry_path(row) {
                     fx_app::open_with_chooser(&path);
