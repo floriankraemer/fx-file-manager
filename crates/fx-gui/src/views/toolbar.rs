@@ -30,7 +30,7 @@ pub fn parse_typed_path(text: &str) -> Option<PathBuf> {
 }
 
 /// Height of every control in the toolbar row.
-const CRUMB_HEIGHT: f32 = 22.0;
+const CRUMB_HEIGHT: f32 = 28.0;
 
 pub fn show(ui: &mut Ui, explorer: &mut Explorer, path_edit: &mut Option<PathEdit>) {
     if path_edit
@@ -99,7 +99,7 @@ fn nav_button(ui: &mut Ui, glyph: Glyph, enabled: bool, label: &str) -> Response
     } else {
         Sense::hover()
     };
-    let (rect, resp) = ui.allocate_exact_size(vec2(26.0, CRUMB_HEIGHT), sense);
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, CRUMB_HEIGHT), sense);
     resp.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
     if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, 4.0, theme::panel_hi());

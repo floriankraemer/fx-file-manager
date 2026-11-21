@@ -19,6 +19,8 @@ mod embedded {
 }
 
 const ICON_PT: f32 = 16.0;
+/// Toolbar action icons are larger than entry icons.
+const ACTION_ICON_PT: f32 = 20.0;
 
 struct Embedded;
 
@@ -235,11 +237,11 @@ fn lucide_texture(ui: &Ui, glyph: Glyph, px: u32) -> Option<TextureHandle> {
 }
 
 fn paint_lucide(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
-    let px = (ICON_PT * ui.pixels_per_point()).round() as u32;
+    let px = (ACTION_ICON_PT * ui.pixels_per_point()).round() as u32;
     let Some(tex) = lucide_texture(ui, glyph, px) else {
         return;
     };
-    let r = Rect::from_center_size(rect.center(), vec2(ICON_PT, ICON_PT));
+    let r = Rect::from_center_size(rect.center(), vec2(ACTION_ICON_PT, ACTION_ICON_PT));
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     ui.painter().image(tex.id(), r, uv, color);
 }
