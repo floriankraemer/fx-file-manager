@@ -1,9 +1,10 @@
-use super::menu::bar_button;
+use super::icons::{self, Glyph};
 use crate::command::{Command, tip};
 use crate::theme;
 use eframe::egui::text_selection::CCursorRange;
 use eframe::egui::{
-    CursorIcon, Key, Layout, RichText, Sense, Stroke, TextEdit, TextStyle, Ui, vec2,
+    CursorIcon, Key, Layout, Response, RichText, Role, Sense, Stroke, TextEdit, TextStyle, Ui,
+    WidgetInfo, vec2,
 };
 use fx_app::{Explorer, Tab, breadcrumbs, t};
 use std::path::{Path, PathBuf};
@@ -65,30 +66,51 @@ fn nav_buttons(ui: &mut Ui, explorer: &mut Explorer) {
         let tab = explorer.active();
         (tab.can_back(), tab.can_forward(), tab.can_up())
     };
-    if bar_button(ui, "←", can_back)
+    if nav_button(ui, Glyph::Back, can_back, t("tip.back"))
         .on_hover_text(tip("tip.back", Command::Back))
         .clicked()
     {
         explorer.back();
     }
-    if bar_button(ui, "→", can_forward)
+    if nav_button(ui, Glyph::Forward, can_forward, t("tip.forward"))
         .on_hover_text(tip("tip.forward", Command::Forward))
         .clicked()
     {
         explorer.forward();
     }
-    if bar_button(ui, "↑", can_up)
+    if nav_button(ui, Glyph::Up, can_up, t("tip.up"))
         .on_hover_text(tip("tip.up", Command::Up))
         .clicked()
     {
         explorer.up();
     }
-    if bar_button(ui, "⟳", true)
+    if nav_button(ui, Glyph::Refresh, true, t("tip.refresh"))
         .on_hover_text(tip("tip.refresh", Command::Refresh))
         .clicked()
     {
         explorer.refresh();
     }
+}
+
+/// A flat icon button; `label` names it for assistive tech.
+fn nav_button(ui: &mut Ui, glyph: Glyph, enabled: bool, label: &str) -> Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(26.0, CRUMB_HEIGHT), sense);
+    resp.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
+    if enabled && resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, theme::panel_hi());
+    }
+    let color = if enabled {
+        theme::text()
+    } else {
+        theme::dim().gamma_multiply(0.6)
+    };
+    icons::glyph(ui, rect, glyph, color);
+    resp
 }
 
 fn filter_field(ui: &mut Ui, tab: &mut Tab) {
@@ -224,6 +246,18 @@ fn crumb(ui: &mut Ui, label: &str, current: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn toolbar_renders_without_text_glyphs() {
+        let mut explorer = Explorer::new(std::env::temp_dir(), || {});
+        let mut path_edit = None;
+        let mut harness = Harness::new_ui(|ui| show(ui, &mut explorer, &mut path_edit));
+        harness.run();
+        harness.get_by_label(t("tip.back"));
+        harness.get_by_label(t("tip.refresh"));
+    }
 
     #[test]
     fn typed_paths_are_trimmed_and_unquoted() {

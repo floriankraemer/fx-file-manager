@@ -133,6 +133,10 @@ pub enum Glyph {
     Sort,
     Chevron,
     ChevronRight,
+    Back,
+    Forward,
+    Up,
+    Refresh,
 }
 
 /// Paints `glyph` centered in `rect` (a 16x16 area).
@@ -190,12 +194,68 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
             p.line_segment([at(-3.0, -1.5), at(0.0, 1.5)], s);
             p.line_segment([at(3.0, -1.5), at(0.0, 1.5)], s);
         }
+        Glyph::Back | Glyph::Forward | Glyph::Up | Glyph::Refresh => {
+            paint_lucide(ui, rect, glyph, color);
+        }
     }
+}
+
+/// Lucide (ISC) icons for actions the Material file icon theme has no icon for.
+/// Rendered white and tinted at paint time, so one texture serves every color.
+fn lucide_svg(glyph: Glyph) -> &'static str {
+    match glyph {
+        Glyph::Back => include_str!("../../../../third_party/lucide/arrow-left.svg"),
+        Glyph::Forward => include_str!("../../../../third_party/lucide/arrow-right.svg"),
+        Glyph::Up => include_str!("../../../../third_party/lucide/arrow-up.svg"),
+        _ => include_str!("../../../../third_party/lucide/refresh-cw.svg"),
+    }
+}
+
+fn lucide_texture(ui: &Ui, glyph: Glyph, px: u32) -> Option<TextureHandle> {
+    let shared = shared(ui.ctx());
+    let mut t = shared.lock().unwrap_or_else(|e| e.into_inner());
+    let key = (format!("lucide:{}", glyph as u8), px);
+    if let Some(tex) = t.textures.get(&key) {
+        return Some(tex.clone());
+    }
+    let svg = lucide_svg(glyph)
+        .replace("currentColor", "#fff")
+        .replace("width=\"24\"", &format!("width=\"{px}\""))
+        .replace("height=\"24\"", &format!("height=\"{px}\""));
+    let icon = icon_theme::rasterise_svg(svg.as_bytes()).ok()?;
+    let image = ColorImage::from_rgba_premultiplied(
+        [icon.width as usize, icon.height as usize],
+        &icon.pixels,
+    );
+    let tex = ui
+        .ctx()
+        .load_texture(format!("{}:{px}", key.0), image, TextureOptions::LINEAR);
+    t.textures.insert(key, tex.clone());
+    Some(tex)
+}
+
+fn paint_lucide(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
+    let px = (ICON_PT * ui.pixels_per_point()).round() as u32;
+    let Some(tex) = lucide_texture(ui, glyph, px) else {
+        return;
+    };
+    let r = Rect::from_center_size(rect.center(), vec2(ICON_PT, ICON_PT));
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    ui.painter().image(tex.id(), r, uv, color);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lucide_glyphs_rasterise_with_ink() {
+        for glyph in [Glyph::Back, Glyph::Forward, Glyph::Up, Glyph::Refresh] {
+            let svg = lucide_svg(glyph).replace("currentColor", "#fff");
+            let icon = icon_theme::rasterise_svg(svg.as_bytes()).unwrap();
+            assert!(icon.pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
+        }
+    }
 
     #[test]
     fn embedded_pack_has_default_assets() {
