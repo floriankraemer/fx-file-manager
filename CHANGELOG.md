@@ -3,6 +3,17 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-21
+
+### Changed
+
+- fx is now licensed under the GPL-3.0-only instead of the MIT license.
+- Copies made in the same folder are named "name copy N" (#49, #50).
+
+### Added
+
+- WSL distros appear in their own group in the Windows sidebar.
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
