@@ -4,6 +4,8 @@
 
 A performance optimized cross platform file manager written in Rust.
 
+<p align="center"><img src="docs/screenshot.png" alt="Screenshot of the fx File Manager"></p>
+
 ## Documentation
 
 - [Layout](docs/layout.md)
