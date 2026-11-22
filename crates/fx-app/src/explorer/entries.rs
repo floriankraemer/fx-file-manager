@@ -30,7 +30,7 @@ impl Explorer {
         if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
             self.navigate(path);
         } else if let Err(err) = open_with_system(&path) {
-            eprintln!("fx: cannot open {}: {err}", path.display());
+            log::warn!("cannot open {}: {err}", path.display());
         }
     }
 
