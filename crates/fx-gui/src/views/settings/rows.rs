@@ -4,8 +4,8 @@ use super::{CHECK_INDENT, COMBO_WIDTH, Category, FIELD_WIDTH};
 use crate::theme;
 use eframe::egui::{self, RichText, Sense, TextEdit, Ui};
 use fx_app::{
-    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, Language, MAX_FONT_SIZE,
-    MIN_FONT_SIZE, PlaceGroup, Settings, open_with_system, t,
+    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, Language, ListColumn,
+    MAX_FONT_SIZE, MIN_FONT_SIZE, PlaceGroup, Settings, open_with_system, t,
 };
 
 /// The worker override goes up to robocopy's `/MT` maximum.
@@ -100,18 +100,28 @@ pub(super) const ROWS: &[Row] = &[
         group: "settings.group.columns",
         label: "settings.ext_column",
         kind: Kind::Check,
-        show: |ui, f, l| {
-            ui.checkbox(&mut f.draft.show_ext_column, l);
-        },
+        show: |ui, f, l| column_check(ui, f, l, ListColumn::Ext),
+    },
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.columns",
+        label: "settings.size_column",
+        kind: Kind::Check,
+        show: |ui, f, l| column_check(ui, f, l, ListColumn::Size),
+    },
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.columns",
+        label: "settings.modified_column",
+        kind: Kind::Check,
+        show: |ui, f, l| column_check(ui, f, l, ListColumn::Modified),
     },
     Row {
         category: Category::Appearance,
         group: "settings.group.columns",
         label: "settings.age_column",
         kind: Kind::Check,
-        show: |ui, f, l| {
-            ui.checkbox(&mut f.draft.show_age_column, l);
-        },
+        show: |ui, f, l| column_check(ui, f, l, ListColumn::Age),
     },
     // Only Windows maps network shares to drive letters.
     #[cfg(windows)]
@@ -538,4 +548,12 @@ pub(super) fn note(ui: &mut Ui, text: &str, indent: f32) {
         .show(ui, |ui| {
             ui.add(egui::Label::new(RichText::new(text).small().color(theme::dim())).wrap());
         });
+}
+
+/// A "show this column" checkbox; hiding only edits the draft, like every other row.
+fn column_check(ui: &mut Ui, f: &mut Form, label: &str, column: ListColumn) {
+    let mut shown = f.draft.column_shown(column);
+    if ui.checkbox(&mut shown, label).changed() {
+        f.draft.set_column_shown(column, shown);
+    }
 }

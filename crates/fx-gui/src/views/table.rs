@@ -3,11 +3,11 @@ use super::menu;
 use crate::command::{Command, hint};
 use crate::{action::Action, theme};
 use eframe::egui::scroll_area::ScrollAreaOutput;
-use eframe::egui::{Align, Layout, Modifiers, RichText, Sense, Ui};
+use eframe::egui::{Align, CursorIcon, Layout, Modifiers, RichText, Sense, Stroke, Ui};
 use egui_extras::{Column, TableBuilder, TableRow};
 use fx_app::{
-    Density, DirView, Explorer, LoadState, Settings, SortColumn, SortSpec, age, extension,
-    format_size, format_time, t, tr,
+    Density, DirView, Explorer, ListColumn, LoadState, Settings, SortColumn, SortSpec, age,
+    extension, format_size, format_time, t, tr,
 };
 use fx_core::{Entry, EntryKind};
 use std::path::{Path, PathBuf};
@@ -41,6 +41,61 @@ struct Interaction {
     drag_started: Option<usize>,
     /// Dragged paths released on a folder row, with that folder.
     drop: Option<(Vec<PathBuf>, PathBuf)>,
+    show_column: Option<(ListColumn, bool)>,
+    /// A header dragged onto another column's slot.
+    move_column: Option<(ListColumn, ListColumn)>,
+    /// Widths of the columns the user finished resizing.
+    column_widths: Option<Vec<(ListColumn, f32)>>,
+}
+
+/// Header cell extents of the previous frame. Drops resolve against them because later cells are not laid out yet.
+#[derive(Clone, Default)]
+struct HeaderLayout {
+    columns: Vec<ListColumn>,
+    spans: Vec<(f32, f32)>,
+    /// A resize happened and has not been saved yet.
+    resizing: bool,
+}
+
+impl HeaderLayout {
+    fn width(&self, i: usize) -> f32 {
+        self.spans[i].1 - self.spans[i].0
+    }
+
+    /// The layout after this frame, and the widths to save once a resize has settled.
+    fn advance(
+        &self,
+        columns: &[ListColumn],
+        spans: Vec<(f32, f32)>,
+        pointer_down: bool,
+    ) -> (Self, Option<Vec<(ListColumn, f32)>>) {
+        let mut next = Self {
+            columns: columns.to_vec(),
+            spans,
+            resizing: false,
+        };
+        // After a reorder or first frame there is nothing to compare, so no resize is assumed.
+        if self.columns != next.columns || self.spans.len() != next.spans.len() {
+            return (next, None);
+        }
+        let changed = (0..self.spans.len()).any(|i| (self.width(i) - next.width(i)).abs() > 0.5);
+        next.resizing = self.resizing || changed;
+        if !next.resizing || changed || pointer_down {
+            return (next, None);
+        }
+        next.resizing = false;
+        // The last column only fills what the others leave.
+        let fixed = columns.len() - 1;
+        let widths = (0..fixed).map(|i| (columns[i], next.width(i))).collect();
+        (next, Some(widths))
+    }
+}
+
+/// What the header cells of one frame read and report.
+struct HeaderContext<'a> {
+    sort: SortSpec,
+    settings: &'a Settings,
+    last: &'a HeaderLayout,
 }
 
 pub fn show(
@@ -84,11 +139,17 @@ pub fn show(
         can_paste,
     };
     let mut out = Interaction::default();
+    let layout_key = ui.scope_id().with("header-layout");
+    let last: HeaderLayout = ui.data(|d| d.get_temp(layout_key)).unwrap_or_default();
+    let mut spans = Vec::new();
+    let header = HeaderContext {
+        sort,
+        settings: &settings,
+        last: &last,
+    };
 
     let scroll = table_builder(ui, &settings, scroll_row)
-        .header(22.0, |header| {
-            out.sort = header_row(header, &settings, sort);
-        })
+        .header(22.0, |row| header_row(row, &header, &mut spans, &mut out))
         .body(|body| {
             body.rows(
                 theme::row_height(row_height(settings.density), settings.list_font_size),
@@ -96,6 +157,10 @@ pub fn show(
                 |mut row| entry_row(&mut row, &rows, explorer, &mut out, actions),
             );
         });
+    let pointer_down = ui.input(|i| i.pointer.any_down());
+    let (layout, widths) = last.advance(&settings.list_columns, spans, pointer_down);
+    ui.data_mut(|d| d.insert_temp(layout_key, layout));
+    out.column_widths = widths;
     background_area(ui, &scroll, settings.show_hidden, can_paste, actions);
     apply(ui, explorer, out, &selection, modifiers);
 }
@@ -119,20 +184,21 @@ fn table_builder<'a>(
     settings: &Settings,
     scroll_row: Option<usize>,
 ) -> TableBuilder<'a> {
+    let columns = &settings.list_columns;
+    // Column widths are kept by position, so a new order must start from the saved widths again.
     let mut builder = TableBuilder::new(ui)
+        .id_salt(("list-columns", columns))
         .striped(true)
         .resizable(true)
         .sense(Sense::click_and_drag())
-        .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::remainder().at_least(160.0).clip(true));
-    if settings.show_ext_column {
-        builder = builder.column(Column::initial(60.0).at_least(30.0));
-    }
-    builder = builder
-        .column(Column::initial(80.0).at_least(50.0))
-        .column(Column::initial(140.0).at_least(80.0));
-    if settings.show_age_column {
-        builder = builder.column(Column::initial(56.0).at_least(40.0));
+        .cell_layout(Layout::left_to_right(Align::Center));
+    for (i, column) in columns.iter().enumerate() {
+        let spec = if i + 1 == columns.len() {
+            Column::remainder()
+        } else {
+            Column::initial(settings.column_width(*column))
+        };
+        builder = builder.column(spec.at_least(column.min_width()).clip(true));
     }
     if let Some(row) = scroll_row {
         builder = builder.scroll_to_row(row, None);
@@ -140,40 +206,44 @@ fn table_builder<'a>(
     builder
 }
 
-/// The column headers; returns the column whose header was clicked.
-fn header_row(mut header: TableRow, settings: &Settings, sort: SortSpec) -> Option<SortColumn> {
-    let columns = [
-        (t("col.name"), Some(SortColumn::Name), true),
-        (
-            t("col_short.ext"),
-            Some(SortColumn::Ext),
-            settings.show_ext_column,
-        ),
-        (t("col.size"), Some(SortColumn::Size), true),
-        (t("col.modified"), Some(SortColumn::Modified), true),
-        (t("col.age"), None, settings.show_age_column),
-    ];
-    let mut clicked = None;
-    for (title, column, _) in columns.into_iter().filter(|c| c.2) {
-        header.col(|ui| {
-            if let Some(column) = header_cell(ui, title, column, sort) {
-                clicked = Some(column);
-            }
-        });
+fn sort_column(column: ListColumn) -> Option<SortColumn> {
+    match column {
+        ListColumn::Name => Some(SortColumn::Name),
+        ListColumn::Ext => Some(SortColumn::Ext),
+        ListColumn::Size => Some(SortColumn::Size),
+        ListColumn::Modified => Some(SortColumn::Modified),
+        ListColumn::Age => None,
     }
-    clicked
 }
 
-/// One header cell with its sort arrow; returns its column when clicked.
+/// The column headers; records each cell's extent in `spans`.
+fn header_row(
+    mut header: TableRow,
+    ctx: &HeaderContext,
+    spans: &mut Vec<(f32, f32)>,
+    out: &mut Interaction,
+) {
+    for (i, column) in ctx.settings.list_columns.iter().enumerate() {
+        header.col(|ui| {
+            let r = ui.max_rect();
+            spans.push((r.left(), r.right()));
+            header_cell(ui, i, *column, ctx, out);
+        });
+    }
+}
+
+/// One header cell: click sorts, dragging moves the column, right click lists the columns to show.
 fn header_cell(
     ui: &mut Ui,
-    title: &str,
-    column: Option<SortColumn>,
-    sort: SortSpec,
-) -> Option<SortColumn> {
-    let arrow = match column {
-        Some(c) if c == sort.column => {
-            if sort.ascending {
+    index: usize,
+    column: ListColumn,
+    ctx: &HeaderContext,
+    out: &mut Interaction,
+) {
+    let sort_by = sort_column(column);
+    let arrow = match sort_by {
+        Some(c) if c == ctx.sort.column => {
+            if ctx.sort.ascending {
                 " ▲"
             } else {
                 " ▼"
@@ -181,19 +251,65 @@ fn header_cell(
         }
         _ => "",
     };
-    let text = RichText::new(format!("{title}{arrow}"))
+    let text = RichText::new(format!("{}{arrow}", column.header()))
         .strong()
         .color(theme::header_text());
     let r = ui.max_rect();
     ui.painter().hline(
         r.x_range(),
         r.bottom(),
-        egui::Stroke::new(1.5, theme::accent().gamma_multiply(0.5)),
+        Stroke::new(1.5, theme::accent().gamma_multiply(0.5)),
     );
     // The whole cell is the click target, not just the label.
-    let resp = ui.interact(r, ui.scope_id().with("sort"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("sort"), Sense::click_and_drag());
     ui.add(egui::Label::new(text).selectable(false));
-    column.filter(|_| resp.clicked())
+    if resp.clicked() {
+        out.sort = sort_by;
+    }
+    resp.context_menu(|ui| column_menu(ui, ctx.settings, out));
+    column_drag(ui, &resp, index, ctx, out);
+}
+
+/// Dragging a header onto another column's slot moves it there; a line marks the slot while dragging.
+fn column_drag(
+    ui: &Ui,
+    resp: &egui::Response,
+    index: usize,
+    ctx: &HeaderContext,
+    out: &mut Interaction,
+) {
+    if !resp.dragged() && !resp.drag_stopped() {
+        return;
+    }
+    let spans = &ctx.last.spans;
+    let Some(x) = ui.input(|i| i.pointer.interact_pos()).map(|p| p.x) else {
+        return;
+    };
+    let gap = |(left, right): (f32, f32)| (left - x).max(x - right).max(0.0);
+    let Some(to) = (0..spans.len()).min_by(|a, b| gap(spans[*a]).total_cmp(&gap(spans[*b]))) else {
+        return;
+    };
+    let columns = &ctx.settings.list_columns;
+    if resp.drag_stopped() {
+        out.move_column = (to != index && to < columns.len() && index < columns.len())
+            .then(|| (columns[index], columns[to]));
+        return;
+    }
+    ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+    let edge = if to > index { spans[to].1 } else { spans[to].0 };
+    let header = ui.max_rect();
+    ui.painter()
+        .vline(edge, header.y_range(), Stroke::new(2.0, theme::accent()));
+}
+
+/// The header context menu: a check entry per column except Name, which cannot be hidden.
+fn column_menu(ui: &mut Ui, settings: &Settings, out: &mut Interaction) {
+    for column in ListColumn::ALL.into_iter().filter(|c| c.hideable()) {
+        let shown = settings.column_shown(column);
+        if menu::check(ui, column.label(), shown) {
+            out.show_column = Some((column, !shown));
+        }
+    }
 }
 
 fn entry_row(
@@ -254,36 +370,45 @@ fn drop_on_folder(resp: &egui::Response, folder: PathBuf) -> Option<(Vec<PathBuf
 }
 
 fn entry_cells(row: &mut TableRow, entry: &Entry, name: &str, ctx: &RowContext) {
-    row.col(|ui| {
-        super::icons::entry(ui, entry.kind, name);
-        ui.add(egui::Label::new(RichText::new(name).text_style(theme::list_style())).truncate());
-    });
-    if ctx.settings.show_ext_column {
-        row.col(|ui| {
-            if entry.kind != EntryKind::Dir {
-                ui.colored_label(
-                    theme::dim(),
-                    RichText::new(extension(name)).text_style(theme::list_style()),
-                );
-            }
+    for column in &ctx.settings.list_columns {
+        row.col(|ui| match column {
+            ListColumn::Name => name_cell(ui, entry, name),
+            ListColumn::Ext => ext_cell(ui, entry, name),
+            ListColumn::Size => size_cell(ui, entry),
+            ListColumn::Modified => modified_cell(ui, entry),
+            ListColumn::Age => age_cell(ui, entry, ctx.now),
         });
     }
-    row.col(|ui| size_cell(ui, entry));
-    row.col(|ui| {
-        if let Some(time) = entry.modified {
-            ui.colored_label(
-                theme::dim(),
-                RichText::new(format_time(time)).text_style(theme::list_style()),
-            );
-        }
-    });
-    if ctx.settings.show_age_column {
-        row.col(|ui| {
-            let (bucket, text) = age(entry.modified, ctx.now);
-            if !text.is_empty() {
-                age_badge(ui, &text, theme::age_color(bucket));
-            }
-        });
+}
+
+fn name_cell(ui: &mut Ui, entry: &Entry, name: &str) {
+    super::icons::entry(ui, entry.kind, name);
+    ui.add(egui::Label::new(RichText::new(name).text_style(theme::list_style())).truncate());
+}
+
+fn ext_cell(ui: &mut Ui, entry: &Entry, name: &str) {
+    if entry.kind == EntryKind::Dir {
+        return;
+    }
+    ui.colored_label(
+        theme::dim(),
+        RichText::new(extension(name)).text_style(theme::list_style()),
+    );
+}
+
+fn modified_cell(ui: &mut Ui, entry: &Entry) {
+    if let Some(time) = entry.modified {
+        ui.colored_label(
+            theme::dim(),
+            RichText::new(format_time(time)).text_style(theme::list_style()),
+        );
+    }
+}
+
+fn age_cell(ui: &mut Ui, entry: &Entry, now: SystemTime) {
+    let (bucket, text) = age(entry.modified, now);
+    if !text.is_empty() {
+        age_badge(ui, &text, theme::age_color(bucket));
     }
 }
 
@@ -334,6 +459,7 @@ fn apply(
     selection: &[usize],
     modifiers: Modifiers,
 ) {
+    apply_columns(explorer, &out);
     let tab = explorer.active_mut();
     if let Some(i) = out.right_clicked {
         tab.click(i, false, false);
@@ -354,6 +480,24 @@ fn apply(
         let copy = dnd::copying(ui.ctx(), explorer.settings().drag_copy_modifier);
         explorer.drop_into(paths, &folder, copy);
     }
+}
+
+/// Persists the column changes of this frame in one settings update.
+fn apply_columns(explorer: &mut Explorer, out: &Interaction) {
+    if out.show_column.is_none() && out.move_column.is_none() && out.column_widths.is_none() {
+        return;
+    }
+    let mut settings = explorer.settings().clone();
+    if let Some((column, shown)) = out.show_column {
+        settings.set_column_shown(column, shown);
+    }
+    if let Some((column, target)) = out.move_column {
+        settings.move_column(column, target);
+    }
+    for (column, width) in out.column_widths.iter().flatten() {
+        settings.list_column_widths.insert(*column, *width);
+    }
+    explorer.set_settings(settings);
 }
 
 fn start_drag(ui: &Ui, explorer: &mut Explorer, row: usize, selection: &[usize]) {

@@ -1,5 +1,6 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
+use crate::columns::ListColumn;
 use crate::i18n::Language;
 use crate::place_group::PlaceGroup;
 use fx_core::ConflictPolicy;
@@ -25,8 +26,8 @@ pub struct Settings {
     #[serde(deserialize_with = "theme_id")]
     pub theme: String,
     pub density: Density,
-    pub show_age_column: bool,
-    pub show_ext_column: bool,
+    /// Shown columns of the file list, left to right. Always contains `Name`.
+    pub list_columns: Vec<ListColumn>,
     /// Open folders in the tree with a single click instead of a double click.
     pub tree_single_click: bool,
     /// Open folders in the list with a single click instead of a double click.
@@ -64,6 +65,9 @@ pub struct Settings {
     /// Shortcut overrides: command id to shortcut strings such as `"ctrl+shift+n"`. An empty list unbinds.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub keymap: BTreeMap<String, Vec<String>>,
+    /// Widths the user dragged list columns to. The last column fills the rest and has none.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub list_column_widths: BTreeMap<ListColumn, f32>,
 }
 
 impl Default for Settings {
@@ -75,8 +79,7 @@ impl Default for Settings {
             start_folder: None,
             theme: DEFAULT_THEME.to_owned(),
             density: Density::default(),
-            show_age_column: true,
-            show_ext_column: true,
+            list_columns: ListColumn::ALL.to_vec(),
             tree_single_click: true,
             list_single_click: false,
             preload_subfolders: true,
@@ -95,6 +98,7 @@ impl Default for Settings {
             restore_session: true,
             drag_copy_modifier: DragModifier::default(),
             keymap: BTreeMap::new(),
+            list_column_widths: BTreeMap::new(),
         }
     }
 }
@@ -121,9 +125,7 @@ impl Settings {
     /// Moves `group` to the slot `target` occupies, shifting the others. Hidden groups keep their slots.
     pub fn move_sidebar_group(&mut self, group: PlaceGroup, target: PlaceGroup) {
         let mut order = self.sidebar_order_full();
-        let at = order.iter().position(|g| *g == target).unwrap_or(0);
-        order.retain(|g| *g != group);
-        order.insert(at.min(order.len()), group);
+        move_to_slot_of(&mut order, group, target);
         self.sidebar_order = order;
     }
 
@@ -136,6 +138,93 @@ impl Settings {
             }
         }
         out
+    }
+}
+
+/// Moves `item` to the slot `target` occupies, shifting the others.
+fn move_to_slot_of<T: PartialEq + Copy>(items: &mut Vec<T>, item: T, target: T) {
+    let at = items.iter().position(|i| *i == target).unwrap_or(0);
+    items.retain(|i| *i != item);
+    items.insert(at.min(items.len()), item);
+}
+
+impl Settings {
+    pub fn column_shown(&self, column: ListColumn) -> bool {
+        self.list_columns.contains(&column)
+    }
+
+    /// Hiding `Name` is ignored. A column shown again goes last.
+    pub fn set_column_shown(&mut self, column: ListColumn, shown: bool) {
+        if shown == self.column_shown(column) || (!shown && !column.hideable()) {
+            return;
+        }
+        if !shown {
+            self.list_columns.retain(|c| *c != column);
+            return;
+        }
+        self.list_columns.push(column);
+    }
+
+    /// Moves `column` to the slot `target` occupies. Both must be shown.
+    pub fn move_column(&mut self, column: ListColumn, target: ListColumn) {
+        if self.column_shown(column) && self.column_shown(target) {
+            move_to_slot_of(&mut self.list_columns, column, target);
+        }
+    }
+
+    /// The saved width of `column`, never below its minimum.
+    pub fn column_width(&self, column: ListColumn) -> f32 {
+        let saved = self.list_column_widths.get(&column).copied();
+        saved
+            .filter(|w| w.is_finite())
+            .unwrap_or(column.default_width())
+            .max(column.min_width())
+    }
+
+    /// Drops repeats and makes sure `Name` is present, as a hand-edited file may break either.
+    fn normalize_columns(&mut self) {
+        let mut seen = Vec::new();
+        for c in &self.list_columns {
+            if !seen.contains(c) {
+                seen.push(*c);
+            }
+        }
+        if !seen.contains(&ListColumn::Name) {
+            seen.insert(0, ListColumn::Name);
+        }
+        self.list_columns = seen;
+    }
+}
+
+/// The two flags that preceded `list_columns`.
+#[derive(Deserialize)]
+struct LegacyColumns {
+    list_columns: Option<serde::de::IgnoredAny>,
+    show_ext_column: Option<bool>,
+    show_age_column: Option<bool>,
+}
+
+impl LegacyColumns {
+    /// The column list the old flags describe; `None` when the file already has `list_columns` or sets no flag.
+    fn migrate(self) -> Option<Vec<ListColumn>> {
+        if self.list_columns.is_some()
+            || (self.show_ext_column, self.show_age_column) == (None, None)
+        {
+            return None;
+        }
+        let mut columns = vec![ListColumn::Name];
+        let optional = [
+            (ListColumn::Ext, self.show_ext_column),
+            (ListColumn::Size, Some(true)),
+            (ListColumn::Modified, Some(true)),
+            (ListColumn::Age, self.show_age_column),
+        ];
+        columns.extend(
+            optional
+                .into_iter()
+                .filter_map(|(c, shown)| shown.unwrap_or(true).then_some(c)),
+        );
+        Some(columns)
     }
 }
 
@@ -271,6 +360,7 @@ impl Settings {
     pub fn load_from(path: &Path) -> Self {
         let mut settings = Self::read(path);
         settings.clamp_font_sizes();
+        settings.normalize_columns();
         settings
     }
 
@@ -284,10 +374,15 @@ impl Settings {
                 return Self::default();
             }
         };
-        toml::from_str(&text).unwrap_or_else(|err| {
+        let mut settings: Self = toml::from_str(&text).unwrap_or_else(|err| {
             eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
             Self::default()
-        })
+        });
+        let legacy = toml::from_str::<LegacyColumns>(&text).ok();
+        if let Some(columns) = legacy.and_then(LegacyColumns::migrate) {
+            settings.list_columns = columns;
+        }
+        settings
     }
 
     /// Keeps font sizes within `MIN_FONT_SIZE..=MAX_FONT_SIZE`; NaN falls back to the default.
@@ -420,8 +515,7 @@ mod tests {
             start_folder: Some(dir.path().to_path_buf()),
             theme: "solarized-dark".to_owned(),
             density: Density::Comfortable,
-            show_age_column: false,
-            show_ext_column: false,
+            list_columns: vec![ListColumn::Size, ListColumn::Name, ListColumn::Age],
             tree_single_click: false,
             list_single_click: true,
             preload_subfolders: false,
@@ -446,10 +540,57 @@ mod tests {
                 ),
                 ("open_settings".to_owned(), vec![]),
             ]),
+            list_column_widths: BTreeMap::from([(ListColumn::Size, 120.0)]),
         };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
         assert!(!path.with_extension("toml.tmp").exists());
+    }
+
+    #[test]
+    fn columns_hide_show_and_move_but_name_stays() {
+        let mut s = Settings::default();
+        s.set_column_shown(ListColumn::Name, false);
+        s.set_column_shown(ListColumn::Ext, false);
+        s.move_column(ListColumn::Age, ListColumn::Name);
+        assert_eq!(
+            s.list_columns,
+            [
+                ListColumn::Age,
+                ListColumn::Name,
+                ListColumn::Size,
+                ListColumn::Modified
+            ]
+        );
+        s.set_column_shown(ListColumn::Ext, true);
+        assert_eq!(s.list_columns.last(), Some(&ListColumn::Ext));
+        assert_eq!(s.column_width(ListColumn::Size), 80.0);
+        s.list_column_widths.insert(ListColumn::Size, 1.0);
+        assert_eq!(s.column_width(ListColumn::Size), 50.0);
+    }
+
+    #[test]
+    fn legacy_column_flags_become_a_column_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "show_ext_column = false\n");
+        assert_eq!(
+            Settings::load_from(&path).list_columns,
+            [
+                ListColumn::Name,
+                ListColumn::Size,
+                ListColumn::Modified,
+                ListColumn::Age
+            ]
+        );
+        write(
+            &path,
+            "show_age_column = false\nlist_columns = [\"size\", \"size\"]\n",
+        );
+        assert_eq!(
+            Settings::load_from(&path).list_columns,
+            [ListColumn::Name, ListColumn::Size]
+        );
     }
 
     #[test]

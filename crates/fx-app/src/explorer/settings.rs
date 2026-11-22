@@ -2,6 +2,7 @@
 
 use super::Explorer;
 use crate::settings::Settings;
+use crate::view::SortSpec;
 use std::io;
 
 impl Explorer {
@@ -19,6 +20,9 @@ impl Explorer {
             }
             if tab.folder_order() != settings.folder_order {
                 tab.set_folder_order(settings.folder_order);
+            }
+            if !settings.column_shown(tab.sort().column.list_column()) {
+                tab.set_sort(SortSpec::default());
             }
         }
         self.session_dirty |= settings.restore_session != self.settings.restore_session;

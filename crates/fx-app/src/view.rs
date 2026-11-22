@@ -1,5 +1,6 @@
 //! One loaded directory (immutable, shared) and the pure rules that turn it into a visible, sorted row order.
 
+use crate::columns::ListColumn;
 use crate::format::extension;
 use crate::settings::FolderOrder;
 use fx_core::{Entry, EntryKind, Listed, Listing, StorageKind, natural_cmp};
@@ -96,6 +97,17 @@ pub enum SortColumn {
     Ext,
     Size,
     Modified,
+}
+
+impl SortColumn {
+    pub fn list_column(self) -> ListColumn {
+        match self {
+            Self::Name => ListColumn::Name,
+            Self::Ext => ListColumn::Ext,
+            Self::Size => ListColumn::Size,
+            Self::Modified => ListColumn::Modified,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -1,5 +1,6 @@
 //! fx-app: UI-agnostic view-model for a tabbed file explorer. No UI dependencies.
 
+mod columns;
 mod explorer;
 mod format;
 pub mod i18n;
@@ -15,6 +16,7 @@ mod view;
 #[cfg(windows)]
 mod wsl;
 
+pub use columns::ListColumn;
 pub use explorer::{Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
 pub use format::{
     AgeBucket, age, extension, format_millis, format_number, format_size, format_time,
