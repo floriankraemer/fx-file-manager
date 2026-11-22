@@ -31,7 +31,7 @@ impl Explorer {
         if matches!(tab.state(), LoadState::Loading) {
             return;
         }
-        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
     }
 
     /// Every `REVALIDATE_INTERVAL`, stats window `w`'s active folder on a worker thread and re-lists it if it changed.
@@ -91,7 +91,7 @@ impl Explorer {
             return;
         };
         if tab.generation() == checked.generation && !matches!(tab.state(), LoadState::Loading) {
-            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
         }
     }
 }

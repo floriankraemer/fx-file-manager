@@ -1379,6 +1379,23 @@ fn revalidate_picks_up_external_files_without_a_loading_flash() {
 }
 
 #[test]
+fn failed_revalidation_keeps_the_loaded_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("a.txt"), b"x").unwrap();
+    let mut explorer = explorer_in(&sub);
+    fs::remove_dir_all(&sub).unwrap();
+    explorer.revalidate();
+    for _ in 0..50 {
+        explorer.poll();
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(matches!(explorer.active().state(), LoadState::Loaded(_)));
+    assert_eq!(names(&explorer), ["a.txt"]);
+}
+
+#[test]
 fn revalidate_keeps_the_running_preload() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
