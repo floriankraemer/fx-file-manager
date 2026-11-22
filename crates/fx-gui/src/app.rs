@@ -831,7 +831,11 @@ impl App {
             return;
         }
         if current.4 != self.applied_look.4 {
+            log::info!("language changed to {:?}", current.4);
             self.apply_language(current.4);
+        }
+        if current.0 != self.applied_look.0 {
+            log::info!("theme changed to {}", current.0);
         }
         theme::apply(ctx, self.explorer.settings());
         self.applied_look = current;
