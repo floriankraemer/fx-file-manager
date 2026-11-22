@@ -33,12 +33,50 @@ pub(crate) fn enumerate(
         Mode::empty(),
     )?;
     let first = out.entries.len();
-    // NUL-terminated copies of the names, so statx can use them without allocating per entry.
-    let mut cnames: Vec<u8> = Vec::new();
-    let mut name_ends: Vec<usize> = Vec::new();
-
     let mut buf = vec![MaybeUninit::<u8>::uninit(); strategy.buf_size.max(4096)];
-    let mut raw = RawDir::new(&fd, &mut buf);
+    let cnames = read_entries(fd.as_fd(), &mut buf, metadata, out)?;
+
+    if metadata {
+        let stats = stat_all(fd.as_fd(), &cnames, &out.entries[first..], strategy);
+        for (e, s) in out.entries[first..].iter_mut().zip(stats) {
+            if let Some((size, modified)) = s {
+                e.size = Some(size);
+                e.modified = modified;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// NUL-terminated copies of the names, so statx can use them without allocating per entry.
+#[derive(Default)]
+struct CNames {
+    bytes: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+impl CNames {
+    fn push(&mut self, name: &CStr) {
+        self.bytes.extend_from_slice(name.to_bytes_with_nul());
+        self.ends.push(self.bytes.len());
+    }
+
+    fn get(&self, i: usize) -> &CStr {
+        let start = if i == 0 { 0 } else { self.ends[i - 1] };
+        CStr::from_bytes_with_nul(&self.bytes[start..self.ends[i]])
+            .expect("names are NUL-terminated copies")
+    }
+}
+
+/// Pushes every entry into `out`; collects NUL-terminated names only when `metadata` needs statx.
+fn read_entries(
+    fd: BorrowedFd<'_>,
+    buf: &mut [MaybeUninit<u8>],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<CNames> {
+    let mut cnames = CNames::default();
+    let mut raw = RawDir::new(fd, buf);
     while let Some(entry) = raw.next() {
         let entry = entry?;
         let name = entry.file_name();
@@ -50,35 +88,15 @@ pub(crate) fn enumerate(
             continue;
         }
         let kind = match entry.file_type() {
-            FileType::Unknown => kind_via_statx(fd.as_fd(), name),
+            FileType::Unknown => kind_via_statx(fd, name),
             t => kind_from_file_type(t),
         };
         out.push_encoded(bytes, kind, lead == b'.', entry.ino())?;
-        cnames.extend_from_slice(name.to_bytes_with_nul());
-        name_ends.push(cnames.len());
-    }
-
-    if metadata {
-        let stats = stat_all(
-            fd.as_fd(),
-            &cnames,
-            &name_ends,
-            &out.entries[first..],
-            strategy,
-        );
-        for (e, s) in out.entries[first..].iter_mut().zip(stats) {
-            if let Some((size, modified)) = s {
-                e.size = Some(size);
-                e.modified = modified;
-            }
+        if metadata {
+            cnames.push(name);
         }
     }
-    Ok(())
-}
-
-fn cname<'a>(cnames: &'a [u8], ends: &[usize], i: usize) -> &'a CStr {
-    let start = if i == 0 { 0 } else { ends[i - 1] };
-    CStr::from_bytes_with_nul(&cnames[start..ends[i]]).expect("names are NUL-terminated copies")
+    Ok(cnames)
 }
 
 fn kind_from_file_type(t: FileType) -> EntryKind {
@@ -114,8 +132,7 @@ fn stat_one(dirfd: BorrowedFd<'_>, name: &CStr) -> Option<Stat> {
 
 fn stat_all(
     dirfd: BorrowedFd<'_>,
-    cnames: &[u8],
-    ends: &[usize],
+    cnames: &CNames,
     entries: &[crate::Entry],
     strategy: &Strategy,
 ) -> Vec<Option<Stat>> {
@@ -124,7 +141,7 @@ fn stat_all(
     if strategy.inode_order {
         order.sort_unstable_by_key(|&i| entries[i].inode);
     }
-    let one = |i: usize| stat_one(dirfd, cname(cnames, ends, i));
+    let one = |i: usize| stat_one(dirfd, cnames.get(i));
 
     let mut results = vec![None; n];
     if strategy.stat_threads <= 1 || n < MIN_PARALLEL_ENTRIES {
