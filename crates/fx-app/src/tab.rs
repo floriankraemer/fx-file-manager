@@ -275,6 +275,10 @@ impl Tab {
         self.search.as_ref()
     }
 
+    pub(crate) fn search_mut(&mut self) -> Option<&mut SearchView> {
+        self.search.as_mut()
+    }
+
     /// Replaces any search with a new one rooted at the tab's path and returns the generation its results must carry.
     /// Dropping the old view cancels its walk.
     pub(crate) fn begin_search(&mut self, query: String, cap: usize) -> (u64, &SearchView) {

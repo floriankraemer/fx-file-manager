@@ -1664,3 +1664,73 @@ fn root_notice_follows_path_and_setting() {
     let saved = Settings::load_from(explorer.settings_path.as_ref().unwrap());
     assert!(!saved.search.warn_root);
 }
+
+#[test]
+fn search_selection_moves_and_clamps() {
+    let dir = search_tree();
+    let mut explorer = search_explorer(dir.path(), SearchSettings::default());
+    explorer.start_search("alpha");
+    wait_for_search(&mut explorer);
+    let selected = |e: &Explorer| e.search().unwrap().selected();
+    explorer.move_search_selection(1);
+    assert_eq!(selected(&explorer), Some(0));
+    explorer.move_search_selection(10);
+    assert_eq!(selected(&explorer), Some(1));
+    explorer.move_search_selection(-10);
+    assert_eq!(selected(&explorer), Some(0));
+    explorer.select_search_hit(Some(99));
+    assert_eq!(selected(&explorer), None);
+}
+
+#[test]
+fn reveal_goes_to_the_parent_selects_the_hit_and_ends_the_search() {
+    let dir = search_tree();
+    let mut explorer = search_explorer(dir.path(), SearchSettings::default());
+    explorer.start_search("alpha_deep");
+    wait_for_search(&mut explorer);
+    explorer.reveal_search_hit(0);
+    assert!(explorer.search().is_none());
+    let deep = dir.path().join("sub").join("deep");
+    wait_for(&mut explorer, "reveal load", |e| {
+        e.active().path() == deep && e.active().selected().is_some()
+    });
+    let row = explorer.active().selected().unwrap();
+    assert_eq!(explorer.entry_path(row), Some(deep.join("alpha_deep.txt")));
+}
+
+#[test]
+fn opening_a_folder_hit_enters_it() {
+    let dir = search_tree();
+    let mut explorer = search_explorer(dir.path(), SearchSettings::default());
+    explorer.start_search("deep");
+    wait_for_search(&mut explorer);
+    let row = explorer
+        .search()
+        .unwrap()
+        .hits()
+        .iter()
+        .position(|h| h.path.ends_with("deep"))
+        .unwrap();
+    explorer.open_search_hit(row);
+    assert!(explorer.search().is_none());
+    assert_eq!(
+        explorer.active().path(),
+        dir.path().join("sub").join("deep")
+    );
+}
+
+#[test]
+fn relative_folder_is_slash_separated_and_empty_at_the_root() {
+    let dir = search_tree();
+    let mut explorer = search_explorer(dir.path(), SearchSettings::default());
+    explorer.start_search("alpha");
+    wait_for_search(&mut explorer);
+    let view = explorer.search().unwrap();
+    let mut folders: Vec<_> = view
+        .hits()
+        .iter()
+        .map(|h| view.relative_folder(h))
+        .collect();
+    folders.sort();
+    assert_eq!(folders, ["", "sub/deep/"]);
+}

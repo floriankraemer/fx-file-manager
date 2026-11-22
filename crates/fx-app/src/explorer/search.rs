@@ -51,6 +51,48 @@ impl Explorer {
         self.active().search()
     }
 
+    /// Selects result `row` of the active tab's search.
+    pub fn select_search_hit(&mut self, row: Option<usize>) {
+        if let Some(search) = self.active_mut().search_mut() {
+            search.select(row);
+        }
+    }
+
+    /// Moves the selected result up (`-1`) or down (`1`).
+    pub fn move_search_selection(&mut self, delta: isize) {
+        if let Some(search) = self.active_mut().search_mut() {
+            search.move_selection(delta);
+        }
+    }
+
+    /// Enters the folder or opens the file of result `row`. Entering a folder ends the search.
+    pub fn open_search_hit(&mut self, row: usize) {
+        if let Some(path) = self.search_hit_path(row) {
+            self.open_path(path);
+        }
+    }
+
+    /// Goes to the folder that holds result `row`, selects the item there and ends the search.
+    pub fn reveal_search_hit(&mut self, row: usize) {
+        let Some(path) = self.search_hit_path(row) else {
+            return;
+        };
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let (parent, name) = (parent.to_path_buf(), name.to_os_string());
+        let (w, index) = (self.current, self.win().active);
+        let tab = &mut self.win_mut().tabs[index];
+        tab.clear_search();
+        tab.navigate_to(parent);
+        tab.select_after_load(name);
+        self.start_load(w, index);
+    }
+
+    fn search_hit_path(&self, row: usize) -> Option<PathBuf> {
+        Some(self.search()?.hits().get(row)?.path.clone())
+    }
+
     /// True when the active tab sits at a filesystem root and the user has not turned the notice off.
     pub fn search_needs_root_notice(&self) -> bool {
         self.settings.search.warn_root && self.active().path().parent().is_none()

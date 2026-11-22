@@ -37,6 +37,7 @@ pub struct SearchView {
     elapsed: Option<Duration>,
     cancel: Arc<AtomicBool>,
     progress: Arc<WalkProgress>,
+    selected: Option<usize>,
 }
 
 impl SearchView {
@@ -53,6 +54,7 @@ impl SearchView {
             elapsed: None,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::default(),
+            selected: None,
         }
     }
 
@@ -75,6 +77,41 @@ impl SearchView {
     /// Matches in arrival order, unsorted. Never longer than the cap.
     pub fn hits(&self) -> &[Hit] {
         &self.hits
+    }
+
+    /// Folder of `hit` relative to the search folder, `/`-separated with a trailing `/`; empty for the search folder itself.
+    pub fn relative_folder(&self, hit: &Hit) -> String {
+        let parent = hit.path.parent().unwrap_or(&self.root);
+        let rel = parent.strip_prefix(&self.root).unwrap_or(parent);
+        let text = rel
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        match text.is_empty() {
+            true => text,
+            false => text + "/",
+        }
+    }
+
+    pub fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
+    /// Selects a hit; out-of-range rows clear the selection.
+    pub fn select(&mut self, row: Option<usize>) {
+        self.selected = row.filter(|&r| r < self.hits.len());
+    }
+
+    /// Moves the selection by `delta` rows, starting at the first or last hit when nothing is selected.
+    pub fn move_selection(&mut self, delta: isize) {
+        let Some(last) = self.hits.len().checked_sub(1) else {
+            return;
+        };
+        let start = self
+            .selected
+            .map_or(if delta < 0 { last as isize + 1 } else { -1 }, |r| {
+                r as isize
+            });
+        self.selected = Some((start + delta).clamp(0, last as isize) as usize);
     }
 
     pub fn matches(&self) -> usize {

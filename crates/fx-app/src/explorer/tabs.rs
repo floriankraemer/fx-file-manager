@@ -135,6 +135,11 @@ impl Explorer {
         let path = tab
             .path()
             .join(view.listing.name(&view.listing.entries[index as usize]));
+        self.open_path(path);
+    }
+
+    /// Enters `path` when it is a directory (or a symlink to one); opens anything else with the system handler.
+    pub(super) fn open_path(&mut self, path: PathBuf) {
         if fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
             self.navigate(path);
         } else if let Err(err) = open_with_system(&path) {
