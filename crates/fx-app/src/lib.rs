@@ -4,6 +4,7 @@ mod explorer;
 mod format;
 pub mod i18n;
 mod ops;
+mod place_group;
 mod places;
 mod settings;
 mod state;
@@ -21,7 +22,8 @@ pub use format::{
 };
 pub use i18n::{Language, t, tn, tr};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
-pub use places::{Place, PlaceGroup, bookmark_places, breadcrumbs, places};
+pub use place_group::PlaceGroup;
+pub use places::{Place, bookmark_places, breadcrumbs, places};
 pub use settings::{
     ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, MAX_FONT_SIZE,
     MIN_FONT_SIZE, Settings, start_dir,

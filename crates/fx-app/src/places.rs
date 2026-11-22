@@ -1,5 +1,6 @@
 //! Sidebar locations and breadcrumb segments. Pure path logic plus filesystem existence checks.
 
+use crate::place_group::PlaceGroup;
 use crate::settings::home_dir;
 use crate::state::Bookmark;
 #[cfg(target_os = "linux")]
@@ -21,30 +22,6 @@ impl Place {
         match &self.share {
             Some(share) if show_share => format!("{} ({share})", self.label),
             _ => self.label.clone(),
-        }
-    }
-}
-
-/// Sidebar section a place belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlaceGroup {
-    /// Home and its standard folders.
-    Places,
-    /// Folders the user pinned; they stay listed when the folder is missing.
-    Bookmarks,
-    /// Filesystem roots and mounts.
-    Drives,
-    /// Installed WSL distributions.
-    Wsl,
-}
-
-impl PlaceGroup {
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Places => crate::t("places.places"),
-            Self::Bookmarks => crate::t("places.bookmarks"),
-            Self::Drives => crate::t("places.drives"),
-            Self::Wsl => crate::t("places.wsl"),
         }
     }
 }

@@ -1,6 +1,7 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
 use crate::i18n::Language;
+use crate::place_group::PlaceGroup;
 use fx_core::ConflictPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -34,6 +35,9 @@ pub struct Settings {
     pub preload_subfolders: bool,
     /// Show the network share next to a mapped drive letter in the sidebar (Windows).
     pub show_share_names: bool,
+    /// Top-to-bottom order of the sidebar groups; see [`Settings::sidebar_groups`].
+    pub sidebar_order: Vec<PlaceGroup>,
+    pub hidden_sidebar_groups: Vec<PlaceGroup>,
     /// `None` keeps the built-in font.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
@@ -77,6 +81,8 @@ impl Default for Settings {
             list_single_click: false,
             preload_subfolders: true,
             show_share_names: true,
+            sidebar_order: PlaceGroup::ALL.to_vec(),
+            hidden_sidebar_groups: Vec::new(),
             font_family: None,
             list_font_size: 13.5,
             tree_font_size: 13.5,
@@ -90,6 +96,46 @@ impl Default for Settings {
             drag_copy_modifier: DragModifier::default(),
             keymap: BTreeMap::new(),
         }
+    }
+}
+
+impl Settings {
+    /// The visible sidebar groups in the saved order.
+    pub fn sidebar_groups(&self) -> Vec<PlaceGroup> {
+        let mut out = self.sidebar_order_full();
+        out.retain(|g| self.sidebar_group_shown(*g));
+        out
+    }
+
+    pub fn sidebar_group_shown(&self, group: PlaceGroup) -> bool {
+        !self.hidden_sidebar_groups.contains(&group)
+    }
+
+    pub fn set_sidebar_group_shown(&mut self, group: PlaceGroup, shown: bool) {
+        self.hidden_sidebar_groups.retain(|g| *g != group);
+        if !shown {
+            self.hidden_sidebar_groups.push(group);
+        }
+    }
+
+    /// Moves `group` to the slot `target` occupies, shifting the others. Hidden groups keep their slots.
+    pub fn move_sidebar_group(&mut self, group: PlaceGroup, target: PlaceGroup) {
+        let mut order = self.sidebar_order_full();
+        let at = order.iter().position(|g| *g == target).unwrap_or(0);
+        order.retain(|g| *g != group);
+        order.insert(at.min(order.len()), group);
+        self.sidebar_order = order;
+    }
+
+    /// The saved order completed: groups missing from a hand-edited file go last, repeats are dropped.
+    fn sidebar_order_full(&self) -> Vec<PlaceGroup> {
+        let mut out: Vec<PlaceGroup> = Vec::new();
+        for g in self.sidebar_order.iter().chain(&PlaceGroup::ALL) {
+            if !out.contains(g) {
+                out.push(*g);
+            }
+        }
+        out
     }
 }
 
@@ -341,6 +387,29 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_groups_follow_order_and_hide() {
+        let mut s = Settings::default();
+        s.move_sidebar_group(PlaceGroup::Places, PlaceGroup::Drives);
+        assert_eq!(
+            s.sidebar_groups(),
+            [
+                PlaceGroup::Bookmarks,
+                PlaceGroup::Drives,
+                PlaceGroup::Places,
+                PlaceGroup::Wsl
+            ]
+        );
+        s.move_sidebar_group(PlaceGroup::Wsl, PlaceGroup::Bookmarks);
+        s.set_sidebar_group_shown(PlaceGroup::Drives, false);
+        assert_eq!(
+            s.sidebar_groups(),
+            [PlaceGroup::Wsl, PlaceGroup::Bookmarks, PlaceGroup::Places]
+        );
+        s.sidebar_order = vec![PlaceGroup::Wsl];
+        assert_eq!(s.sidebar_groups().len(), 3);
+    }
+
+    #[test]
     fn roundtrips_every_field() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fx").join("settings.toml");
@@ -357,6 +426,8 @@ mod tests {
             list_single_click: true,
             preload_subfolders: false,
             show_share_names: false,
+            sidebar_order: vec![PlaceGroup::Wsl, PlaceGroup::Places],
+            hidden_sidebar_groups: vec![PlaceGroup::Bookmarks],
             font_family: Some("Inter".to_string()),
             list_font_size: 16.0,
             tree_font_size: 10.5,

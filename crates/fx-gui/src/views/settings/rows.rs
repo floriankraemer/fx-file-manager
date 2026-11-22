@@ -5,7 +5,7 @@ use crate::theme;
 use eframe::egui::{self, RichText, Sense, TextEdit, Ui};
 use fx_app::{
     ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, Language, MAX_FONT_SIZE,
-    MIN_FONT_SIZE, Settings, open_with_system, t,
+    MIN_FONT_SIZE, PlaceGroup, Settings, open_with_system, t,
 };
 
 /// The worker override goes up to robocopy's `/MT` maximum.
@@ -122,6 +122,56 @@ pub(super) const ROWS: &[Row] = &[
         kind: Kind::Check,
         show: |ui, f, l| {
             ui.checkbox(&mut f.draft.show_share_names, l);
+        },
+    },
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.sidebar",
+        label: "settings.show_places",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            let mut shown = f.draft.sidebar_group_shown(PlaceGroup::Places);
+            if ui.checkbox(&mut shown, l).changed() {
+                f.draft.set_sidebar_group_shown(PlaceGroup::Places, shown);
+            }
+        },
+    },
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.sidebar",
+        label: "settings.show_bookmarks",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            let mut shown = f.draft.sidebar_group_shown(PlaceGroup::Bookmarks);
+            if ui.checkbox(&mut shown, l).changed() {
+                f.draft
+                    .set_sidebar_group_shown(PlaceGroup::Bookmarks, shown);
+            }
+        },
+    },
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.sidebar",
+        label: "settings.show_drives",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            let mut shown = f.draft.sidebar_group_shown(PlaceGroup::Drives);
+            if ui.checkbox(&mut shown, l).changed() {
+                f.draft.set_sidebar_group_shown(PlaceGroup::Drives, shown);
+            }
+        },
+    },
+    #[cfg(windows)]
+    Row {
+        category: Category::Appearance,
+        group: "settings.group.sidebar",
+        label: "settings.show_wsl",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            let mut shown = f.draft.sidebar_group_shown(PlaceGroup::Wsl);
+            if ui.checkbox(&mut shown, l).changed() {
+                f.draft.set_sidebar_group_shown(PlaceGroup::Wsl, shown);
+            }
         },
     },
     Row {
