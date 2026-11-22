@@ -2142,6 +2142,7 @@ dependencies = [
 name = "icon-theme"
 version = "0.1.0"
 dependencies = [
+ "log",
  "resvg",
  "serde",
  "toml 0.8.2",

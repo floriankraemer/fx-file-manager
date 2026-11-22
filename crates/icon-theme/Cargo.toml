@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 # default-features = false drops `text`, `system-fonts`, `memmap-fonts` and

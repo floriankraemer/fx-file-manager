@@ -8,7 +8,7 @@ use eframe::egui::{
 };
 use fx_core::EntryKind;
 use icon_theme::{Appearance, IconAssets, IconError, IconPack, IconRenderer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -40,6 +40,15 @@ struct Themed {
     pack: IconPack,
     renderer: IconRenderer,
     textures: HashMap<(String, u32), TextureHandle>,
+    /// Icons that failed to render, so they are neither retried nor logged every frame.
+    failed: HashSet<(String, u32)>,
+}
+
+impl Themed {
+    fn give_up(&mut self, key: &(String, u32), reason: &dyn std::fmt::Display) {
+        log::warn!("icon {} at {}px cannot be rendered: {reason}", key.0, key.1);
+        self.failed.insert(key.clone());
+    }
 }
 
 type Shared = Arc<Mutex<Themed>>;
@@ -51,6 +60,7 @@ fn shared(ctx: &Context) -> Shared {
                 pack: IconPack::from_toml_str(embedded::PACK_TOML).expect("embedded pack.toml"),
                 renderer: IconRenderer::new(),
                 textures: HashMap::new(),
+                failed: HashSet::new(),
             }))
         })
         .clone()
@@ -73,9 +83,13 @@ fn paint_themed(ui: &Ui, rect: Rect, pick: impl FnOnce(&IconPack, Appearance) ->
     let t = &mut *t;
     let id = pick(&t.pack, appearance());
     let key = (id, px);
+    if t.failed.contains(&key) {
+        return;
+    }
     if !t.textures.contains_key(&key) {
-        let Ok(icon) = t.renderer.render(&t.pack, &Embedded, &key.0, px) else {
-            return;
+        let icon = match t.renderer.render(&t.pack, &Embedded, &key.0, px) {
+            Ok(icon) => icon,
+            Err(err) => return t.give_up(&key, &err),
         };
         let image = ColorImage::from_rgba_premultiplied(
             [icon.width as usize, icon.height as usize],
@@ -232,11 +246,20 @@ fn lucide_texture(ui: &Ui, glyph: Glyph, px: u32) -> Option<TextureHandle> {
     if let Some(tex) = t.textures.get(&key) {
         return Some(tex.clone());
     }
+    if t.failed.contains(&key) {
+        return None;
+    }
     let svg = lucide_svg(glyph)
         .replace("currentColor", "#fff")
         .replace("width=\"24\"", &format!("width=\"{px}\""))
         .replace("height=\"24\"", &format!("height=\"{px}\""));
-    let icon = icon_theme::rasterise_svg(svg.as_bytes()).ok()?;
+    let icon = match icon_theme::rasterise_svg(svg.as_bytes()) {
+        Ok(icon) => icon,
+        Err(err) => {
+            t.give_up(&key, &err);
+            return None;
+        }
+    };
     let image = ColorImage::from_rgba_premultiplied(
         [icon.width as usize, icon.height as usize],
         &icon.pixels,
