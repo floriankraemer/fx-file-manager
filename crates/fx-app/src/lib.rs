@@ -8,6 +8,7 @@ pub mod logging;
 mod ops;
 mod place_group;
 mod places;
+mod probe;
 mod search;
 mod settings;
 mod state;

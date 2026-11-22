@@ -1,6 +1,7 @@
 //! Bookmarked folders and their background availability checks.
 
 use super::{Explorer, absolute};
+use crate::probe::timed;
 use crate::state::Bookmark;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -117,7 +118,7 @@ impl Explorer {
             let tx = self.bookmark_tx.clone();
             let wake = Arc::clone(&self.wake);
             thread::spawn(move || {
-                let available = path.is_dir();
+                let available = timed("bookmark check", path.display(), || path.is_dir());
                 let _ = tx.send(BookmarkChecked { path, available });
                 wake();
             });
