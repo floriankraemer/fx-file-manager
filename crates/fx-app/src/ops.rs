@@ -132,10 +132,16 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
             }
             Err(message) => {
                 failed += 1;
+                log::warn!(
+                    "cannot {} {}: {message}",
+                    if permanent { "delete" } else { "trash" },
+                    path.display()
+                );
                 first_failure.get_or_insert_with(|| delete_failed(path, permanent, &message));
             }
         }
     }
+    log_delete_summary(deleted, failed, permanent);
     let total = paths.len();
     let notice = match first_failure {
         None => Notice::info(crate::tn(
@@ -174,6 +180,14 @@ fn delete(paths: &[PathBuf], permanent: bool) -> Outcome {
         touched: parents(paths.iter().map(PathBuf::as_path)),
         created: None,
         removed,
+    }
+}
+
+fn log_delete_summary(deleted: usize, failed: usize, permanent: bool) {
+    if permanent {
+        log::info!("permanently deleted {deleted} item(s), {failed} failed");
+    } else {
+        log::debug!("trashed {deleted} item(s), {failed} failed");
     }
 }
 
@@ -228,10 +242,17 @@ fn rename(from: &Path, to: &Path) -> Outcome {
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
             Notice::error(crate::tr("notice.exists", &[("name", &to_name)]))
         }
-        Err(err) => Notice::error(crate::tr(
-            "notice.rename_failed",
-            &[("name", &from_name), ("error", &plain(&err))],
-        )),
+        Err(err) => {
+            log::warn!(
+                "cannot rename {} to {}: {err}",
+                from.display(),
+                to.display()
+            );
+            Notice::error(crate::tr(
+                "notice.rename_failed",
+                &[("name", &from_name), ("error", &plain(&err))],
+            ))
+        }
     };
     Outcome {
         notice,
@@ -244,7 +265,13 @@ fn rename(from: &Path, to: &Path) -> Outcome {
 fn create_folder(path: PathBuf) -> Outcome {
     let name = display_name(&path);
     let touched = parents([path.as_path()]);
-    match fs::create_dir(&path) {
+    let created = fs::create_dir(&path);
+    if let Err(err) = &created
+        && err.kind() != io::ErrorKind::AlreadyExists
+    {
+        log::warn!("cannot create folder {}: {err}", path.display());
+    }
+    match created {
         Ok(()) => Outcome {
             notice: Notice::info(crate::tr("notice.folder_created", &[("name", &name)])),
             touched,
