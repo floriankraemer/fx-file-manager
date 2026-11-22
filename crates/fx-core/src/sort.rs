@@ -76,7 +76,8 @@ mod tests {
     #[test]
     fn dirs_first() {
         let mut l = Listing::default();
-        l.push(OsStr::new("a10"), EntryKind::File, false, 0).unwrap();
+        l.push(OsStr::new("a10"), EntryKind::File, false, 0)
+            .unwrap();
         l.push(OsStr::new("z"), EntryKind::Dir, false, 0).unwrap();
         l.push(OsStr::new("A2"), EntryKind::File, false, 0).unwrap();
         sort(&mut l);

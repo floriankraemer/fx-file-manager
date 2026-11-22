@@ -1,6 +1,6 @@
 //! Linux backend: getdents64 via `RawDir`, dirfd-relative statx, statfs + sysfs storage detection.
 
-use crate::pool::pool;
+use crate::pool::run_in_pool;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 use rayon::prelude::*;
 use rustix::fs::{
@@ -130,7 +130,7 @@ fn stat_all(
         }
         return results;
     }
-    let done: Vec<Vec<(usize, Option<Stat>)>> = pool(strategy.stat_threads).install(|| {
+    let done: Vec<Vec<(usize, Option<Stat>)>> = run_in_pool(strategy.stat_threads, || {
         order
             .par_chunks(STAT_CHUNK)
             .map(|c| c.iter().map(|&i| (i, one(i))).collect())

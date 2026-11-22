@@ -2,7 +2,7 @@
 
 use crate::list::{Backend, ListError};
 use crate::listing::{EntryKind, Listing};
-use crate::pool::pool;
+use crate::pool::run_in_pool;
 use crate::storage::{StorageKind, Strategy};
 use crate::sys;
 use std::io;
@@ -124,7 +124,7 @@ where
         counters: Counters::default(),
     };
     let walk = &walk;
-    pool(strategy.walk_threads).install(|| {
+    run_in_pool(strategy.walk_threads, || {
         rayon::scope(|s| walk.visit(s, root, &listing));
     });
 
