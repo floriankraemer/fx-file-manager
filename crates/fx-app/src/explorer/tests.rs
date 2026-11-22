@@ -1082,6 +1082,18 @@ fn details_of_a_vanished_entry_end_as_gone() {
 }
 
 #[test]
+fn places_arrive_from_the_background_and_are_taken_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut explorer = explorer_in(dir.path());
+    assert!(explorer.take_places().is_none(), "nothing before a probe");
+
+    explorer.refresh_places();
+    wait_for(&mut explorer, "places", |e| e.fresh_places.is_some());
+    assert!(!explorer.take_places().unwrap().is_empty());
+    assert!(explorer.take_places().is_none());
+}
+
+#[test]
 fn open_in_new_tab_only_for_folders() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

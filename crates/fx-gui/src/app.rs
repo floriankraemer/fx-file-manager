@@ -10,7 +10,7 @@ use eframe::egui::{
 };
 use fx_app::{
     Explorer, Language, Notice, NoticeKind, Place, SearchView, Settings, State, WindowId, i18n,
-    places,
+    relabel_places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -109,7 +109,7 @@ impl App {
             .collect();
         let mut app = Self {
             explorer,
-            places: places(),
+            places: Vec::new(),
             windows,
             focused: first,
             quitting: false,
@@ -120,6 +120,7 @@ impl App {
             keymap: command::Keymap::default(),
             applied_keymap: BTreeMap::new(),
         };
+        app.explorer.refresh_places();
         app.apply_keymap();
         app
     }
@@ -851,8 +852,7 @@ impl App {
 
     fn apply_language(&mut self, language: Language) {
         i18n::set_language(language);
-        // Place labels are translated when listed.
-        self.places = places();
+        relabel_places(&mut self.places);
     }
 }
 
@@ -863,6 +863,10 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
+        if let Some(mut places) = self.explorer.take_places() {
+            relabel_places(&mut places);
+            self.places = places;
+        }
         // Keep polling while idle so background revalidation results show up.
         ctx.request_repaint_after(fx_app::REVALIDATE_INTERVAL);
         if self.explorer.transfers_active() {

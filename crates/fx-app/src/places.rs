@@ -42,7 +42,8 @@ const ROOT_LABEL: &str = "\\";
 const ROOT_LABEL: &str = "/";
 
 /// Home and its existing standard folders, then the filesystem roots.
-pub fn places() -> Vec<Place> {
+/// Probes the filesystem and can block on a dead mount, so call it off the UI thread.
+pub(crate) fn places() -> Vec<Place> {
     let mut out = Vec::new();
     if let Some(home) = home_dir() {
         out.extend(existing(
@@ -57,6 +58,17 @@ pub fn places() -> Vec<Place> {
     #[cfg(windows)]
     out.extend(distro_places(crate::wsl::distro_names()));
     out
+}
+
+/// Retranslates the labels of `places` in place, without probing anything.
+pub fn relabel_places(places: &mut [Place]) {
+    let home = home_dir();
+    for place in places
+        .iter_mut()
+        .filter(|p| p.group == PlaceGroup::Places && Some(&p.path) == home.as_ref())
+    {
+        place.label = crate::t("places.home").to_owned();
+    }
 }
 
 /// One place per bookmark, in order. Touches no filesystem: a bookmark stays even when its folder is gone.
@@ -217,6 +229,24 @@ mod tests {
         assert_eq!(place.title(false), "A:");
         place.share = None;
         assert_eq!(place.title(true), "A:");
+    }
+
+    #[test]
+    fn relabel_translates_only_the_home_place() {
+        let home = home_dir().unwrap_or_else(|| PathBuf::from("/home"));
+        let place = |label: &str, path: PathBuf| Place {
+            label: label.to_owned(),
+            path,
+            group: PlaceGroup::Places,
+            share: None,
+        };
+        let mut listed = vec![
+            place("stale", home.clone()),
+            place("Documents", home.join("Documents")),
+        ];
+        relabel_places(&mut listed);
+        assert_eq!(listed[0].label, crate::t("places.home"));
+        assert_eq!(listed[1].label, "Documents");
     }
 
     #[test]

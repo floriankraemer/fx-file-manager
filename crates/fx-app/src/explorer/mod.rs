@@ -9,6 +9,7 @@ mod loading;
 mod notices;
 mod open;
 mod opener;
+mod places;
 mod preload;
 mod restore;
 mod revalidate;
@@ -28,6 +29,7 @@ pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
 
 use crate::ops::{Notice, Outcome};
+use crate::places::Place;
 use crate::settings::Settings;
 use crate::state::State;
 use crate::transfers::Transfers;
@@ -115,6 +117,11 @@ pub struct Explorer {
     details: Option<DetailsState>,
     details_tx: Sender<DetailsLoaded>,
     details_rx: Receiver<DetailsLoaded>,
+    places_probing: bool,
+    /// The latest probed locations that the UI has not taken yet.
+    fresh_places: Option<Vec<Place>>,
+    places_tx: Sender<Vec<Place>>,
+    places_rx: Receiver<Vec<Place>>,
 }
 
 impl Explorer {
@@ -185,6 +192,7 @@ impl Explorer {
         let (open_tx, open_rx) = mpsc::channel();
         let (tab_check_tx, tab_check_rx) = mpsc::channel();
         let (details_tx, details_rx) = mpsc::channel();
+        let (places_tx, places_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -232,6 +240,10 @@ impl Explorer {
             details: None,
             details_tx,
             details_rx,
+            places_probing: false,
+            fresh_places: None,
+            places_tx,
+            places_rx,
         }
     }
 
@@ -247,6 +259,7 @@ impl Explorer {
         changed |= self.apply_open_checks();
         changed |= self.apply_tab_checks();
         changed |= self.apply_details();
+        changed |= self.apply_places();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {

@@ -28,7 +28,7 @@ pub use format::{
 pub use i18n::{Language, t, tn, tr};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use place_group::PlaceGroup;
-pub use places::{Place, bookmark_places, breadcrumbs, places};
+pub use places::{Place, bookmark_places, breadcrumbs, relabel_places};
 pub use search::{SearchStatus, SearchView};
 pub use settings::{
     ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
