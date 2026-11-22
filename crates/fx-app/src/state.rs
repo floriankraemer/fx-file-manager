@@ -1,7 +1,7 @@
 //! Bookmarks and the last session as plain data, persisted as `state.toml` next to `settings.toml`.
 //! A separate file keeps tab churn out of the settings file the user edits by hand.
 
-use crate::settings::{config_dir, write_atomic};
+use crate::settings::{config_dir, quarantine_corrupt, warn_no_config_dir, write_atomic};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -31,23 +31,26 @@ pub struct State {
 }
 
 impl State {
-    /// Loads from [`State::path`]. A missing or unreadable file yields the default; a corrupt one also logs to stderr.
+    /// Loads from [`State::path`]. A missing or unreadable file yields the default; a corrupt one is moved to `state.toml.corrupt` first.
     pub fn load() -> Self {
         match Self::path() {
             Some(path) => Self::load_from(&path),
-            None => Self::default(),
+            None => {
+                warn_no_config_dir();
+                Self::default()
+            }
         }
     }
 
     pub fn load_from(path: &Path) -> Self {
         match fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
-                eprintln!("fx: ignoring corrupt state {}: {err}", path.display());
+                quarantine_corrupt(path, &err);
                 Self::default()
             }),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Self::default(),
             Err(err) => {
-                eprintln!("fx: cannot read state {}: {err}", path.display());
+                log::warn!("cannot read state {}: {err}", path.display());
                 Self::default()
             }
         }

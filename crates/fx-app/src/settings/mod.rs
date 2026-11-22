@@ -20,7 +20,9 @@ pub use choices::{
     ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
 };
 pub use paths::start_dir;
-pub(crate) use paths::{config_dir, home_dir, write_atomic};
+pub(crate) use paths::{
+    config_dir, home_dir, quarantine_corrupt, warn_no_config_dir, write_atomic,
+};
 pub use search::SearchSettings;
 
 pub const MIN_FONT_SIZE: f32 = 8.0;
@@ -134,11 +136,14 @@ fn theme_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> 
 }
 
 impl Settings {
-    /// Loads from [`Settings::path`]. A missing or unreadable file yields defaults; a corrupt one also logs to stderr.
+    /// Loads from [`Settings::path`]. A missing or unreadable file yields defaults; a corrupt one is moved to `settings.toml.corrupt` first.
     pub fn load() -> Self {
         match Self::path() {
             Some(path) => Self::load_from(&path),
-            None => Self::default(),
+            None => {
+                warn_no_config_dir();
+                Self::default()
+            }
         }
     }
 
@@ -200,7 +205,7 @@ fn read_text(path: &Path) -> Option<String> {
         Ok(text) => Some(text),
         Err(err) if err.kind() == io::ErrorKind::NotFound => None,
         Err(err) => {
-            eprintln!("fx: cannot read settings {}: {err}", path.display());
+            log::warn!("cannot read settings {}: {err}", path.display());
             None
         }
     }
@@ -208,7 +213,7 @@ fn read_text(path: &Path) -> Option<String> {
 
 fn parse_or_default(text: &str, path: &Path) -> Settings {
     toml::from_str(text).unwrap_or_else(|err| {
-        eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
+        quarantine_corrupt(path, &err);
         Settings::default()
     })
 }
@@ -251,6 +256,21 @@ mod tests {
         );
         s.sidebar_order = vec![PlaceGroup::Wsl];
         assert_eq!(s.sidebar_groups().len(), 3);
+    }
+
+    #[test]
+    fn corrupt_file_is_kept_as_backup_before_defaults_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "theme = \"mine\"\n[broken");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.theme, Settings::default().theme);
+        assert!(!path.exists());
+        let backup = dir.path().join("settings.toml.corrupt");
+        assert_eq!(
+            fs::read_to_string(backup).unwrap(),
+            "theme = \"mine\"\n[broken"
+        );
     }
 
     #[test]

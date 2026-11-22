@@ -2,6 +2,7 @@ use super::Settings;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 /// Writes a uniquely named temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
 pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
@@ -34,6 +35,28 @@ fn sync_parent_dir(path: &Path) {
 
 #[cfg(not(unix))]
 fn sync_parent_dir(_path: &Path) {}
+
+/// Moves an unparsable config file to `<name>.corrupt` (replacing an older one) so the next save cannot destroy the user's edits.
+pub(crate) fn quarantine_corrupt(path: &Path, err: &dyn std::fmt::Display) {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".corrupt");
+    match fs::rename(path, &backup) {
+        Ok(()) => log::error!(
+            "corrupt config {} ({err}); kept as {}, using defaults",
+            path.display(),
+            Path::new(&backup).display()
+        ),
+        Err(rename_err) => log::error!(
+            "corrupt config {} ({err}); backup failed ({rename_err}), using defaults",
+            path.display()
+        ),
+    }
+}
+
+pub(crate) fn warn_no_config_dir() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| log::warn!("no config directory; settings and state are not persisted"));
+}
 
 /// `$HOME`, else `%USERPROFILE%`.
 pub(crate) fn home_dir() -> Option<PathBuf> {
