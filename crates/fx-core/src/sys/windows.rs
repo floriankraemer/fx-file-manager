@@ -1,10 +1,12 @@
 //! Windows backend: bulk directory enumeration via `GetFileInformationByHandleEx`.
+use super::probe_cache::{TtlCache, cached};
 use crate::listing::push_wtf8_from_utf16;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 
 use std::cell::RefCell;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, mem, ptr};
 use windows_sys::Win32::Foundation::{
@@ -250,8 +252,28 @@ fn push_batch(
     }
 }
 
+#[derive(Clone, Copy)]
+struct DeviceClass {
+    storage: StorageKind,
+    removable: bool,
+}
+
+const NETWORK: DeviceClass = DeviceClass {
+    storage: StorageKind::Network,
+    removable: false,
+};
+const UNKNOWN: DeviceClass = DeviceClass {
+    storage: StorageKind::Unknown,
+    removable: false,
+};
+
+static DEVICES: Mutex<TtlCache<Vec<u16>, DeviceClass>> = Mutex::new(TtlCache::new());
+
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    let w = wide_path(path);
+    device_class(&wide_path(path)).storage
+}
+
+fn is_unc_remote(w: &[u16]) -> bool {
     let unc = [b'\\' as u16, b'\\' as u16];
     let is_local_prefix = |s: &[u16]| {
         // \\?\C:\ or \\.\C:\ are local; \\?\UNC\ is not.
@@ -260,18 +282,36 @@ pub(crate) fn detect_storage(path: &Path) -> StorageKind {
             !(rest.len() >= 4 && String::from_utf16_lossy(&rest[..4]).eq_ignore_ascii_case("UNC\\"))
         }
     };
-    if w.starts_with(&unc) && !is_local_prefix(&w) {
-        return StorageKind::Network;
+    w.starts_with(&unc) && !is_local_prefix(w)
+}
+
+/// Keyed by the volume mount point, so the device is opened once per volume, not per navigation.
+fn device_class(w: &[u16]) -> DeviceClass {
+    if is_unc_remote(w) {
+        return NETWORK;
     }
-    let Some(root) = volume_root(&w) else {
-        log::debug!("storage of {} unknown: no volume root", path.display());
-        return StorageKind::Unknown;
+    let Some(root) = volume_root(w) else {
+        log::debug!("storage unknown: no volume root");
+        return UNKNOWN;
     };
+    let key = root.iter().take_while(|&&c| c != 0).copied().collect();
+    cached(&DEVICES, key, || probe_device(&root))
+}
+
+/// One volume handle serves both the seek-penalty and the bus-type query.
+fn probe_device(root: &[u16]) -> DeviceClass {
     // SAFETY: GetVolumePathNameW NUL-terminates `root`.
-    if unsafe { GetDriveTypeW(root.as_ptr()) } == DRIVE_REMOTE {
-        return StorageKind::Network;
+    let drive = unsafe { GetDriveTypeW(root.as_ptr()) };
+    if drive == DRIVE_REMOTE {
+        return NETWORK;
     }
-    seek_penalty(&root).unwrap_or(StorageKind::Unknown)
+    let handle = open_volume(root);
+    let storage = handle.as_ref().and_then(seek_penalty);
+    let bus = handle.as_ref().and_then(bus_type);
+    DeviceClass {
+        storage: storage.unwrap_or(StorageKind::Unknown),
+        removable: is_removable(drive, bus),
+    }
 }
 
 /// The NUL-terminated mount point (such as `C:\`) of the volume holding the NUL-terminated `w`.
@@ -328,12 +368,10 @@ fn query_property<T>(handle: &Handle, id: STORAGE_PROPERTY_ID, out: &mut T) -> b
     ok != 0
 }
 
-/// `root` is a NUL-terminated volume mount point such as `C:\`.
-fn seek_penalty(root: &[u16]) -> Option<StorageKind> {
-    let handle = open_volume(root)?;
+fn seek_penalty(handle: &Handle) -> Option<StorageKind> {
     // SAFETY: all-zero is a valid descriptor.
     let mut desc: DEVICE_SEEK_PENALTY_DESCRIPTOR = unsafe { mem::zeroed() };
-    if !query_property(&handle, StorageDeviceSeekPenaltyProperty, &mut desc) {
+    if !query_property(handle, StorageDeviceSeekPenaltyProperty, &mut desc) {
         None
     } else if desc.IncursSeekPenalty {
         Some(StorageKind::Hdd)
@@ -347,11 +385,10 @@ fn is_removable(drive_type: u32, bus_type: Option<i32>) -> bool {
     drive_type == DRIVE_REMOVABLE || bus_type == Some(BusTypeUsb)
 }
 
-fn bus_type(root: &[u16]) -> Option<i32> {
-    let handle = open_volume(root)?;
+fn bus_type(handle: &Handle) -> Option<i32> {
     // SAFETY: all-zero is a valid descriptor; only the fixed header is requested.
     let mut desc: STORAGE_DEVICE_DESCRIPTOR = unsafe { mem::zeroed() };
-    query_property(&handle, StorageDeviceProperty, &mut desc).then_some(desc.BusType)
+    query_property(handle, StorageDeviceProperty, &mut desc).then_some(desc.BusType)
 }
 
 pub(crate) fn network_share(drive: &str) -> Option<String> {
@@ -369,9 +406,9 @@ pub(crate) fn network_share(drive: &str) -> Option<String> {
 
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     let w = wide_path(path);
-    let storage = detect_storage(path);
+    let class = device_class(&w);
     let unknown = VolumeInfo {
-        storage,
+        storage: class.storage,
         ..VolumeInfo::unknown(None)
     };
     let handle = match open(&w, 0) {
@@ -408,19 +445,13 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     let fs = FsKind::from_name(&String::from_utf16_lossy(&name[..len]));
     let mut caps = FsCaps::for_fs(fs);
     caps.clone = flags & FILE_SUPPORTS_BLOCK_REFCOUNTING != 0;
-    let removable = storage != StorageKind::Network
-        && volume_root(&w).is_some_and(|root| {
-            // SAFETY: GetVolumePathNameW NUL-terminates `root`.
-            let drive = unsafe { GetDriveTypeW(root.as_ptr()) };
-            is_removable(drive, bus_type(&root))
-        });
     VolumeInfo {
         id: Some(u64::from(serial)),
         fs,
-        storage: if removable {
+        storage: if class.removable {
             StorageKind::Removable
         } else {
-            storage
+            class.storage
         },
         caps,
     }
