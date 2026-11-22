@@ -720,7 +720,7 @@ impl App {
         egui::Panel::bottom("status").show(ui, |ui| {
             views::status::show(ui, &self.explorer);
         });
-        if !self.explorer.transfers().is_empty() {
+        if self.explorer.has_transfers() {
             egui::Panel::bottom("transfers").show(ui, |ui| {
                 let state = &mut self.windows[index].transfers;
                 views::transfers::show(ui, &mut self.explorer, state);

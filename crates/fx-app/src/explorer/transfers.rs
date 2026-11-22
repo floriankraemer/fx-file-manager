@@ -67,6 +67,10 @@ impl Explorer {
         self.transfers.infos()
     }
 
+    pub fn has_transfers(&self) -> bool {
+        !self.transfers.is_empty()
+    }
+
     /// True while a transfer runs or waits; a UI should then poll about ten times a second.
     pub fn transfers_active(&self) -> bool {
         self.transfers.active()

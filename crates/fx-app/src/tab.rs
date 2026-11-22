@@ -107,6 +107,10 @@ impl Tab {
         self.rows.iter().copied().collect()
     }
 
+    pub fn selection_len(&self) -> usize {
+        self.rows.len()
+    }
+
     pub fn is_selected(&self, row: usize) -> bool {
         self.rows.contains(&row)
     }

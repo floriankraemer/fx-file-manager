@@ -38,8 +38,8 @@ pub struct TransferInfo {
     /// The oldest conflict waiting for an answer.
     pub conflict: Option<Conflict>,
     /// Errors and warnings so far.
-    pub errors: Vec<CopyError>,
-    pub summary: Option<Summary>,
+    pub errors: Arc<[CopyError]>,
+    pub summary: Option<Arc<Summary>>,
 }
 
 /// Exponential moving average of bytes/s and files/s.
@@ -101,7 +101,9 @@ struct Entry {
     touched: Vec<PathBuf>,
     queued: Option<Request>,
     running: Option<Transfer>,
-    summary: Option<Summary>,
+    summary: Option<Arc<Summary>>,
+    /// The final report, shared so the panel does not copy it every frame.
+    errors: Arc<[CopyError]>,
     rate: Rate,
 }
 
@@ -130,6 +132,7 @@ impl Transfers {
             queued: Some(req),
             running: None,
             summary: None,
+            errors: Arc::from([]),
             rate: Rate::default(),
         });
     }
@@ -154,7 +157,8 @@ impl Transfers {
                 created: None,
                 removed: Vec::new(),
             });
-            e.summary = Some(summary);
+            e.errors = summary.errors.as_slice().into();
+            e.summary = Some(Arc::new(summary));
             changed = true;
         }
         // Clean results are reported by the notice alone; the rest stays in the panel until dismissed.
@@ -186,6 +190,10 @@ impl Transfers {
         (outcomes, changed)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub(crate) fn active(&self) -> bool {
         self.entries
             .iter()
@@ -213,11 +221,7 @@ impl Transfers {
                     rate: e.rate.bytes,
                     snapshot,
                     conflict: handle.and_then(|h| h.conflicts().into_iter().next()),
-                    errors: match (handle, &e.summary) {
-                        (Some(h), _) => h.report(),
-                        (None, Some(s)) => s.errors.clone(),
-                        (None, None) => Vec::new(),
-                    },
+                    errors: handle.map_or_else(|| e.errors.clone(), |h| h.report().into()),
                     summary: e.summary.clone(),
                 }
             })
