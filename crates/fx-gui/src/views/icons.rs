@@ -139,6 +139,7 @@ pub enum Glyph {
     Forward,
     Up,
     Refresh,
+    PathStep,
 }
 
 /// Paints `glyph` centered in `rect` (a 16x16 area).
@@ -197,7 +198,10 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
             p.line_segment([at(3.0, -1.5), at(0.0, 1.5)], s);
         }
         Glyph::Back | Glyph::Forward | Glyph::Up | Glyph::Refresh => {
-            paint_lucide(ui, rect, glyph, color);
+            paint_lucide(ui, rect, glyph, ACTION_ICON_PT, color);
+        }
+        Glyph::PathStep => {
+            paint_lucide(ui, rect, glyph, rect.width(), color);
         }
     }
 }
@@ -209,6 +213,7 @@ fn lucide_svg(glyph: Glyph) -> &'static str {
         Glyph::Back => include_str!("../../../../third_party/lucide/arrow-left.svg"),
         Glyph::Forward => include_str!("../../../../third_party/lucide/arrow-right.svg"),
         Glyph::Up => include_str!("../../../../third_party/lucide/arrow-up.svg"),
+        Glyph::PathStep => include_str!("../../../../third_party/lucide/corner-down-right.svg"),
         _ => include_str!("../../../../third_party/lucide/refresh-cw.svg"),
     }
 }
@@ -236,12 +241,12 @@ fn lucide_texture(ui: &Ui, glyph: Glyph, px: u32) -> Option<TextureHandle> {
     Some(tex)
 }
 
-fn paint_lucide(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
-    let px = (ACTION_ICON_PT * ui.pixels_per_point()).round() as u32;
+fn paint_lucide(ui: &Ui, rect: Rect, glyph: Glyph, size: f32, color: Color32) {
+    let px = (size * ui.pixels_per_point()).round() as u32;
     let Some(tex) = lucide_texture(ui, glyph, px) else {
         return;
     };
-    let r = Rect::from_center_size(rect.center(), vec2(ACTION_ICON_PT, ACTION_ICON_PT));
+    let r = Rect::from_center_size(rect.center(), vec2(size, size));
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     ui.painter().image(tex.id(), r, uv, color);
 }
@@ -252,7 +257,13 @@ mod tests {
 
     #[test]
     fn lucide_glyphs_rasterise_with_ink() {
-        for glyph in [Glyph::Back, Glyph::Forward, Glyph::Up, Glyph::Refresh] {
+        for glyph in [
+            Glyph::Back,
+            Glyph::Forward,
+            Glyph::Up,
+            Glyph::Refresh,
+            Glyph::PathStep,
+        ] {
             let svg = lucide_svg(glyph).replace("currentColor", "#fff");
             let icon = icon_theme::rasterise_svg(svg.as_bytes()).unwrap();
             assert!(icon.pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
