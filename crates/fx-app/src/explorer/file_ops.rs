@@ -102,7 +102,7 @@ impl Explorer {
                 self.reload_tab_after(w, index, &outcome);
             }
         }
-        self.notices.push_back(outcome.notice);
+        self.push_notice(outcome.notice);
     }
 
     fn drop_touched_preloads(&mut self, outcome: &Outcome) {
