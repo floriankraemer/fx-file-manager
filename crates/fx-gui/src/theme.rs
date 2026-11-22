@@ -133,11 +133,19 @@ fn builtins() -> Vec<Arc<Theme>> {
         .collect()
 }
 
-/// Reads every `*.toml` in `dir`; broken files are reported on stderr and skipped.
+/// Reads every `*.toml` in `dir`; broken files are logged and skipped.
 /// Colors a file leaves out come from Nord Dark or Nord Light, matching its `base`.
 fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!("no user themes folder at {}", dir.display());
+            return Vec::new();
+        }
+        Err(err) => {
+            log::warn!("cannot read the themes folder {}: {err}", dir.display());
+            return Vec::new();
+        }
     };
     let fallback = |base| {
         let id = if base == Base::Light {
@@ -159,8 +167,8 @@ fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
             continue;
         };
         if builtin.iter().any(|t| t.id == id) {
-            eprintln!(
-                "fx: ignoring theme {}: id clashes with a built-in theme",
+            log::warn!(
+                "ignoring theme {}: id clashes with a built-in theme",
                 path.display()
             );
             continue;
@@ -170,7 +178,7 @@ fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
             .and_then(|text| parse_theme(id, &text, fallback))
         {
             Ok(theme) => out.push(Arc::new(theme)),
-            Err(err) => eprintln!("fx: ignoring theme {}: {err}", path.display()),
+            Err(err) => log::warn!("ignoring theme {}: {err}", path.display()),
         }
     }
     out.sort_by_key(|t| t.name.to_lowercase());
