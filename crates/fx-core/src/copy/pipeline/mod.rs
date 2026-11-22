@@ -159,6 +159,16 @@ fn copy_groups(
             gi == last,
         );
         job.roots = group.tops.iter().map(Top::src_path).collect();
+        log::info!(
+            "copy group: {} item(s), {} workers, {:?}, methods {:?}, verify {}, {:?}, {}",
+            group.tops.len(),
+            group.plan.workers,
+            group.plan.schedule,
+            group.plan.methods,
+            group.plan.verify,
+            group.plan.durability,
+            job.pair,
+        );
         job.run_schedule(group);
         if group.plan.durability == Durability::BeforeSourceDelete {
             kept_sources.extend(job.delete_moved_sources(&group.tops, &req.items));
@@ -186,7 +196,7 @@ fn summarize(
             .filter(|(state, ok)| **ok && state.clean())
             .count()
     };
-    Summary {
+    let summary = Summary {
         op: req.op,
         items: req.items.len(),
         items_done,
@@ -199,7 +209,27 @@ fn summarize(
         kept_sources,
         plans: groups.iter().map(|g| g.plan).collect(),
         elapsed: snapshot.elapsed,
-    }
+    };
+    log_summary(&summary);
+    summary
+}
+
+fn log_summary(s: &Summary) {
+    let warnings = s.errors.iter().filter(|e| e.warning).count();
+    log::info!(
+        "{:?} finished: {}/{} items, {} files, {} bytes, {} errors, {warnings} warnings, {} skipped, \
+         cancelled {}, {} sources kept, {:.1?}",
+        s.op,
+        s.items_done,
+        s.items,
+        s.files,
+        s.bytes,
+        s.error_count(),
+        s.skipped,
+        s.cancelled,
+        s.kept_sources.len(),
+        s.elapsed,
+    );
 }
 
 /// Per top-level item: a move deletes its source only if both stay zero.

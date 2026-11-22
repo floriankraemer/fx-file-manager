@@ -254,6 +254,7 @@ impl Shared {
     }
 
     pub(crate) fn cancel(&self) {
+        log::info!("transfer cancel requested");
         self.set_state(CANCELLED);
     }
 
@@ -304,6 +305,7 @@ impl Shared {
         waits.disk_full = true;
         if self.state.load(Ordering::Acquire) == RUNNING {
             self.state.store(PAUSED, Ordering::Release);
+            log::warn!("the destination is full: the transfer is paused");
         }
         // Never call out with the lock held: a watcher may take a snapshot from inside `notify`.
         drop(waits);
@@ -314,13 +316,16 @@ impl Shared {
         }
         waits.disk_full = false;
         if self.is_cancelled() {
+            log::info!("the transfer was cancelled while waiting for free space");
             return Err(cancelled());
         }
-        Ok(if waits.skip_disk_full {
+        let answer = if waits.skip_disk_full {
             DiskFull::Skip
         } else {
             DiskFull::Retry
-        })
+        };
+        log::info!("the transfer resumes after a full destination: {answer:?}");
+        Ok(answer)
     }
 
     /// From now on files that hit a full disk fail instead of pausing; resumes the job.
