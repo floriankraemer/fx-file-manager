@@ -173,8 +173,14 @@ fn root_place() -> Place {
 /// Directories directly inside `dir` (labelled by full path), sorted by label. A missing mount directory is normal, so it yields nothing.
 #[cfg(target_os = "linux")]
 fn child_dirs(dir: &Path) -> Vec<Place> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                log::debug!("cannot read {}: {err}", dir.display());
+            }
+            return Vec::new();
+        }
     };
     let mut places: Vec<Place> = entries
         .filter_map(Result::ok)
