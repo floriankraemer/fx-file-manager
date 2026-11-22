@@ -61,7 +61,7 @@ Synthetic tree: 1,000,000 empty files in 5,050 folders (200 files per folder; ev
 | `fx find '*.rs' --quiet` | 145,000 | 52.1 ms | +45% |
 | `fx find file1 --quiet` | 500,000 | 65.2 ms | +82% |
 
-- Time to first result is 1.7 ms on the synthetic tree (a run in 9 saw 4.4 ms).
+- Time to first result is 1.7 ms on the synthetic tree (occasionally about 4.4 ms).
   On `/usr` (241k files, 36k folders, a 25-match query) it is 12 to 21 ms.
 - Cancel latency, from setting the flag to `search` returning with every worker stopped, over 50 runs: median 0.31 ms and worst 0.81 ms on the synthetic tree; median 0.44 ms and worst 6.1 ms on `/usr`.
 - Real trees, full walk: `/usr` takes about 300 ms for both `walk --quiet` and a non-matching `find`; `~/.cargo/registry` (50k files) takes about 14 ms for `walk --quiet` and 15 ms for a non-matching `find`.
