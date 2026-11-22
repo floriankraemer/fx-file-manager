@@ -975,6 +975,44 @@ fn verified_copies_are_complete_and_report_no_errors() {
     }
 }
 
+/// A cancel while the fresh copy is being verified must leave the old destination file in place.
+#[test]
+fn cancelled_verify_of_an_overwrite_keeps_the_old_file() {
+    let t = tempfile::tempdir().unwrap();
+    let (src, dst) = (t.path().join("src.bin"), t.path().join("dst.bin"));
+    let new = bytes(7, 96 << 20);
+    fs::write(&src, &new).unwrap();
+    for _ in 0..4 {
+        fs::write(&dst, b"old content").unwrap();
+        let handle = TransferHandle::new(|| {});
+        let req = request(
+            vec![item(&src, &dst)],
+            Op::Copy,
+            ConflictPolicy::Overwrite,
+            Overrides {
+                verify: true,
+                ..Overrides::default()
+            },
+        );
+        let worker = {
+            let handle = handle.clone();
+            thread::spawn(move || handle.run(&req))
+        };
+        while handle.snapshot().bytes_done < new.len() as u64 && !worker.is_finished() {
+            thread::yield_now();
+        }
+        handle.cancel();
+        worker.join().unwrap();
+        let left = fs::read(&dst).expect("the destination must survive a cancel");
+        assert!(
+            left == b"old content" || left == new,
+            "{} bytes",
+            left.len()
+        );
+        assert!(no_part_files(t.path()));
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use super::*;

@@ -9,6 +9,7 @@ use crate::EntryKind;
 use crate::copy::Meta;
 use crate::copy::progress::{DiskFull, ErrorOp, Progress, is_cancelled};
 use crate::copy::verify;
+use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
@@ -174,14 +175,27 @@ impl Job<'_> {
         };
 
         let ctx = self.ctx();
-        let placed = self.place(e, path, &meta, ErrorOp::Copy, |n| {
-            os::copy_file(&ctx, &src, e.src_dir, e.name, e.dst_dir, n, data.as_deref())
-        })?;
+        let verify_failed = Cell::new(false);
+        let placed = self
+            .place(e, path, &meta, ErrorOp::Copy, |n| {
+                let copied =
+                    os::copy_file(&ctx, &src, e.src_dir, e.name, e.dst_dir, n, data.as_deref())?;
+                self.verify_new(e, path, n, meta.size)
+                    .inspect_err(|_| verify_failed.set(true))?;
+                Ok(copied)
+            })
+            .map_err(|f| match verify_failed.get() {
+                true => Failure {
+                    op: ErrorOp::Verify,
+                    ..f
+                },
+                false => f,
+            })?;
         let Placed::Done(copied, final_name) = placed else {
             return Ok((Done::Skipped, 0));
         };
         let cloned = copied.cloned;
-        self.finish_file(e, path, &final_name, copied.warnings, leader)?;
+        self.finish_file(e, &final_name, copied.warnings, leader);
         Ok((Done::Copied { cloned }, meta.size))
     }
 
@@ -236,27 +250,33 @@ impl Job<'_> {
         }
     }
 
-    /// Verifies the copy, publishes it to its hardlink group and records metadata warnings.
+    /// Verifies a fresh copy before it is placed: a copy that cannot be trusted is removed (a cancel
+    /// included), so an overwrite never loses the old file to it.
+    fn verify_new(&self, e: &Entry<'_>, src: &Path, name: &OsStr, size: u64) -> io::Result<()> {
+        if !self.plan.verify {
+            return Ok(());
+        }
+        let err = match verify::check(self.sh, src, &e.dst_dir.path().join(name)) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+        Progress::sub(&self.sh.progress.bytes_done, size);
+        let _ = e.dst_dir.remove_at(name);
+        Err(err)
+    }
+
+    /// Publishes the copy to its hardlink group and records metadata warnings.
     fn finish_file(
         &self,
         e: &Entry<'_>,
-        path: &Path,
         final_name: &OsStr,
         warnings: Vec<io::Error>,
         leader: Option<LinkLeader<'_>>,
-    ) -> Result<(), Failure> {
+    ) {
         let dst_path = e.dst_dir.path().join(final_name);
-        if self.plan.verify
-            && let Err(err) = verify::check(self.sh, path, &dst_path)
-        {
-            // A copy that cannot be trusted is not left behind (a cancel included).
-            let _ = e.dst_dir.remove_at(final_name);
-            return Err(err).at(ErrorOp::Verify);
-        }
         if let Some(leader) = leader {
             leader.finish(dst_path.clone());
         }
         self.warn(&dst_path, ErrorOp::Metadata, warnings);
-        Ok(())
     }
 }

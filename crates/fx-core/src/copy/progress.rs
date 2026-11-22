@@ -32,7 +32,9 @@ impl Progress {
     }
 
     pub(crate) fn sub(counter: &AtomicU64, n: u64) {
-        counter.fetch_sub(n, Ordering::Relaxed);
+        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+            Some(c.saturating_sub(n))
+        });
     }
 
     /// Records `path` as being copied when it is large enough for anyone to notice.
