@@ -4,13 +4,16 @@ use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{
-    Color32, CursorIcon, Label, Rect, Response, RichText, ScrollArea, Sense, Stroke, Ui, pos2, vec2,
+    Color32, CursorIcon, Label, Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind,
+    Ui, pos2, vec2,
 };
-use fx_app::{Children, Explorer, Place, PlaceGroup, bookmark_places, t, tr};
+use fx_app::{Children, Explorer, Place, PlaceGroup, TreeNode, bookmark_places, t, tr};
 use std::path::{Path, PathBuf};
 
 const INDENT: f32 = 16.0;
 const CHEVRON_W: f32 = 12.0;
+/// Size of the arrow that ends each step of the path trail.
+const STEP_SIZE: f32 = 14.0;
 
 enum Action {
     Navigate(PathBuf),
@@ -222,6 +225,8 @@ struct RowLook<'a> {
     path: &'a Path,
     depth: usize,
     selected: bool,
+    /// A folder above the active one, on its path.
+    ancestor: bool,
     hovered: bool,
     expanded: bool,
     has_chevron: bool,
@@ -235,7 +240,7 @@ fn node(
     path: &Path,
     bookmark: Option<BookmarkRow>,
     depth: usize,
-) {
+) -> Rect {
     let explorer = walk.explorer;
     let tree = explorer.tree();
     let expanded = tree.is_expanded(path);
@@ -269,6 +274,7 @@ fn node(
         path,
         depth,
         selected,
+        ancestor: !selected && walk.current.starts_with(path),
         hovered: resp.hovered(),
         expanded,
         has_chevron,
@@ -302,10 +308,59 @@ fn node(
     });
 
     if expanded && let Some(Children::Loaded(kids)) = children {
-        for k in kids {
-            node(ui, walk, &k.name, &k.path, None, depth + 1);
+        let step = child_rows(ui, walk, kids, depth);
+        if let Some(step) = step {
+            paint_path_step(ui, rect, depth, &step);
         }
     }
+    rect
+}
+
+/// The row below an ancestor that continues the path to the active folder.
+struct PathStep {
+    row: Rect,
+    /// The row is the active folder itself.
+    last: bool,
+}
+
+/// Lays out the child rows of an expanded folder; returns the one on the path to the active folder.
+fn child_rows(
+    ui: &mut Ui,
+    walk: &mut TreeWalk<'_>,
+    kids: &[TreeNode],
+    depth: usize,
+) -> Option<PathStep> {
+    let mut step = None;
+    for k in kids {
+        let row = node(ui, walk, &k.name, &k.path, None, depth + 1);
+        if walk.current.starts_with(&k.path) {
+            step = Some(PathStep {
+                row,
+                last: walk.current == k.path,
+            });
+        }
+    }
+    step
+}
+
+/// Draws the trail from an ancestor row down to the row on the path: a vertical line at the
+/// ancestor's chevron column that ends in an arrow pointing at the next folder.
+fn paint_path_step(ui: &Ui, parent: Rect, depth: usize, step: &PathStep) {
+    let x = parent.left() + 4.0 + depth as f32 * INDENT + CHEVRON_W / 2.0;
+    let color = if step.last {
+        theme::accent()
+    } else {
+        theme::accent().gamma_multiply(0.7)
+    };
+    // Where Lucide's corner-down-right has its vertical stroke and its horizontal bar.
+    let (stem, bar) = (STEP_SIZE * 4.0 / 24.0, STEP_SIZE * 15.0 / 24.0);
+    let corner = pos2(x - stem, step.row.center().y - bar);
+    let stroke = Stroke::new(STEP_SIZE * 2.0 / 24.0, color);
+    let from = pos2(x, parent.center().y + 6.0);
+    ui.painter()
+        .line_segment([from, pos2(x, corner.y + stem)], stroke);
+    let glyph = Rect::from_min_size(corner, vec2(STEP_SIZE, STEP_SIZE));
+    icons::glyph(ui, glyph, Glyph::PathStep, color);
 }
 
 /// Reorders bookmarks: dragging a row onto another row's slot moves it there.
@@ -352,6 +407,10 @@ fn paint_row(ui: &Ui, rect: Rect, row_h: f32, look: &RowLook) -> Rect {
     };
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 6.0, fill);
+    if look.selected {
+        let ring = Stroke::new(1.0, theme::accent().gamma_multiply(0.45));
+        painter.rect_stroke(rect.shrink(0.5), 6.0, ring, StrokeKind::Inside);
+    }
 
     let x0 = rect.left() + 4.0 + look.depth as f32 * INDENT;
     let chevron = Rect::from_min_size(pos2(x0, rect.top()), vec2(CHEVRON_W, row_h));
@@ -376,10 +435,10 @@ fn paint_row(ui: &Ui, rect: Rect, row_h: f32, look: &RowLook) -> Rect {
         .map_or_else(|| "root".to_owned(), |n| n.to_string_lossy().into_owned());
     icons::paint_folder(ui, icon, &name, look.expanded);
     let text_x = icon_x + 16.0 + 6.0;
-    let color = if look.usable {
-        theme::text()
-    } else {
-        theme::dim()
+    let color = match (look.usable, look.ancestor) {
+        (false, _) => theme::dim(),
+        (true, true) => theme::header_text(),
+        (true, false) => theme::text(),
     };
     let mut job = LayoutJob::simple_singleline(
         look.label.to_owned(),
