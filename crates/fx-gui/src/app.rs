@@ -26,6 +26,8 @@ struct WindowUi {
     scroll_to_selection: bool,
     transfers: views::transfers::State,
     was_focused: bool,
+    /// The last title sent to the window manager.
+    title: String,
     path_edit: Option<views::toolbar::PathEdit>,
     search: views::search::State,
     /// A reveal asked for its item to be scrolled into view once the folder has loaded.
@@ -41,6 +43,7 @@ impl WindowUi {
             scroll_to_selection: false,
             transfers: views::transfers::State::default(),
             was_focused,
+            title: String::new(),
             path_edit: None,
             search: views::search::State::default(),
             reveal_scroll: false,
@@ -501,16 +504,22 @@ impl App {
         dnd::track_always(&ctx, self.windows.len() > 1);
 
         self.handle_input(&ctx, index);
-        ctx.send_viewport_cmd(ViewportCommand::Title(format!(
-            "fx — {}",
-            self.explorer.active().path().display()
-        )));
+        self.update_title(&ctx, index);
 
         let mut actions = Vec::new();
         self.panels(ui, index, &mut actions);
         self.overlays(&ctx, index);
         self.dispatch_all(&ctx, index, actions);
         self.drag_and_drop(&ctx, index);
+    }
+
+    fn update_title(&mut self, ctx: &Context, index: usize) {
+        let title = format!("fx — {}", self.explorer.active().path().display());
+        if self.windows[index].title == title {
+            return;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+        self.windows[index].title = title;
     }
 
     fn dispatch_all(&mut self, ctx: &Context, index: usize, actions: Vec<Action>) {
