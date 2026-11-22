@@ -214,18 +214,29 @@ mod platform {
     use super::to_points;
     use eframe::egui::Pos2;
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt;
     use x11rb::rust_connection::RustConnection;
 
     /// The X connection and the root window of its first screen, opened once.
     static X: OnceLock<Option<(RustConnection, u32)>> = OnceLock::new();
+    /// Whether fx was started in a Wayland session, before `prefer_x11` hid it from the environment.
+    static WAYLAND: OnceLock<bool> = OnceLock::new();
+    static FAILING: AtomicBool = AtomicBool::new(false);
+
+    pub fn note_wayland_session(wayland: bool) {
+        let _ = WAYLAND.set(wayland);
+    }
 
     /// Under Wayland the X server only knows the pointer over its own windows, so its reading goes stale.
     pub fn cursor(pixels_per_point: f32) -> Option<Pos2> {
-        let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+        let wayland = WAYLAND
+            .get()
+            .copied()
+            .unwrap_or_else(|| std::env::var_os("WAYLAND_DISPLAY").is_some());
         let display = std::env::var("DISPLAY").ok();
-        if !x11_session(wayland.as_deref(), display.as_deref()) {
+        if !x11_session(wayland.then_some("wayland"), display.as_deref()) {
             return None;
         }
         let pixels = query_x_pointer()?;
@@ -236,15 +247,34 @@ mod platform {
         display.is_some() && wayland.is_none()
     }
 
+    fn connect() -> Option<(RustConnection, u32)> {
+        let connected = x11rb::connect(None)
+            .map_err(|err| err.to_string())
+            .and_then(|(conn, screen)| {
+                let root = conn.setup().roots.get(screen).ok_or("no such screen")?.root;
+                Ok((conn, root))
+            });
+        connected
+            .inspect_err(|err| log::warn!("cannot connect to the X server for the pointer: {err}"))
+            .ok()
+    }
+
     fn query_x_pointer() -> Option<(i32, i32)> {
-        let x = X.get_or_init(|| {
-            let (conn, screen) = x11rb::connect(None).ok()?;
-            let root = conn.setup().roots.get(screen)?.root;
-            Some((conn, root))
-        });
-        let (conn, root) = x.as_ref()?;
-        let reply = conn.query_pointer(*root).ok()?.reply().ok()?;
-        Some((i32::from(reply.root_x), i32::from(reply.root_y)))
+        let (conn, root) = X.get_or_init(connect).as_ref()?;
+        let reply = conn
+            .query_pointer(*root)
+            .map_err(|err| err.to_string())
+            .and_then(|cookie| cookie.reply().map_err(|err| err.to_string()));
+        let failed_before = FAILING.swap(reply.is_err(), Ordering::Relaxed);
+        match reply {
+            Ok(reply) => Some((i32::from(reply.root_x), i32::from(reply.root_y))),
+            Err(err) => {
+                if !failed_before {
+                    log::debug!("reading the X pointer failed: {err}");
+                }
+                None
+            }
+        }
     }
 
     #[cfg(test)]
@@ -266,6 +296,12 @@ mod platform {
             assert!(query_x_pointer().is_some());
         }
     }
+}
+
+/// Records whether the session was Wayland, which the X11 pointer reading cannot serve.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn note_wayland_session(wayland: bool) {
+    platform::note_wayland_session(wayland);
 }
 
 /// True in the frame `viewport` saw the pointer button released.

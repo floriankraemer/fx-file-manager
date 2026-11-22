@@ -55,6 +55,7 @@ fn log_startup(log_file: Option<PathBuf>) {
 /// offer both Wayland and X11 run fx through X11.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn prefer_x11() {
+    views::dnd::note_wayland_session(std::env::var_os("WAYLAND_DISPLAY").is_some());
     if std::env::var_os("DISPLAY").is_some() {
         // SAFETY: runs first in `main`, before any other thread exists.
         unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
