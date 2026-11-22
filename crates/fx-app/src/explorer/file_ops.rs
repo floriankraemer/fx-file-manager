@@ -116,7 +116,7 @@ impl Explorer {
 
     /// One load per path is enough: the result fills every window's slot for it.
     fn reload_touched_trees(&mut self, outcome: &Outcome) {
-        let loaded: Vec<&PathBuf> = outcome
+        let loaded = outcome
             .touched
             .iter()
             .filter(|path| {
@@ -124,10 +124,9 @@ impl Explorer {
                     .iter()
                     .any(|w| w.tree.children.contains_key(*path))
             })
+            .cloned()
             .collect();
-        for path in loaded {
-            self.load_tree(path.clone());
-        }
+        self.load_trees(loaded);
     }
 
     /// Moves tab `index` of window `w` out of a removed folder, or reloads it if the operation touched its folder.

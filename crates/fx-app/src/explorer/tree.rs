@@ -75,24 +75,32 @@ impl Explorer {
             .iter()
             .flat_map(|w| w.tree.children.keys().cloned())
             .collect();
-        for path in cached {
-            self.load_tree(path);
-        }
+        self.load_trees(cached);
     }
 
     pub(super) fn load_tree(&self, path: PathBuf) {
+        self.load_trees(vec![path]);
+    }
+
+    /// Lists all `paths` on a single worker thread, so a long session cannot fan out into hundreds of threads.
+    pub(super) fn load_trees(&self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
         let generation = self.tree_generation;
         let show_hidden = self.settings.show_hidden;
         let tx = self.tree_tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
-            let result = list_children(&path, show_hidden);
-            let _ = tx.send(TreeLoaded {
-                generation,
-                path,
-                result,
-            });
-            wake();
+            for path in paths {
+                let result = list_children(&path, show_hidden);
+                let _ = tx.send(TreeLoaded {
+                    generation,
+                    path,
+                    result,
+                });
+                wake();
+            }
         });
     }
 
