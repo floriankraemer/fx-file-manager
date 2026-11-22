@@ -6,6 +6,7 @@ use rayon::prelude::*;
 use rustix::fs::{
     AtFlags, CWD, FileType, Mode, OFlags, RawDir, StatxFlags, major, minor, openat, statfs, statx,
 };
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::io;
 use std::mem::MaybeUninit;
@@ -33,8 +34,9 @@ pub(crate) fn enumerate(
         Mode::empty(),
     )?;
     let first = out.entries.len();
-    let mut buf = vec![MaybeUninit::<u8>::uninit(); strategy.buf_size.max(4096)];
-    let cnames = read_entries(fd.as_fd(), &mut buf, metadata, out)?;
+    let cnames = with_buffer(strategy.buf_size.max(4096), |buf| {
+        read_entries(fd.as_fd(), buf, metadata, out)
+    })?;
 
     if metadata {
         let stats = stat_all(fd.as_fd(), &cnames, &out.entries[first..], strategy);
@@ -46,6 +48,21 @@ pub(crate) fn enumerate(
         }
     }
     Ok(())
+}
+
+thread_local! {
+    static DIR_BUF: RefCell<Vec<MaybeUninit<u8>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `len`. `f` must not re-enter `enumerate`:
+/// a rayon worker blocked in `stat_all` may steal another listing task.
+fn with_buffer<R>(len: usize, f: impl FnOnce(&mut [MaybeUninit<u8>]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < len {
+            buf.resize(len, MaybeUninit::uninit());
+        }
+        f(&mut buf[..len])
+    })
 }
 
 /// NUL-terminated copies of the names, so statx can use them without allocating per entry.

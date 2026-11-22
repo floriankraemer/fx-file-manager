@@ -3,6 +3,7 @@
 
 use crate::{EntryKind, Listing, StorageKind, Strategy};
 use libc::{c_int, c_void};
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
@@ -65,18 +66,54 @@ pub(crate) fn enumerate(
         fileattr: libc::ATTR_FILE_DATALENGTH,
         forkattr: 0,
     };
-    // u64 elements give the 8-byte alignment the kernel expects; records themselves are
-    // only 4-byte aligned, so they are parsed from byte slices, never by pointer cast.
-    let mut buf = vec![0u64; strategy.buf_size.max(4096).div_ceil(8)];
-    let buf_bytes = buf.len() * 8;
-    let mut first = true;
+    let first = out.entries.len();
+    let read = with_buffer(strategy.buf_size.max(4096).div_ceil(8), |buf| {
+        read_blocks(&fd, &mut list, buf, metadata, out)
+    });
+    match read {
+        // Filesystem without getattrlistbulk: nothing pushed yet, let std do it all.
+        Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            super::std_fs::enumerate(dir, strategy, metadata, out)
+        }
+        read => read,
+    }
+}
 
+fn is_unsupported(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL))
+}
+
+thread_local! {
+    static DIR_BUF: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `words` u64s. `f` must not re-enter `enumerate`.
+fn with_buffer<R>(words: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < words {
+            buf.resize(words, 0);
+        }
+        f(&mut buf[..words])
+    })
+}
+
+/// Calls `getattrlistbulk` until the directory is exhausted. The u64 elements of `buf` give the
+/// 8-byte alignment the kernel expects; records themselves are only 4-byte aligned, so they are
+/// parsed from byte slices, never by pointer cast.
+fn read_blocks(
+    fd: &Fd,
+    list: &mut libc::attrlist,
+    buf: &mut [u64],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
+    let buf_bytes = buf.len() * 8;
     loop {
         // SAFETY: `list` and `buf` are valid for the sizes passed.
         let n = unsafe {
             libc::getattrlistbulk(
                 fd.0,
-                std::ptr::from_mut(&mut list).cast::<c_void>(),
+                std::ptr::from_mut(list).cast::<c_void>(),
                 buf.as_mut_ptr().cast::<c_void>(),
                 buf_bytes,
                 u64::from(libc::FSOPT_PACK_INVAL_ATTRS),
@@ -86,22 +123,16 @@ pub(crate) fn enumerate(
             0 => return Ok(()),
             n if n < 0 => {
                 let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
+                if err.kind() != io::ErrorKind::Interrupted {
+                    return Err(err);
                 }
-                // Filesystem without getattrlistbulk: nothing pushed yet, let std do it all.
-                if first && matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL)) {
-                    return super::std_fs::enumerate(dir, strategy, metadata, out);
-                }
-                return Err(err);
             }
             n => {
-                first = false;
                 // SAFETY: the kernel initialised the first `buf_bytes` bytes at most; we
                 // view the same allocation as bytes and only read within record lengths.
                 let bytes =
                     unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), buf_bytes) };
-                push_records(&fd, bytes, n, metadata, out)?;
+                push_records(fd, bytes, n, metadata, out)?;
             }
         }
     }

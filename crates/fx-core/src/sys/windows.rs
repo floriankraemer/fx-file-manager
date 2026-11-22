@@ -2,6 +2,7 @@
 use crate::listing::push_wtf8_from_utf16;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 
+use std::cell::RefCell;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -149,12 +150,54 @@ pub(crate) fn enumerate(
     out: &mut Listing,
 ) -> io::Result<()> {
     let handle = open(&wide_path(dir), FILE_LIST_DIRECTORY)?;
-    // u64 elements: 8-byte alignment, which entries keep via NextEntryOffset.
-    let mut buf = vec![0u64; strategy.buf_size.max(4096) / 8];
+    let first = out.entries.len();
+    let read = with_buffer(strategy.buf_size.max(4096) / 8, |buf| {
+        read_blocks(&handle, buf, metadata, out)
+    });
+    match read {
+        // Not a directory, or a filesystem without this info class: nothing has been
+        // pushed yet, so std can redo (and correctly classify) the whole directory.
+        Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            super::std_fs::enumerate(dir, strategy, metadata, out)
+        }
+        read => read,
+    }
+}
+
+fn is_unsupported(err: &io::Error) -> bool {
+    let unsupported = [
+        ERROR_INVALID_PARAMETER,
+        ERROR_INVALID_LEVEL,
+        ERROR_NOT_SUPPORTED,
+    ];
+    err.raw_os_error()
+        .is_some_and(|e| unsupported.iter().any(|&u| u as i32 == e))
+}
+
+thread_local! {
+    static DIR_BUF: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `words` u64s. `f` must not re-enter `enumerate`.
+fn with_buffer<R>(words: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < words {
+            buf.resize(words, 0);
+        }
+        f(&mut buf[..words])
+    })
+}
+
+/// Fetches record batches until the directory ends. The u64 elements give the 8-byte alignment
+/// that entries keep via `NextEntryOffset`.
+fn read_blocks(
+    handle: &Handle,
+    buf: &mut [u64],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
     let buf_bytes = (buf.len() * 8) as u32;
-    let name_off = mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
     let mut class = FileIdBothDirectoryRestartInfo;
-    let mut first = true;
     let mut name = Vec::new();
     loop {
         // SAFETY: `buf` is valid for `buf_bytes` writable bytes.
@@ -163,39 +206,42 @@ pub(crate) fn enumerate(
         };
         class = FileIdBothDirectoryInfo;
         if ok == 0 {
-            // SAFETY: plain thread-local error read.
-            let e = unsafe { GetLastError() };
-            return match e {
-                ERROR_NO_MORE_FILES => Ok(()),
-                // Not a directory, or a filesystem without this info class: nothing has been
-                // pushed yet, so std can redo (and correctly classify) the whole directory.
-                ERROR_INVALID_PARAMETER | ERROR_INVALID_LEVEL | ERROR_NOT_SUPPORTED if first => {
-                    super::std_fs::enumerate(dir, strategy, metadata, out)
-                }
-                e => Err(io::Error::from_raw_os_error(e as i32)),
+            return match last_error() {
+                e if e.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) => Ok(()),
+                e => Err(e),
             };
         }
-        first = false;
-        let base = buf.as_ptr().cast::<u8>();
-        let mut off = 0usize;
-        loop {
-            // SAFETY: the kernel filled a chain of 8-aligned records inside `buf`;
-            // `off` follows NextEntryOffset and the name lies within the record.
-            let (info, units) = unsafe {
-                let info = &*base.add(off).cast::<FILE_ID_BOTH_DIR_INFO>();
-                let n = info.FileNameLength as usize / 2;
-                (
-                    info,
-                    std::slice::from_raw_parts(base.add(off + name_off).cast::<u16>(), n),
-                )
-            };
-            if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
-                push_entry(info, units, &mut name, metadata, out)?;
-            }
-            match info.NextEntryOffset {
-                0 => break,
-                next => off += next as usize,
-            }
+        push_batch(buf, &mut name, metadata, out)?;
+    }
+}
+
+/// Walks the chain of records the kernel wrote at the start of `buf`.
+fn push_batch(
+    buf: &[u64],
+    name: &mut Vec<u8>,
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
+    let name_off = mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+    let base = buf.as_ptr().cast::<u8>();
+    let mut off = 0usize;
+    loop {
+        // SAFETY: the kernel filled a chain of 8-aligned records inside `buf`;
+        // `off` follows NextEntryOffset and the name lies within the record.
+        let (info, units) = unsafe {
+            let info = &*base.add(off).cast::<FILE_ID_BOTH_DIR_INFO>();
+            let n = info.FileNameLength as usize / 2;
+            (
+                info,
+                std::slice::from_raw_parts(base.add(off + name_off).cast::<u16>(), n),
+            )
+        };
+        if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
+            push_entry(info, units, name, metadata, out)?;
+        }
+        match info.NextEntryOffset {
+            0 => return Ok(()),
+            next => off += next as usize,
         }
     }
 }
