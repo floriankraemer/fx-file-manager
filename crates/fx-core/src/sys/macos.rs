@@ -234,11 +234,13 @@ fn entry_kind(vtype: u32) -> EntryKind {
 fn read_timespec(rec: &[u8], at: usize) -> Option<SystemTime> {
     let (sec, nsec) = (read_i64(rec, at)?, read_i64(rec, at + 8)?);
     let nsec = Duration::from_nanos(u64::try_from(nsec).ok()?);
-    Some(if sec >= 0 {
-        UNIX_EPOCH + Duration::from_secs(sec.unsigned_abs()) + nsec
+    let secs = Duration::from_secs(sec.unsigned_abs());
+    if sec >= 0 {
+        UNIX_EPOCH.checked_add(secs)
     } else {
-        UNIX_EPOCH - Duration::from_secs(sec.unsigned_abs()) + nsec
-    })
+        UNIX_EPOCH.checked_sub(secs)
+    }?
+    .checked_add(nsec)
 }
 
 fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) {
