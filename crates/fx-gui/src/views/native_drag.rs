@@ -19,6 +19,7 @@ impl HasWindowHandle for Source {
 /// Starts dragging `paths`; Windows keeps control until the drop, macOS returns at once.
 pub fn start(paths: Vec<PathBuf>) {
     let Some(handle) = platform::focused_window() else {
+        log::debug!("no fx window has focus, so no drag starts");
         return;
     };
     let result = drag::start_drag(
@@ -29,7 +30,7 @@ pub fn start(paths: Vec<PathBuf>) {
         Options::default(),
     );
     if let Err(err) = result {
-        eprintln!("fx: starting the drag failed: {err}");
+        log::warn!("starting the drag failed: {err}");
     }
 }
 
@@ -37,13 +38,29 @@ pub fn start(paths: Vec<PathBuf>) {
 mod platform {
     use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
     use std::num::NonZeroIsize;
-    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
 
+    /// The foreground window, if it is one of ours: another program may hold the foreground.
     pub fn focused_window() -> Option<RawWindowHandle> {
         // SAFETY: GetForegroundWindow takes no arguments and only reads window manager state.
         let hwnd = unsafe { GetForegroundWindow() };
+        if !is_ours(hwnd) {
+            return None;
+        }
         let hwnd = NonZeroIsize::new(hwnd as isize)?;
         Some(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)))
+    }
+
+    fn is_ours(hwnd: HWND) -> bool {
+        let mut process = 0;
+        // SAFETY: GetWindowThreadProcessId writes one u32 through the valid pointer it is given.
+        unsafe { GetWindowThreadProcessId(hwnd, &mut process) };
+        // SAFETY: GetCurrentProcessId takes no arguments.
+        process == unsafe { GetCurrentProcessId() }
     }
 }
 
