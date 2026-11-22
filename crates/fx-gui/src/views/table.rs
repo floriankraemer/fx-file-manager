@@ -41,11 +41,20 @@ struct Interaction {
     drag_started: Option<usize>,
     /// Dragged paths released on a folder row, with that folder.
     drop: Option<(Vec<PathBuf>, PathBuf)>,
+    /// The header being dragged this frame.
+    column_drag: Option<ColumnDrag>,
     show_column: Option<(ListColumn, bool)>,
     /// A header dragged onto another column's slot.
     move_column: Option<(ListColumn, ListColumn)>,
     /// Widths of the columns the user finished resizing.
     column_widths: Option<Vec<(ListColumn, f32)>>,
+}
+
+/// A header drag in progress: positions in the header row, and the header's own rectangle.
+struct ColumnDrag {
+    from: usize,
+    to: usize,
+    header: egui::Rect,
 }
 
 /// Header cell extents of the previous frame. Drops resolve against them because later cells are not laid out yet.
@@ -157,6 +166,9 @@ pub fn show(
                 |mut row| entry_row(&mut row, &rows, explorer, &mut out, actions),
             );
         });
+    if let Some(drag) = &out.column_drag {
+        paint_column_drag(ui, drag, &spans, &settings.list_columns);
+    }
     let pointer_down = ui.input(|i| i.pointer.any_down());
     let (layout, widths) = last.advance(&settings.list_columns, spans, pointer_down);
     ui.data_mut(|d| d.insert_temp(layout_key, layout));
@@ -296,10 +308,46 @@ fn column_drag(
         return;
     }
     ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
-    let edge = if to > index { spans[to].1 } else { spans[to].0 };
-    let header = ui.max_rect();
-    ui.painter()
-        .vline(edge, header.y_range(), Stroke::new(2.0, theme::accent()));
+    out.column_drag = Some(ColumnDrag {
+        from: index,
+        to,
+        header: ui.max_rect(),
+    });
+}
+
+/// Marks the drag over the whole table: the dragged column tinted, the target slot as a line, the name following the pointer.
+fn paint_column_drag(ui: &Ui, drag: &ColumnDrag, spans: &[(f32, f32)], columns: &[ListColumn]) {
+    let (Some(&(left, right)), Some(pointer)) =
+        (spans.get(drag.from), ui.input(|i| i.pointer.interact_pos()))
+    else {
+        return;
+    };
+    let bottom = ui.max_rect().bottom();
+    let y = drag.header.top()..=bottom;
+    let accent = theme::accent();
+    let painter = ui.painter();
+    let source = egui::Rect::from_x_y_ranges(left..=right, y.clone());
+    painter.rect_filled(source, 0.0, accent.gamma_multiply(0.14));
+    let to = spans[drag.to.min(spans.len() - 1)];
+    let edge = if drag.to > drag.from { to.1 } else { to.0 };
+    painter.vline(edge, y, Stroke::new(3.0, accent));
+    painter.circle_filled(egui::pos2(edge, drag.header.top() + 1.0), 4.0, accent);
+    paint_drag_chip(ui, pointer, columns[drag.from].header());
+}
+
+/// A small label that follows the pointer so the dragged column stays identifiable.
+fn paint_drag_chip(ui: &Ui, pointer: egui::Pos2, title: &str) {
+    let layer = egui::LayerId::new(egui::Order::Tooltip, ui.scope_id().with("column-chip"));
+    let painter = ui.ctx().layer_painter(layer);
+    let galley = painter.layout_no_wrap(
+        title.to_owned(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        theme::on_accent(),
+    );
+    let rect = egui::Rect::from_min_size(pointer + egui::vec2(12.0, 10.0), galley.size())
+        .expand2(egui::vec2(8.0, 3.0));
+    painter.rect_filled(rect, 6.0, theme::accent());
+    painter.galley(rect.min + egui::vec2(8.0, 3.0), galley, theme::on_accent());
 }
 
 /// The header context menu: a check entry per column except Name, which cannot be hidden.
