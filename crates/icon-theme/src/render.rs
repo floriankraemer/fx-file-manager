@@ -180,6 +180,87 @@ fn rasterise(
     })
 }
 
+/// Curve flattening resolution: segments per Bezier in [`svg_polylines`].
+const CURVE_STEPS: usize = 12;
+
+/// The outlines of an SVG's paths as polylines in its own coordinates, for a view that strokes
+/// them itself so the lines render as sharp as any other line it draws.
+pub fn svg_polylines(svg_bytes: &[u8]) -> Result<Vec<Vec<[f32; 2]>>, IconError> {
+    let tree = usvg::Tree::from_data(svg_bytes, &usvg::Options::default()).map_err(|e| {
+        IconError::MalformedSvg {
+            icon: "<image>".to_owned(),
+            message: e.to_string(),
+        }
+    })?;
+    let mut lines = Vec::new();
+    collect_polylines(tree.root(), &mut lines);
+    Ok(lines)
+}
+
+fn collect_polylines(group: &usvg::Group, lines: &mut Vec<Vec<[f32; 2]>>) {
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(inner) => collect_polylines(inner, lines),
+            usvg::Node::Path(path) => lines.extend(flatten(path.data())),
+            _ => {}
+        }
+    }
+}
+
+fn flatten(path: &tiny_skia::Path) -> Vec<Vec<[f32; 2]>> {
+    use tiny_skia::PathSegment::{Close, CubicTo, LineTo, MoveTo, QuadTo};
+    let mut lines: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut at = [0.0, 0.0];
+    for seg in path.segments() {
+        match seg {
+            MoveTo(p) => {
+                at = [p.x, p.y];
+                lines.push(vec![at]);
+            }
+            LineTo(p) => push_point(&mut lines, &mut at, [p.x, p.y]),
+            QuadTo(c, p) => {
+                let (from, c, p) = (at, [c.x, c.y], [p.x, p.y]);
+                curve(&mut lines, &mut at, |t| quad(from, c, p, t));
+            }
+            CubicTo(c1, c2, p) => {
+                let (from, c1, c2, p) = (at, [c1.x, c1.y], [c2.x, c2.y], [p.x, p.y]);
+                curve(&mut lines, &mut at, |t| cubic(from, c1, c2, p, t));
+            }
+            Close => {
+                if let Some(first) = lines.last().and_then(|l| l.first().copied()) {
+                    push_point(&mut lines, &mut at, first);
+                }
+            }
+        }
+    }
+    lines
+}
+
+fn curve(lines: &mut [Vec<[f32; 2]>], at: &mut [f32; 2], point: impl Fn(f32) -> [f32; 2]) {
+    for i in 1..=CURVE_STEPS {
+        push_point(lines, at, point(i as f32 / CURVE_STEPS as f32));
+    }
+}
+
+fn quad(a: [f32; 2], c: [f32; 2], p: [f32; 2], t: f32) -> [f32; 2] {
+    let u = 1.0 - t;
+    std::array::from_fn(|k| u * u * a[k] + 2.0 * u * t * c[k] + t * t * p[k])
+}
+
+fn cubic(a: [f32; 2], c1: [f32; 2], c2: [f32; 2], p: [f32; 2], t: f32) -> [f32; 2] {
+    let u = 1.0 - t;
+    std::array::from_fn(|k| {
+        u * u * u * a[k] + 3.0 * u * u * t * c1[k] + 3.0 * u * t * t * c2[k] + t * t * t * p[k]
+    })
+}
+
+fn push_point(lines: &mut [Vec<[f32; 2]>], at: &mut [f32; 2], p: [f32; 2]) {
+    *at = p;
+    if let Some(line) = lines.last_mut() {
+        line.push(p);
+    }
+}
+
 #[cfg(test)]
 mod rasterise_svg_tests {
     use super::*;
@@ -360,5 +441,22 @@ xyz = "never-shipped"
             IconRenderer::new().render(&pack, &assets, "rust", 0),
             Err(IconError::UnsupportedSize(0))
         ));
+    }
+}
+
+#[cfg(test)]
+mod svg_polylines_tests {
+    use super::*;
+
+    #[test]
+    fn an_arc_and_a_polyline_flatten_to_points() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>"#;
+        let lines = svg_polylines(svg).expect("parses");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], vec![[15.0, 10.0], [20.0, 15.0], [15.0, 20.0]]);
+        let corner = &lines[1];
+        assert_eq!(corner.first(), Some(&[4.0, 4.0]));
+        assert_eq!(corner.last(), Some(&[20.0, 15.0]));
+        assert!(corner.len() > 4, "the arc is subdivided");
     }
 }
