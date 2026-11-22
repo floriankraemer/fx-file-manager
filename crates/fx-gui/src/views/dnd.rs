@@ -64,11 +64,29 @@ pub fn drop_target(
 }
 
 const AREAS_KEY: &str = "dnd-drop-areas";
+const TRACK_KEY: &str = "dnd-track-areas";
+
+/// Other windows may start a drag while this one idles, so with several windows the areas are always kept.
+pub fn track_always(ctx: &Context, on: bool) {
+    ctx.data_mut(|d| d.insert_temp(Id::unique(TRACK_KEY), on));
+}
+
+/// Whether drop areas matter now: a drag is under way, files hover from outside, or other windows exist.
+pub fn recording(ctx: &Context) -> bool {
+    DragAndDrop::has_payload_of_type::<Dragged>(ctx)
+        || os_hovering(ctx)
+        || ctx
+            .data(|d| d.get_temp(Id::unique(TRACK_KEY)))
+            .unwrap_or(false)
+}
 
 /// Registers the tree folder `resp` shows as a drop area, for drags from any window.
 /// Tree folders register every frame, so they are dropped per window in `forget_areas`.
 pub fn record_tree_folder(resp: &Response, folder: &Path) {
     let ctx = &resp.ctx;
+    if !recording(ctx) {
+        return;
+    }
     let viewport = ctx.viewport_id();
     let Some(origin) = content_rect(ctx, viewport) else {
         return;
@@ -427,6 +445,7 @@ mod tests {
     fn tree_folder_area_follows_its_row_on_screen() {
         use egui_kittest::Harness;
         let mut harness = Harness::new_ui(|ui| {
+            track_always(ui.ctx(), true);
             let resp =
                 ui.allocate_rect(rect(10.0, 10.0, 100.0, 30.0), egui::Sense::click_and_drag());
             target(&resp, Path::new("/x"));

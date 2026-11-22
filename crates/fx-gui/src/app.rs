@@ -495,6 +495,7 @@ impl App {
         self.explorer.set_window(self.windows[index].id);
         self.track_focus(&ctx, index);
         dnd::forget_areas(&ctx);
+        dnd::track_always(&ctx, self.windows.len() > 1);
 
         self.handle_input(&ctx, index);
         ctx.send_viewport_cmd(ViewportCommand::Title(format!(
