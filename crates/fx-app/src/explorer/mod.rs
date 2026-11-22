@@ -2,6 +2,7 @@
 
 mod bookmarks;
 mod chooser;
+mod entries;
 mod file_ops;
 mod loading;
 mod notices;

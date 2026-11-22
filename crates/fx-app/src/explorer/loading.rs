@@ -54,41 +54,53 @@ impl Explorer {
     /// Returns true if any tab changed.
     pub(super) fn apply_loads(&mut self) -> bool {
         let mut changed = false;
-        // Windows whose active tab just finished loading and may need a preload.
         let mut loaded = Vec::new();
         while let Ok(done) = self.rx.try_recv() {
-            let Some((w, window)) = self
-                .windows
-                .iter_mut()
-                .enumerate()
-                .find(|(_, window)| window.tabs.iter().any(|tab| tab.id() == done.tab_id))
-            else {
+            let Some(applied) = self.apply_completed(done) else {
                 continue;
             };
-            let active_id = window.tabs[window.active].id();
-            let tab = window
-                .tabs
-                .iter_mut()
-                .find(|tab| tab.id() == done.tab_id)
-                .expect("tab was just found in this window");
-            let ok = done.result.is_ok();
-            let applied = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
-            if applied && ok && tab.id() == active_id {
-                loaded.push(w);
-            }
-            changed |= applied;
+            changed |= applied.changed;
+            loaded.extend(applied.active_loaded);
         }
-        // A revalidation of the folder already being preloaded keeps that preload: cached views are
-        // only a first paint that a fresh load always replaces, so redoing up to PRELOAD_MAX listings
-        // on every focus change or mtime tick would buy nothing.
         for w in loaded {
-            let window = &self.windows[w];
-            if window.preload_parent.as_deref() != Some(window.tabs[window.active].path()) {
-                self.maybe_preload(w);
-            }
+            self.preload_unless_current(w);
         }
         changed
     }
+
+    fn apply_completed(&mut self, done: Completed) -> Option<Applied> {
+        let (w, window) = self
+            .windows
+            .iter_mut()
+            .enumerate()
+            .find(|(_, window)| window.tabs.iter().any(|tab| tab.id() == done.tab_id))?;
+        let active_id = window.tabs[window.active].id();
+        let tab = window.tabs.iter_mut().find(|tab| tab.id() == done.tab_id)?;
+        let ok = done.result.is_ok();
+        let changed = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
+        let active_loaded = (changed && ok && tab.id() == active_id).then_some(w);
+        Some(Applied {
+            changed,
+            active_loaded,
+        })
+    }
+
+    /// A revalidation of the folder already being preloaded keeps that preload: cached views are
+    /// only a first paint that a fresh load always replaces, so redoing up to PRELOAD_MAX listings
+    /// on every focus change or mtime tick would buy nothing.
+    fn preload_unless_current(&mut self, w: usize) {
+        let window = &self.windows[w];
+        if window.preload_parent.as_deref() != Some(window.tabs[window.active].path()) {
+            self.maybe_preload(w);
+        }
+    }
+}
+
+/// Outcome of applying one finished load.
+struct Applied {
+    changed: bool,
+    /// The window whose active tab just finished loading and may need a preload.
+    active_loaded: Option<usize>,
 }
 
 /// Stats the folder before listing it, so a change made while listing leaves the recorded mtime older than the folder's.

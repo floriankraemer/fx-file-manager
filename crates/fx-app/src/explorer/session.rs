@@ -16,10 +16,7 @@ impl Explorer {
     pub(super) fn restore_windows(&mut self, saved: Vec<WindowState>) -> usize {
         let mut restored = 0;
         for window in saved {
-            // The saved active tab may be gone; the nearest surviving one at or after it takes over.
-            let before = window.tabs.len().min(window.active_tab);
-            let active = window.tabs[..before].iter().filter(|p| p.is_dir()).count();
-            let tabs: Vec<PathBuf> = window.tabs.into_iter().filter(|p| p.is_dir()).collect();
+            let (tabs, active) = surviving_tabs(window);
             if tabs.is_empty() {
                 continue;
             }
@@ -73,4 +70,13 @@ impl Explorer {
             );
         }
     }
+}
+
+/// The saved tabs that are still directories and the index of the active one among them.
+/// The saved active tab may be gone; the nearest surviving one at or after it takes over.
+fn surviving_tabs(window: WindowState) -> (Vec<PathBuf>, usize) {
+    let before = window.tabs.len().min(window.active_tab);
+    let active = window.tabs[..before].iter().filter(|p| p.is_dir()).count();
+    let tabs = window.tabs.into_iter().filter(|p| p.is_dir()).collect();
+    (tabs, active)
 }
