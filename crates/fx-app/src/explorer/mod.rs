@@ -32,7 +32,7 @@ use loading::Completed;
 use preload::PreloadDone;
 use revalidate::StatChecked;
 use search::SearchMsg;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -86,6 +86,8 @@ pub struct Explorer {
     next_session_save: Instant,
     /// Whether each bookmarked folder exists, as last checked off the UI thread. Missing means not checked yet.
     availability: HashMap<PathBuf, bool>,
+    /// Bookmarks whose check has not answered yet; a path stuck on a dead mount is not re-checked, so threads cannot pile up.
+    bookmark_checking: HashSet<PathBuf>,
     bookmark_tx: Sender<BookmarkChecked>,
     bookmark_rx: Receiver<BookmarkChecked>,
     search_tx: Sender<SearchMsg>,
@@ -181,6 +183,7 @@ impl Explorer {
             session_dirty: false,
             next_session_save: Instant::now(),
             availability: HashMap::new(),
+            bookmark_checking: HashSet::new(),
             bookmark_tx,
             bookmark_rx,
             search_tx,
