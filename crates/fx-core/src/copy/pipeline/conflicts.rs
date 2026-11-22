@@ -78,6 +78,23 @@ impl Job<'_> {
         self.decide(src, src_meta, dst, dst_meta)
     }
 
+    /// The entry's remembered answer, else a fresh one that is remembered for its retries.
+    fn answer_once(
+        &self,
+        e: &Entry<'_>,
+        src: &Path,
+        src_meta: &Meta,
+        dst: &Path,
+        dst_meta: &Meta,
+    ) -> io::Result<Resolution> {
+        if let Some(known) = e.answer.get() {
+            return Ok(known);
+        }
+        let fresh = self.resolve(src, src_meta, dst, dst_meta)?;
+        e.answer.set(Some(fresh));
+        Ok(fresh)
+    }
+
     /// How a clash with the source itself resolves: a copy lands beside it, a move leaves it alone.
     fn same_entry(&self) -> Resolution {
         match self.op {
@@ -108,7 +125,7 @@ impl Job<'_> {
         let dst_path = dst_dir.path().join(dst_name);
         let dst_meta = dst_dir.stat_at(dst_name).at(op)?;
         let resolution = self
-            .resolve(src_path, src_meta, &dst_path, &dst_meta)
+            .answer_once(e, src_path, src_meta, &dst_path, &dst_meta)
             .at(op)?;
         match resolution {
             Resolution::Skip => Ok(Placed::Skipped),

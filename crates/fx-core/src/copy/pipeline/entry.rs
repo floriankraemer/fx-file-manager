@@ -193,6 +193,8 @@ impl Job<'_> {
         let verify_failed = Cell::new(false);
         let placed = self
             .place(e, path, &meta, ErrorOp::Copy, |n| {
+                #[cfg(test)]
+                tests::inject_transient(e.name, n)?;
                 let copied =
                     os::copy_file(&ctx, &src, e.src_dir, e.name, e.dst_dir, n, data.as_deref())?;
                 self.verify_new(e, path, n, meta.size)
@@ -309,5 +311,73 @@ impl Job<'_> {
             leader.finish(dst_path.clone());
         }
         self.warn(&dst_path, ErrorOp::Metadata, warnings);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::copy::conflict::{ConflictPolicy, Resolution};
+    use crate::copy::plan::Op;
+    use crate::copy::{Item, Overrides, Request, TransferHandle};
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+
+    const FAULTY: &str = "fx-fails-once-transiently.bin";
+    static FAIL_NEXT: AtomicBool = AtomicBool::new(false);
+
+    /// Fails the first write to a temp name (an overwrite, after the conflict was answered) of the test's own file.
+    pub(super) fn inject_transient(name: &OsStr, target: &OsStr) -> io::Result<()> {
+        if name == FAULTY && target != name && FAIL_NEXT.swap(false, Ordering::SeqCst) {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_retry_reuses_the_answer_to_a_conflict() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(src.join(FAULTY), b"new").unwrap();
+        fs::write(dst.join(FAULTY), b"old").unwrap();
+        FAIL_NEXT.store(true, Ordering::SeqCst);
+        let handle = TransferHandle::new(|| {});
+        let req = Request {
+            items: vec![Item {
+                src: src.join(FAULTY),
+                dst: dst.join(FAULTY),
+            }],
+            op: Op::Copy,
+            policy: ConflictPolicy::Ask,
+            overrides: Overrides::default(),
+        };
+        let worker = {
+            let handle = handle.clone();
+            thread::spawn(move || handle.run(&req))
+        };
+        let conflict = loop {
+            if let Some(c) = handle.conflicts().into_iter().next() {
+                break c;
+            }
+            thread::yield_now();
+        };
+        handle.answer_conflict(conflict.id, Resolution::Overwrite, false);
+        let mut repeated = 0;
+        while !worker.is_finished() {
+            for again in handle.conflicts() {
+                repeated += 1;
+                handle.answer_conflict(again.id, Resolution::Overwrite, false);
+            }
+            thread::yield_now();
+        }
+        let summary = worker.join().unwrap();
+        assert_eq!(summary.files, 1);
+        assert!(!FAIL_NEXT.load(Ordering::SeqCst), "the fault was injected");
+        assert_eq!(repeated, 0, "the conflict was asked again");
+        assert_eq!(fs::read(dst.join(FAULTY)).unwrap(), b"new");
     }
 }

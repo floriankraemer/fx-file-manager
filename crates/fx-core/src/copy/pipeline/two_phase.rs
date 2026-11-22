@@ -9,6 +9,7 @@ use crate::EntryKind;
 use crate::copy::Meta;
 use crate::copy::plan::Order;
 use crate::copy::progress::{ErrorOp, Progress};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -81,6 +82,7 @@ impl File {
             dst_dir: &fds.dst,
             dst_name: &self.dst_name,
             keep_both: self.keep_both,
+            answer: Cell::default(),
         }
     }
 
