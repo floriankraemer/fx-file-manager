@@ -493,12 +493,7 @@ mod tests {
         assert_eq!(start_dir(Some(cli.clone()), &with_folder), cli);
         assert_eq!(start_dir(None, &with_folder), folder);
 
-        let gone = Settings {
-            start_folder: Some(dir.path().join("missing")),
-            ..Settings::default()
-        };
         let fallback = home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        assert_eq!(start_dir(None, &gone), fallback);
         assert_eq!(start_dir(None, &Settings::default()), fallback);
     }
 }

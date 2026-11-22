@@ -291,6 +291,19 @@ fn an_only_tab_in_a_gone_folder_goes_to_the_fallback() {
 }
 
 #[test]
+fn a_gone_start_folder_is_replaced_by_home_after_the_background_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("gone");
+    let settings = Settings {
+        restore_session: false,
+        ..Settings::default()
+    };
+    let explorer = with_state_in(dir.path(), None, &gone, settings, State::default());
+    let home = crate::settings::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    assert_eq!(explorer.active().path(), home);
+}
+
+#[test]
 fn session_restores_surviving_tabs_and_clamps_active() {
     let dir = tempfile::tempdir().unwrap();
     let f = mkdirs(dir.path(), &["a", "b"]);

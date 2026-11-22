@@ -84,10 +84,11 @@ pub(crate) fn config_dir() -> Option<PathBuf> {
         .or_else(|| home_dir().map(|home| home.join(".config")))
 }
 
-/// Chooses the folder to open at startup: the CLI argument, then the settings' start folder if it still exists, then home, then `/`.
+/// Chooses the folder to open at startup: the CLI argument, then the settings' start folder, then home, then `/`.
+/// The start folder is not probed, which could block on a dead mount; `Explorer::with_state` replaces it with home once a background check finds it gone.
 pub fn start_dir(cli_arg: Option<PathBuf>, settings: &Settings) -> PathBuf {
     cli_arg
-        .or_else(|| settings.start_folder.clone().filter(|dir| dir.is_dir()))
+        .or_else(|| settings.start_folder.clone())
         .or_else(home_dir)
         .unwrap_or_else(|| PathBuf::from("/"))
 }
