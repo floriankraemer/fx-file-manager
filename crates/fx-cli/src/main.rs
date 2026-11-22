@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 use fx_core::{
     Backend, ConflictPolicy, Entry, EntryKind, GlobScope, Item, ListOptions, Listing, Method, Op,
     Order, Overrides, Request, Schedule, SearchQuery, StorageKind, Strategy, Summary,
-    TransferHandle, WalkOptions, list_dir, search, walk,
+    TransferHandle, WalkOptions, WalkProgress, list_dir, search, walk,
 };
 use std::io::IsTerminal;
 use std::io::{self, BufWriter, Write};
@@ -289,21 +289,28 @@ fn run_find(args: &FindArgs) -> Result<(), Box<dyn std::error::Error>> {
     let first_hit: OnceLock<Duration> = OnceLock::new();
 
     let start = Instant::now();
-    let walked = search(&args.path, &query, &opts, &AtomicBool::new(false), |hits| {
-        first_hit.get_or_init(|| start.elapsed());
-        matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
-        if args.quiet || write_error.lock().unwrap().is_some() {
-            return;
-        }
-        let mut block = Vec::with_capacity(hits.len() * 64);
-        for hit in &hits {
-            block.extend_from_slice(&os_bytes(hit.path.as_os_str()));
-            block.push(b'\n');
-        }
-        if let Err(e) = out.lock().unwrap().write_all(&block) {
-            write_error.lock().unwrap().get_or_insert(e);
-        }
-    })?;
+    let walked = search(
+        &args.path,
+        &query,
+        &opts,
+        &AtomicBool::new(false),
+        &WalkProgress::default(),
+        |hits| {
+            first_hit.get_or_init(|| start.elapsed());
+            matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
+            if args.quiet || write_error.lock().unwrap().is_some() {
+                return;
+            }
+            let mut block = Vec::with_capacity(hits.len() * 64);
+            for hit in &hits {
+                block.extend_from_slice(&os_bytes(hit.path.as_os_str()));
+                block.push(b'\n');
+            }
+            if let Err(e) = out.lock().unwrap().write_all(&block) {
+                write_error.lock().unwrap().get_or_insert(e);
+            }
+        },
+    )?;
     let elapsed = start.elapsed();
 
     let flushed = out.into_inner().unwrap().flush();

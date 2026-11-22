@@ -1,8 +1,8 @@
 //! Use case: streamed recursive name search on top of the parallel walk.
 
 use crate::list::ListError;
-use crate::listing::{EntryKind, Listing};
-use crate::walk::{WalkOptions, Walked, walk_cancellable};
+use crate::listing::{Entry, EntryKind, Listing};
+use crate::walk::{WalkOptions, WalkProgress, Walked, walk_cancellable};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
@@ -33,6 +33,8 @@ pub struct SearchQuery {
 pub struct Hit {
     pub path: PathBuf,
     pub kind: EntryKind,
+    /// The entry is hidden itself, or sits below a folder whose name starts with a dot.
+    pub hidden: bool,
 }
 
 impl SearchQuery {
@@ -116,21 +118,24 @@ fn glob_match(glob: &[u8], text: &[u8]) -> bool {
 
 /// Streams matches below `root` to `on_hits`, one non-empty batch per directory, from many threads.
 /// Setting `cancel` stops the walk; the returned stats then cover the part that was visited.
+/// `progress` is updated live for callers that report while the walk runs.
 pub fn search<F>(
     root: &Path,
     query: &SearchQuery,
     opts: &WalkOptions,
     cancel: &AtomicBool,
+    progress: &WalkProgress,
     on_hits: F,
 ) -> Result<Walked, ListError>
 where
     F: Fn(Vec<Hit>) + Sync,
 {
-    walk_cancellable(root, opts, cancel, |dir, listing| {
+    walk_cancellable(root, opts, cancel, progress, |dir, listing| {
+        let in_hidden_dir = below_dot_dir(root, dir);
         let hits = if query.matches_relative() {
-            relative_hits(root, dir, listing, query)
+            relative_hits(root, dir, listing, query, in_hidden_dir)
         } else {
-            name_hits(dir, listing, query)
+            name_hits(dir, listing, query, in_hidden_dir)
         };
         if !hits.is_empty() {
             on_hits(hits);
@@ -138,16 +143,22 @@ where
     })
 }
 
-fn name_hits(dir: &Path, listing: &Listing, query: &SearchQuery) -> Vec<Hit> {
+fn name_hits(dir: &Path, listing: &Listing, query: &SearchQuery, in_hidden_dir: bool) -> Vec<Hit> {
     listing
         .entries
         .iter()
         .filter(|e| query.matches_name(listing.name_bytes(e)))
-        .map(|e| hit(dir, listing, e))
+        .map(|e| hit(dir, listing, e, in_hidden_dir))
         .collect()
 }
 
-fn relative_hits(root: &Path, dir: &Path, listing: &Listing, query: &SearchQuery) -> Vec<Hit> {
+fn relative_hits(
+    root: &Path,
+    dir: &Path,
+    listing: &Listing,
+    query: &SearchQuery,
+    in_hidden_dir: bool,
+) -> Vec<Hit> {
     let mut haystack = relative_prefix(root, dir);
     let prefix_len = haystack.len();
     let mut hits = Vec::new();
@@ -155,7 +166,7 @@ fn relative_hits(root: &Path, dir: &Path, listing: &Listing, query: &SearchQuery
         haystack.truncate(prefix_len);
         haystack.extend_from_slice(listing.name_bytes(e));
         if query.matches_name(&haystack) {
-            hits.push(hit(dir, listing, e));
+            hits.push(hit(dir, listing, e, in_hidden_dir));
         }
     }
     hits
@@ -177,11 +188,21 @@ fn relative_prefix(root: &Path, dir: &Path) -> Vec<u8> {
     bytes
 }
 
-fn hit(dir: &Path, listing: &Listing, e: &crate::listing::Entry) -> Hit {
+fn hit(dir: &Path, listing: &Listing, e: &Entry, in_hidden_dir: bool) -> Hit {
     Hit {
         path: dir.join(listing.name(e)),
         kind: e.kind,
+        hidden: e.hidden || in_hidden_dir,
     }
+}
+
+/// Some folder between `root` (exclusive) and `dir` starts with a dot.
+/// Hidden attributes of ancestors are not tracked; only the dot convention is.
+fn below_dot_dir(root: &Path, dir: &Path) -> bool {
+    dir.strip_prefix(root).is_ok_and(|rel| {
+        rel.components()
+            .any(|c| c.as_os_str().as_encoded_bytes().first() == Some(&b'.'))
+    })
 }
 
 #[cfg(test)]
@@ -238,6 +259,14 @@ mod tests {
         assert!(glob.matches_relative());
         assert!(!SearchQuery::new("src", GlobScope::RelativePath).matches_relative());
         assert!(glob.matches_name(b"src/main.rs"));
+    }
+
+    #[test]
+    fn dot_ancestors_are_found_below_the_root_only() {
+        let root = Path::new("/r/.cfg");
+        assert!(!below_dot_dir(root, root));
+        assert!(!below_dot_dir(root, &root.join("a")));
+        assert!(below_dot_dir(root, &root.join("a").join(".git").join("b")));
     }
 
     #[test]

@@ -25,4 +25,4 @@ pub use storage::{StorageKind, Strategy};
 pub use sys::network_share;
 pub use sys::volume_info;
 pub use volume::{FAT32_MAX_FILE_SIZE, FsCaps, FsKind, VolumeId, VolumeInfo};
-pub use walk::{WalkOptions, WalkStats, Walked, walk, walk_cancellable};
+pub use walk::{WalkOptions, WalkProgress, WalkStats, Walked, walk, walk_cancellable};

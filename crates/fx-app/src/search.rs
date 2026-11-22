@@ -1,6 +1,6 @@
 //! State of one tab's recursive search: streamed hits, progress and how the run ended.
 
-use fx_core::{Hit, WalkStats};
+use fx_core::{Hit, WalkProgress, WalkStats};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +36,7 @@ pub struct SearchView {
     started: Instant,
     elapsed: Option<Duration>,
     cancel: Arc<AtomicBool>,
+    progress: Arc<WalkProgress>,
 }
 
 impl SearchView {
@@ -51,11 +52,16 @@ impl SearchView {
             started: Instant::now(),
             elapsed: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::default(),
         }
     }
 
     pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cancel)
+    }
+
+    pub(crate) fn progress(&self) -> Arc<WalkProgress> {
+        Arc::clone(&self.progress)
     }
 
     pub fn root(&self) -> &Path {
@@ -83,14 +89,20 @@ impl SearchView {
         self.status == SearchStatus::Running
     }
 
-    /// Folders walked; known once the walk has ended, `0` before.
+    /// Folders walked: live while running, exact once the walk has ended.
     pub fn dirs_walked(&self) -> u64 {
-        self.dirs_walked
+        match self.is_running() {
+            true => self.progress.dirs_read.load(Ordering::Relaxed),
+            false => self.dirs_walked,
+        }
     }
 
-    /// Folders that could not be read; known once the walk has ended, `0` before.
+    /// Folders that could not be read: live while running, exact once the walk has ended.
     pub fn unreadable(&self) -> u64 {
-        self.unreadable
+        match self.is_running() {
+            true => self.progress.unreadable.load(Ordering::Relaxed),
+            false => self.unreadable,
+        }
     }
 
     /// Live while running, frozen when the search ends.
@@ -118,7 +130,7 @@ impl SearchView {
         }
         let before = self.hits.len();
         for hit in hits {
-            if !show_hidden && is_hidden(&self.root, &hit.path) {
+            if !show_hidden && hit.hidden {
                 continue;
             }
             if self.hits.len() >= self.cap {
@@ -158,10 +170,22 @@ impl Drop for SearchView {
     }
 }
 
-/// Any component below `root` starts with a dot.
-fn is_hidden(root: &Path, path: &Path) -> bool {
-    path.strip_prefix(root).is_ok_and(|rel| {
-        rel.components()
-            .any(|c| c.as_os_str().as_encoded_bytes().first() == Some(&b'.'))
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_is_live_while_running_and_exact_after() {
+        let mut view = SearchView::new(PathBuf::from("/r"), "q".into(), 10);
+        view.progress().dirs_read.store(7, Ordering::Relaxed);
+        view.progress().unreadable.store(2, Ordering::Relaxed);
+        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 2));
+        let stats = WalkStats {
+            dirs: 9,
+            errors: 3,
+            ..WalkStats::default()
+        };
+        view.apply(SearchEvent::Done(Ok(stats)), true);
+        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 3));
+    }
 }

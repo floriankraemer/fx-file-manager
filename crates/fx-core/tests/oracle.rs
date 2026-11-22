@@ -226,10 +226,16 @@ fn cancelled_walk_stops_early_with_valid_stats() {
     }
     let cancel = AtomicBool::new(false);
     let seen = AtomicU64::new(0);
-    let walked = fx_core::walk_cancellable(tmp.path(), &WalkOptions::default(), &cancel, |_, _| {
-        seen.fetch_add(1, Relaxed);
-        cancel.store(true, Relaxed);
-    })
+    let walked = fx_core::walk_cancellable(
+        tmp.path(),
+        &WalkOptions::default(),
+        &cancel,
+        &fx_core::WalkProgress::default(),
+        |_, _| {
+            seen.fetch_add(1, Relaxed);
+            cancel.store(true, Relaxed);
+        },
+    )
     .unwrap();
     assert_eq!(seen.load(Relaxed), 1, "only the root is visited");
     assert!(walked.stats.dirs <= 200);

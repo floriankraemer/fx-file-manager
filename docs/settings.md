@@ -90,6 +90,8 @@ Recursive search below the current folder lives in the `[search]` table.
   "Don't show again" sets it to `false`; turn it back on here.
 
 Matching ignores ASCII case.
+Hidden matches follow `show_hidden`: a match counts as hidden when the entry itself is hidden (dot name, or the OS hidden attribute) or when a folder between the search folder and the match starts with a dot.
+The OS hidden attribute of such parent folders is not consulted.
 Hidden entries and anything below a hidden folder follow `show_hidden`; a leading dot marks an entry as hidden, also on Windows.
 
 ## Keyboard

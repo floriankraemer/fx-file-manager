@@ -2,7 +2,7 @@
 
 use super::Explorer;
 use crate::search::{SearchEvent, SearchView};
-use fx_core::{SearchQuery, WalkOptions, search};
+use fx_core::{SearchQuery, WalkOptions, WalkProgress, search};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -28,8 +28,12 @@ impl Explorer {
         let tab = self.active_mut();
         let tab_id = tab.id();
         let (generation, view) = tab.begin_search(text.to_owned(), cap);
-        let (root, cancel) = (view.root().to_path_buf(), view.cancel_flag());
-        self.spawn_search(tab_id, generation, root, query, cancel);
+        let (root, cancel, progress) = (
+            view.root().to_path_buf(),
+            view.cancel_flag(),
+            view.progress(),
+        );
+        self.spawn_search(tab_id, generation, root, query, (cancel, progress));
     }
 
     /// Stops the active tab's walk. The hits found so far stay.
@@ -65,7 +69,7 @@ impl Explorer {
         generation: u64,
         root: PathBuf,
         query: SearchQuery,
-        cancel: Arc<AtomicBool>,
+        (cancel, progress): (Arc<AtomicBool>, Arc<WalkProgress>),
     ) {
         let tx = self.search_tx.clone();
         let wake = Arc::clone(&self.wake);
@@ -79,7 +83,8 @@ impl Explorer {
                 });
                 wake();
             };
-            let walked = search(&root, &query, &WalkOptions::default(), &cancel, |hits| {
+            let opts = WalkOptions::default();
+            let walked = search(&root, &query, &opts, &cancel, &progress, |hits| {
                 send(SearchEvent::Hits(hits))
             });
             send(SearchEvent::Done(

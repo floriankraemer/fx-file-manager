@@ -1,6 +1,6 @@
 //! `search` must agree with a naive recursive std::fs filter.
 
-use fx_core::{Backend, EntryKind, GlobScope, SearchQuery, WalkOptions, search};
+use fx_core::{Backend, EntryKind, GlobScope, SearchQuery, WalkOptions, WalkProgress, search};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -66,11 +66,18 @@ fn found(root: &Path, query: &SearchQuery, backend: Backend) -> Vec<(PathBuf, En
         backend,
         storage: None,
     };
-    search(root, query, &opts, &AtomicBool::new(false), |batch| {
-        hits.lock()
-            .unwrap()
-            .extend(batch.into_iter().map(|h| (h.path, h.kind)));
-    })
+    search(
+        root,
+        query,
+        &opts,
+        &AtomicBool::new(false),
+        &WalkProgress::default(),
+        |batch| {
+            hits.lock()
+                .unwrap()
+                .extend(batch.into_iter().map(|h| (h.path, h.kind)));
+        },
+    )
     .unwrap();
     let mut hits = hits.into_inner().unwrap();
     hits.sort_by(|a, b| a.0.cmp(&b.0));
@@ -125,4 +132,50 @@ fn search_equals_naive_filter() {
             );
         }
     }
+}
+
+#[test]
+fn hidden_flag_covers_dot_entries_and_dot_ancestors() {
+    let tmp = tempfile::tempdir().unwrap();
+    for name in [".git/config", "src/.env", "src/main.rs"] {
+        let p = tmp.path().join(name);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
+    }
+    let hits = Mutex::new(Vec::new());
+    let progress = WalkProgress::default();
+    let query = SearchQuery::new("", GlobScope::Name);
+    search(
+        tmp.path(),
+        &query,
+        &WalkOptions::default(),
+        &AtomicBool::new(false),
+        &progress,
+        |batch| hits.lock().unwrap().extend(batch),
+    )
+    .unwrap();
+    let mut hidden: Vec<String> = hits
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .filter(|h| h.hidden)
+        .map(|h| {
+            h.path
+                .strip_prefix(tmp.path())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    hidden.sort();
+    assert_eq!(
+        hidden,
+        [".git", ".git/config", "src/.env"].map(|p| p.replace('/', std::path::MAIN_SEPARATOR_STR))
+    );
+    assert_eq!(
+        progress
+            .dirs_read
+            .load(std::sync::atomic::Ordering::Relaxed),
+        3
+    );
 }

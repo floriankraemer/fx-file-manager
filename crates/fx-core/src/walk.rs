@@ -46,6 +46,15 @@ pub struct Walked {
 
 type Enumerate = fn(&Path, &Strategy, bool, &mut Listing) -> io::Result<()>;
 
+/// Live counters a caller can read from another thread while a walk runs.
+#[derive(Debug, Default)]
+pub struct WalkProgress {
+    /// Directories read so far, the root included.
+    pub dirs_read: AtomicU64,
+    /// Subdirectories that could not be read so far.
+    pub unreadable: AtomicU64,
+}
+
 #[derive(Default)]
 struct Counters {
     files: AtomicU64,
@@ -60,6 +69,7 @@ struct Walk<'a, F> {
     strategy: Strategy,
     on_dir: &'a F,
     cancel: &'a AtomicBool,
+    progress: &'a WalkProgress,
     counters: Counters,
 }
 
@@ -70,15 +80,22 @@ pub fn walk<F>(root: &Path, opts: &WalkOptions, on_dir: F) -> Result<Walked, Lis
 where
     F: Fn(&Path, &Listing) + Sync,
 {
-    walk_cancellable(root, opts, &AtomicBool::new(false), on_dir)
+    walk_cancellable(
+        root,
+        opts,
+        &AtomicBool::new(false),
+        &WalkProgress::default(),
+        on_dir,
+    )
 }
 
-/// Like [`walk`], but stops reading directories once `cancel` is set.
+/// Like [`walk`], but stops reading directories once `cancel` is set and publishes live counts to `progress`.
 /// Returns normally; the stats cover what was visited before the stop.
 pub fn walk_cancellable<F>(
     root: &Path,
     opts: &WalkOptions,
     cancel: &AtomicBool,
+    progress: &WalkProgress,
     on_dir: F,
 ) -> Result<Walked, ListError>
 where
@@ -103,6 +120,7 @@ where
         strategy,
         on_dir: &on_dir,
         cancel,
+        progress,
         counters: Counters::default(),
     };
     let walk = &walk;
@@ -129,6 +147,7 @@ impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
         if self.cancelled() {
             return;
         }
+        self.progress.dirs_read.fetch_add(1, Relaxed);
         (self.on_dir)(dir, listing);
         let c = &self.counters;
         for e in &listing.entries {
@@ -161,6 +180,7 @@ impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
             Ok(()) => self.visit(scope, dir, &listing),
             Err(_) => {
                 self.counters.errors.fetch_add(1, Relaxed);
+                self.progress.unreadable.fetch_add(1, Relaxed);
             }
         }
     }
