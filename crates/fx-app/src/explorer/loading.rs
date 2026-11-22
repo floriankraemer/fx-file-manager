@@ -1,6 +1,7 @@
 //! Background listing of tab folders. Results carry the tab's generation so stale ones are dropped.
 
 use super::Explorer;
+use crate::tab::{LoadState, Tab};
 use crate::view::DirView;
 use fx_core::{ListError, ListOptions, list_dir};
 use std::fs;
@@ -12,6 +13,8 @@ use std::time::{Instant, SystemTime};
 pub(super) struct Completed {
     tab_id: u64,
     generation: u64,
+    /// A background re-list of an already shown folder, as opposed to a navigation.
+    revalidation: bool,
     result: Result<DirView, ListError>,
 }
 
@@ -32,18 +35,27 @@ impl Explorer {
             // Same generation as the fresh load below, which then replaces this possibly stale view.
             window.tabs[index].apply_load(generation, Ok(view));
         }
-        self.spawn_load(tab_id, generation, path);
+        self.spawn_load(tab_id, generation, path, false);
     }
 
-    pub(super) fn spawn_load(&self, tab_id: u64, generation: u64, path: PathBuf) {
+    pub(super) fn spawn_load(
+        &self,
+        tab_id: u64,
+        generation: u64,
+        path: PathBuf,
+        revalidation: bool,
+    ) {
         let tx = self.tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
-            let result = list_view(path);
+            let started = Instant::now();
+            let result = list_view(path.clone());
+            log_listing(&path, &result, started);
             // A send only fails once the Explorer is gone, and then nobody needs the result.
             let _ = tx.send(Completed {
                 tab_id,
                 generation,
+                revalidation,
                 result,
             });
             wake();
@@ -76,6 +88,9 @@ impl Explorer {
             .find(|(_, window)| window.tabs.iter().any(|tab| tab.id() == done.tab_id))?;
         let active_id = window.tabs[window.active].id();
         let tab = window.tabs.iter_mut().find(|tab| tab.id() == done.tab_id)?;
+        if keeps_loaded_view(tab, &done) {
+            return None;
+        }
         let ok = done.result.is_ok();
         let changed = tab.apply_load(done.generation, done.result.map_err(|e| e.to_string()));
         let active_loaded = (changed && ok && tab.id() == active_id).then_some(w);
@@ -94,6 +109,35 @@ impl Explorer {
             self.maybe_preload(w);
         }
     }
+}
+
+fn log_listing(path: &Path, result: &Result<DirView, ListError>, started: Instant) {
+    match result {
+        Ok(view) => log::debug!(
+            "listed {} ({} entries) in {:?}",
+            path.display(),
+            view.listing.entries.len(),
+            started.elapsed()
+        ),
+        Err(err) => log::warn!("cannot list {}: {err}", path.display()),
+    }
+}
+
+/// A transient error in a background revalidation must not replace a good listing with a failure page.
+fn keeps_loaded_view(tab: &Tab, done: &Completed) -> bool {
+    let Err(err) = &done.result else {
+        return false;
+    };
+    let keep = done.revalidation
+        && done.generation == tab.generation()
+        && matches!(tab.state(), LoadState::Loaded(_));
+    if keep {
+        log::warn!(
+            "revalidating {} failed, keeping the shown listing: {err}",
+            tab.path().display()
+        );
+    }
+    keep
 }
 
 /// Outcome of applying one finished load.

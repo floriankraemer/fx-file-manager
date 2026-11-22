@@ -9,6 +9,7 @@ use crate::EntryKind;
 use crate::copy::Meta;
 use crate::copy::plan::Order;
 use crate::copy::progress::{ErrorOp, Progress};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -81,6 +82,7 @@ impl File {
             dst_dir: &fds.dst,
             dst_name: &self.dst_name,
             keep_both: self.keep_both,
+            answer: Cell::default(),
         }
     }
 
@@ -167,9 +169,12 @@ fn probe(
     if kind != EntryKind::File || order != Order::Extent {
         return (dir.stat_at(name).ok(), None);
     }
-    match os::open_file(dir, name) {
-        Ok(src) => (Some(*src.meta()), os::extent_key(&src)),
-        Err(_) => (None, None),
+    match os::probe_file(dir, name) {
+        Ok((src, key)) => (Some(*src.meta()), key),
+        Err(e) => {
+            log::debug!("cannot probe {}: {e}", dir.path().join(name).display());
+            (None, None)
+        }
     }
 }
 
@@ -197,9 +202,11 @@ struct DirCache<'w> {
 impl Job<'_> {
     /// Walk and create the whole tree, then copy files one at a time in disk order.
     pub(super) fn two_phase(&self, tops: &[Top], order: Order, same_volume: bool) {
-        let Some(mut walk) = self.walk(tops, order) else {
+        let mut walk = self.walk(tops, order);
+        if self.sh.is_cancelled() {
+            self.finish_dirs(&walk);
             return;
-        };
+        }
         if self.last_group {
             self.sh
                 .progress
@@ -211,18 +218,23 @@ impl Job<'_> {
         }
         walk.sort_by_disk_order();
         self.copy_in_order(&walk, same_volume);
+        self.finish_dirs(&walk);
+    }
+
+    /// Folders get their final mode and times after their children, a cancel included.
+    fn finish_dirs(&self, walk: &Walk) {
         for (path, meta) in walk.finals.iter().rev() {
             self.finish_dir(path, meta);
         }
     }
 
-    /// `None` when cancelled during the walk.
-    fn walk(&self, tops: &[Top], order: Order) -> Option<Walk> {
+    /// Stops early when cancelled; the folders created so far are in `finals`.
+    fn walk(&self, tops: &[Top], order: Order) -> Walk {
         let mut walk = Walk::new(order);
         let mut parents = OpenParents::new();
         for top in tops {
             if self.sh.is_cancelled() {
-                return None;
+                break;
             }
             let Some(fds) = self.open_top(top, &mut parents) else {
                 continue;
@@ -234,7 +246,7 @@ impl Job<'_> {
                 walk.add_file(&self.sh.progress, &fds, File::top(dir, top));
             }
         }
-        Some(walk)
+        walk
     }
 
     /// Creates every folder of a top-level folder item, depth first, and collects its files.
@@ -335,8 +347,15 @@ impl Job<'_> {
 
 /// Reads a small file whole, ahead of its copy.
 fn prefetch(dir: &os::Dir, name: &OsStr) -> Option<Prefetched> {
-    let src = os::open_file(dir, name).ok()?;
+    let src = os::open_file(dir, name)
+        .inspect_err(|e| log::debug!("cannot prefetch {}: {e}", dir.path().join(name).display()))
+        .ok()?;
+    if src.meta().size > BATCH_FILE_MAX {
+        return None;
+    }
     let mut data = Vec::new();
-    os::read_all(&src, &mut data).ok()?;
+    os::read_all(&src, &mut data)
+        .inspect_err(|e| log::debug!("cannot prefetch {}: {e}", dir.path().join(name).display()))
+        .ok()?;
     Some((src, data))
 }

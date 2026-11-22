@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
+use x11rb::errors::ReplyError;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{
     AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, KeyButMask, PropMode,
@@ -27,17 +28,16 @@ const FINISH_TIMEOUT: Duration = Duration::from_secs(5);
 pub fn start(paths: Vec<PathBuf>) {
     thread::spawn(move || {
         if let Err(err) = drag(&paths) {
-            eprintln!("fx: starting the drag failed: {err}");
+            log::warn!("starting the drag failed: {err}");
         }
     });
 }
 
 fn drag(paths: &[PathBuf]) -> Result<()> {
     let mut source = Source::connect(uri_list(paths))?;
-    while source.button_down()? {
-        source.pump()?;
-        source.follow_pointer()?;
-        thread::sleep(POLL);
+    if let Err(err) = source.follow_until_released() {
+        let _ = source.leave();
+        return Err(err);
     }
     source.release()
 }
@@ -158,6 +158,15 @@ impl Source {
         })
     }
 
+    fn follow_until_released(&mut self) -> Result<()> {
+        while self.button_down()? {
+            self.pump()?;
+            self.follow_pointer()?;
+            thread::sleep(POLL);
+        }
+        Ok(())
+    }
+
     fn button_down(&self) -> Result<bool> {
         let pointer = self.conn.query_pointer(self.root)?.reply()?;
         Ok(pointer.mask.contains(KeyButMask::BUTTON1))
@@ -251,7 +260,15 @@ impl Source {
     }
 
     /// The first window at `at`, from the top level down, that announces XDND support.
+    /// A window that dies under the pointer mid-drag raises an X error and counts as no target.
     fn target_at(&self, at: (i16, i16)) -> Result<Option<Target>> {
+        match self.find_target(at) {
+            Err(err) if matches!(err.downcast_ref(), Some(ReplyError::X11Error(_))) => Ok(None),
+            found => found,
+        }
+    }
+
+    fn find_target(&self, at: (i16, i16)) -> Result<Option<Target>> {
         let mut window = self.root;
         loop {
             let child = self

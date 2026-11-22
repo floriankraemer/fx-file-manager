@@ -472,7 +472,7 @@ fn open_themes_dir() {
         return;
     };
     if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| open_with_system(&dir)) {
-        eprintln!("fx: cannot open {}: {err}", dir.display());
+        log::warn!("cannot open {}: {err}", dir.display());
     }
 }
 
@@ -582,11 +582,34 @@ fn font_list(ui: &mut Ui, family: &mut Option<String>, filter_id: egui::Id) {
     if needle.is_empty() {
         ui.selectable_value(family, None, t("settings.font_default"));
     }
-    for name in theme::system_font_families() {
-        if name.to_lowercase().contains(&needle) {
-            ui.selectable_value(family, Some(name.clone()), name);
-        }
-    }
+    let names = theme::system_font_families();
+    let matches: Vec<usize> = lowercase_families()
+        .iter()
+        .enumerate()
+        .filter(|(_, lower)| lower.contains(&needle))
+        .map(|(i, _)| i)
+        .collect();
+    let row_height = ui.spacing().interact_size.y;
+    egui::ScrollArea::vertical().max_height(240.0).show_rows(
+        ui,
+        row_height,
+        matches.len(),
+        |ui, range| {
+            for &i in &matches[range] {
+                ui.selectable_value(family, Some(names[i].clone()), &names[i]);
+            }
+        },
+    );
+}
+
+fn lowercase_families() -> &'static [String] {
+    static LOWER: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LOWER.get_or_init(|| {
+        theme::system_font_families()
+            .iter()
+            .map(|name| name.to_lowercase())
+            .collect()
+    })
 }
 
 /// A dim help text under a control, `indent` px in.

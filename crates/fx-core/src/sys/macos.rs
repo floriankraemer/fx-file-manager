@@ -3,6 +3,7 @@
 
 use crate::{EntryKind, Listing, StorageKind, Strategy};
 use libc::{c_int, c_void};
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
@@ -65,57 +66,104 @@ pub(crate) fn enumerate(
         fileattr: libc::ATTR_FILE_DATALENGTH,
         forkattr: 0,
     };
-    // u64 elements give the 8-byte alignment the kernel expects; records themselves are
-    // only 4-byte aligned, so they are parsed from byte slices, never by pointer cast.
-    let mut buf = vec![0u64; strategy.buf_size.max(4096).div_ceil(8)];
-    let buf_bytes = buf.len() * 8;
-    let mut first = true;
+    let first = out.entries.len();
+    let read = with_buffer(strategy.buf_size.max(4096).div_ceil(8), |buf| {
+        read_blocks(&fd, &mut list, buf, metadata, out)
+    });
+    match read {
+        Ok(skipped) => {
+            warn_skipped(dir, skipped);
+            Ok(())
+        }
+        // Filesystem without getattrlistbulk: nothing pushed yet, let std do it all.
+        Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            log::debug!(
+                "getattrlistbulk unsupported for {}: {e}; using std",
+                dir.display()
+            );
+            super::std_fs::enumerate(dir, strategy, metadata, out)
+        }
+        Err(e) => Err(e),
+    }
+}
 
+fn warn_skipped(dir: &Path, skipped: usize) {
+    if skipped > 0 {
+        log::warn!("skipped {skipped} unreadable records in {}", dir.display());
+    }
+}
+
+fn is_unsupported(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL))
+}
+
+thread_local! {
+    static DIR_BUF: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `words` u64s. `f` must not re-enter `enumerate`.
+fn with_buffer<R>(words: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < words {
+            buf.resize(words, 0);
+        }
+        f(&mut buf[..words])
+    })
+}
+
+/// Calls `getattrlistbulk` until the directory is exhausted and returns how many records could not
+/// be decoded. The u64 elements of `buf` give the
+/// 8-byte alignment the kernel expects; records themselves are only 4-byte aligned, so they are
+/// parsed from byte slices, never by pointer cast.
+fn read_blocks(
+    fd: &Fd,
+    list: &mut libc::attrlist,
+    buf: &mut [u64],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<usize> {
+    let buf_bytes = buf.len() * 8;
+    let mut skipped = 0;
     loop {
         // SAFETY: `list` and `buf` are valid for the sizes passed.
         let n = unsafe {
             libc::getattrlistbulk(
                 fd.0,
-                std::ptr::from_mut(&mut list).cast::<c_void>(),
+                std::ptr::from_mut(list).cast::<c_void>(),
                 buf.as_mut_ptr().cast::<c_void>(),
                 buf_bytes,
                 u64::from(libc::FSOPT_PACK_INVAL_ATTRS),
             )
         };
         match n {
-            0 => return Ok(()),
+            0 => return Ok(skipped),
             n if n < 0 => {
                 let err = io::Error::last_os_error();
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
+                if err.kind() != io::ErrorKind::Interrupted {
+                    return Err(err);
                 }
-                // Filesystem without getattrlistbulk: nothing pushed yet, let std do it all.
-                if first && matches!(err.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL)) {
-                    return super::std_fs::enumerate(dir, strategy, metadata, out);
-                }
-                return Err(err);
             }
             n => {
-                first = false;
                 // SAFETY: the kernel initialised the first `buf_bytes` bytes at most; we
                 // view the same allocation as bytes and only read within record lengths.
                 let bytes =
                     unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), buf_bytes) };
-                push_records(&fd, bytes, n, metadata, out)?;
+                skipped += push_records(fd, bytes, n, metadata, out)?;
             }
         }
     }
 }
 
-/// Walks the `count` length-prefixed records the kernel packed into `bytes`.
+/// Walks the `count` length-prefixed records the kernel packed into `bytes`; returns the undecodable ones.
 fn push_records(
     fd: &Fd,
     bytes: &[u8],
     count: c_int,
     metadata: bool,
     out: &mut Listing,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let mut off = 0;
+    let mut skipped = 0;
     for _ in 0..count {
         let Some(len) = read_u32(bytes, off).map(|l| l as usize) else {
             return Err(corrupt());
@@ -124,12 +172,13 @@ fn push_records(
             .checked_add(len)
             .and_then(|end| bytes.get(off..end))
             .ok_or_else(corrupt)?;
-        if let Some(p) = parse_record(rec) {
-            push(fd, &p, metadata, out);
+        match parse_record(rec) {
+            Some(p) => push(fd, &p, metadata, out)?,
+            None => skipped += 1,
         }
         off += len;
     }
-    Ok(())
+    Ok(skipped)
 }
 
 fn corrupt() -> io::Error {
@@ -234,19 +283,21 @@ fn entry_kind(vtype: u32) -> EntryKind {
 fn read_timespec(rec: &[u8], at: usize) -> Option<SystemTime> {
     let (sec, nsec) = (read_i64(rec, at)?, read_i64(rec, at + 8)?);
     let nsec = Duration::from_nanos(u64::try_from(nsec).ok()?);
-    Some(if sec >= 0 {
-        UNIX_EPOCH + Duration::from_secs(sec.unsigned_abs()) + nsec
+    let secs = Duration::from_secs(sec.unsigned_abs());
+    if sec >= 0 {
+        UNIX_EPOCH.checked_add(secs)
     } else {
-        UNIX_EPOCH - Duration::from_secs(sec.unsigned_abs()) + nsec
-    })
+        UNIX_EPOCH.checked_sub(secs)
+    }?
+    .checked_add(nsec)
 }
 
-fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) {
+fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) -> io::Result<()> {
     let bytes = &p.name[..p.name.len() - 1];
     let hidden = bytes.first() == Some(&b'.') || p.flags & libc::UF_HIDDEN != 0;
-    out.push_encoded(bytes, p.kind, hidden, p.inode);
+    out.push_encoded(bytes, p.kind, hidden, p.inode)?;
     if !metadata {
-        return;
+        return Ok(());
     }
     let e = out.entries.last_mut().expect("just pushed");
     e.modified = p.modified;
@@ -256,6 +307,7 @@ fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) {
         (EntryKind::File, Some(len)) => Some(len),
         _ => lstat_size(dir, p.name),
     };
+    Ok(())
 }
 
 /// `name` must be NUL-terminated.
@@ -299,7 +351,11 @@ fn storage_of(fstype: &std::ffi::CStr) -> StorageKind {
 }
 
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    fs_type_name(path).map_or(StorageKind::Unknown, |t| storage_of(&t))
+    let Some(fstype) = fs_type_name(path) else {
+        log::debug!("storage of {} unknown: statfs failed", path.display());
+        return StorageKind::Unknown;
+    };
+    storage_of(&fstype)
 }
 
 /// `getattrlist(ATTR_VOL_CAPABILITIES)`: does the volume say it supports `clonefile` (`VOL_CAP_INT_CLONE`)?
@@ -341,11 +397,15 @@ fn volume_clone_capability(path: &Path) -> Option<bool> {
 /// (every APFS volume supports `clonefile`); the per-pair method cache still falls back on the first ENOTSUP.
 // ponytail: removable media stay `Ssd` until a DiskArbitration probe is justified.
 pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
-    let id = std::fs::symlink_metadata(path).map_or(0, |m| {
-        use std::os::unix::fs::MetadataExt;
-        m.dev()
-    });
+    let id = std::fs::symlink_metadata(path)
+        .inspect_err(|e| log::warn!("cannot probe volume of {}: {e}", path.display()))
+        .ok()
+        .map(|m| {
+            use std::os::unix::fs::MetadataExt;
+            m.dev()
+        });
     let Some(fstype) = fs_type_name(path) else {
+        log::warn!("cannot probe filesystem of {}", path.display());
         return crate::VolumeInfo::unknown(id);
     };
     let fs = crate::FsKind::from_name(&fstype.to_string_lossy());

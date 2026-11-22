@@ -15,6 +15,7 @@ const OPENER: &str = "xdg-open";
 /// Spawns the OS opener and does not wait for it. The child is not reaped; a waiter thread would be needed if opens become frequent.
 // ponytail: unreaped child per open; add a reaper thread if opens get frequent
 pub fn open_with_system(path: &Path) -> io::Result<()> {
+    log::debug!("opening {} with {OPENER}", path.display());
     Command::new(OPENER)
         .arg(path)
         .stdin(Stdio::null())

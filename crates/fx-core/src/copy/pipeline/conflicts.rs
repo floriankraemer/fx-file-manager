@@ -78,6 +78,23 @@ impl Job<'_> {
         self.decide(src, src_meta, dst, dst_meta)
     }
 
+    /// The entry's remembered answer, else a fresh one that is remembered for its retries.
+    fn answer_once(
+        &self,
+        e: &Entry<'_>,
+        src: &Path,
+        src_meta: &Meta,
+        dst: &Path,
+        dst_meta: &Meta,
+    ) -> io::Result<Resolution> {
+        if let Some(known) = e.answer.get() {
+            return Ok(known);
+        }
+        let fresh = self.resolve(src, src_meta, dst, dst_meta)?;
+        e.answer.set(Some(fresh));
+        Ok(fresh)
+    }
+
     /// How a clash with the source itself resolves: a copy lands beside it, a move leaves it alone.
     fn same_entry(&self) -> Resolution {
         match self.op {
@@ -108,7 +125,7 @@ impl Job<'_> {
         let dst_path = dst_dir.path().join(dst_name);
         let dst_meta = dst_dir.stat_at(dst_name).at(op)?;
         let resolution = self
-            .resolve(src_path, src_meta, &dst_path, &dst_meta)
+            .answer_once(e, src_path, src_meta, &dst_path, &dst_meta)
             .at(op)?;
         match resolution {
             Resolution::Skip => Ok(Placed::Skipped),
@@ -207,8 +224,16 @@ fn place_over<T>(
     }
     let tmp = temp_name(dst_name);
     let t = create(&tmp)?;
-    if let Err(e) = dst_dir.rename_at(&tmp, dst_name) {
-        let _ = dst_dir.remove_at(&tmp);
+    // The old file goes away with the rename, so the new content must already be on disk: a power
+    // loss must not leave an empty file in place of both.
+    let swapped = os::sync_file(dst_dir, &tmp).and_then(|()| dst_dir.rename_at(&tmp, dst_name));
+    if let Err(e) = swapped {
+        if let Err(rm) = dst_dir.remove_at(&tmp) {
+            log::warn!(
+                "cannot remove the temp file {}: {rm}",
+                dst_dir.path().join(&tmp).display()
+            );
+        }
         return Err(e);
     }
     Ok(Placed::Done(t, dst_name.to_os_string()))

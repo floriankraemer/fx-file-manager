@@ -4,9 +4,11 @@ mod columns;
 mod explorer;
 mod format;
 pub mod i18n;
+pub mod logging;
 mod ops;
 mod place_group;
 mod places;
+mod probe;
 mod search;
 mod settings;
 mod state;
@@ -18,7 +20,7 @@ mod view;
 mod wsl;
 
 pub use columns::ListColumn;
-pub use explorer::{Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
+pub use explorer::{DetailsState, Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
 pub use format::{
     AgeBucket, age, extension, format_elapsed, format_millis, format_number, format_size,
     format_time, set_date_format, stem_chars,
@@ -26,7 +28,7 @@ pub use format::{
 pub use i18n::{Language, t, tn, tr};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use place_group::PlaceGroup;
-pub use places::{Place, bookmark_places, breadcrumbs, places};
+pub use places::{Place, bookmark_places, breadcrumbs, relabel_places};
 pub use search::{SearchStatus, SearchView};
 pub use settings::{
     ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,

@@ -2,8 +2,9 @@
 
 use super::Explorer;
 use crate::ops::{Job, NoticeKind, Outcome, unique_name, validate_name};
+use crate::tab::LoadState;
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -54,12 +55,26 @@ impl Explorer {
         self.submit(Job::CreateFolder { path });
     }
 
-    /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's directory.
+    /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's listing.
+    /// Reads the shown listing only, so it never touches the filesystem; a clash with an entry created
+    /// since the last load is reported by the create job.
     pub fn suggest_folder_name(&self) -> String {
-        let dir = self.active().path();
+        let taken = self.listed_names();
         unique_name(crate::t("cmd.new_folder"), |name| {
-            fs::symlink_metadata(dir.join(name)).is_err()
+            !taken.contains(&fold_case(name))
         })
+    }
+
+    fn listed_names(&self) -> HashSet<String> {
+        let LoadState::Loaded(view) = self.active().state() else {
+            return HashSet::new();
+        };
+        let listing = &view.listing;
+        listing
+            .entries
+            .iter()
+            .map(|entry| fold_case(&listing.name(entry).to_string_lossy()))
+            .collect()
     }
 
     /// True while a file operation or transfer is running.
@@ -102,7 +117,7 @@ impl Explorer {
                 self.reload_tab_after(w, index, &outcome);
             }
         }
-        self.notices.push_back(outcome.notice);
+        self.push_notice(outcome.notice);
     }
 
     fn drop_touched_preloads(&mut self, outcome: &Outcome) {
@@ -116,7 +131,7 @@ impl Explorer {
 
     /// One load per path is enough: the result fills every window's slot for it.
     fn reload_touched_trees(&mut self, outcome: &Outcome) {
-        let loaded: Vec<&PathBuf> = outcome
+        let loaded = outcome
             .touched
             .iter()
             .filter(|path| {
@@ -124,18 +139,17 @@ impl Explorer {
                     .iter()
                     .any(|w| w.tree.children.contains_key(*path))
             })
+            .cloned()
             .collect();
-        for path in loaded {
-            self.load_tree(path.clone());
-        }
+        self.load_trees(loaded);
     }
 
     /// Moves tab `index` of window `w` out of a removed folder, or reloads it if the operation touched its folder.
     fn reload_tab_after(&mut self, w: usize, index: usize, outcome: &Outcome) {
         let tab = &mut self.windows[w].tabs[index];
         let path = tab.path().to_path_buf();
-        if outcome.removed.iter().any(|gone| path.starts_with(gone)) {
-            tab.navigate_to(nearest_existing(&path));
+        if let Some(parent) = surviving_parent(&path, &outcome.removed) {
+            tab.navigate_to(parent);
             return self.start_load(w, index);
         }
         if !outcome.touched.contains(&path) {
@@ -148,15 +162,27 @@ impl Explorer {
     }
 }
 
+/// Windows and macOS volumes are usually case-insensitive, so "new folder" clashes with "New folder" there.
+fn fold_case(name: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        name.to_lowercase()
+    } else {
+        name.to_owned()
+    }
+}
+
 fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
-fn nearest_existing(path: &Path) -> PathBuf {
-    path.ancestors()
-        .find(|a| a.exists())
-        .unwrap_or(path)
-        .to_path_buf()
+/// Where a tab inside a removed folder goes: the parent of the outermost removed folder holding it.
+/// Derived from the outcome alone, so no ancestor is probed on a possibly dead mount.
+pub(super) fn surviving_parent(path: &Path, removed: &[PathBuf]) -> Option<PathBuf> {
+    let outermost = removed
+        .iter()
+        .filter(|gone| path.starts_with(gone))
+        .min_by_key(|gone| gone.components().count())?;
+    Some(outermost.parent().unwrap_or(path).to_path_buf())
 }
 
 /// The name of the entry the operation created directly inside `dir`.

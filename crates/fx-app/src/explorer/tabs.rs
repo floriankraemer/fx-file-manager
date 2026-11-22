@@ -75,14 +75,20 @@ impl Explorer {
         if w.tabs.len() <= 1 || index >= w.tabs.len() {
             return;
         }
-        w.tabs.remove(index);
-        if index < w.active {
-            w.active -= 1;
+        self.remove_tab(self.current, index);
+    }
+
+    /// Removes tab `index` of window `w`, which must not be its last tab.
+    pub(super) fn remove_tab(&mut self, w: usize, index: usize) {
+        let window = &mut self.windows[w];
+        window.tabs.remove(index);
+        if index < window.active {
+            window.active -= 1;
         } else {
-            w.active = w.active.min(w.tabs.len() - 1);
+            window.active = window.active.min(window.tabs.len() - 1);
         }
         self.session_dirty = true;
-        self.ensure_loaded(self.current);
+        self.ensure_loaded(w);
     }
 
     /// Navigates the active tab, recording history.

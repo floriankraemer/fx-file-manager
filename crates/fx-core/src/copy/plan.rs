@@ -231,7 +231,7 @@ impl CopyPlan {
 
     /// [`for_pair`](Self::for_pair) for any OS, so every row of the selection matrix is testable anywhere.
     pub fn for_pair_on(os: Os, src: &VolumeInfo, dst: &VolumeInfo, op: Op, cores: usize) -> Self {
-        if op == Op::Move && src.id == dst.id {
+        if op == Op::Move && src.same_volume(dst) {
             return Self {
                 workers: 1,
                 schedule: Schedule::Streaming,
@@ -293,7 +293,7 @@ impl CopyPlan {
 /// Rules in order: network, clone-capable pair, HDD, removable, SSD (`Unknown` behaves like `Ssd`).
 fn copy_plan(os: Os, src: &VolumeInfo, dst: &VolumeInfo, cores: usize) -> CopyPlan {
     let either = |kind| src.storage == kind || dst.storage == kind;
-    let same_volume = src.id == dst.id;
+    let same_volume = src.same_volume(dst);
     let base = ssd_plan(os, cores);
     let slow_buf = if either(StorageKind::Hdd) {
         8 * MIB
@@ -400,7 +400,7 @@ fn network_plan(os: Os, base: CopyPlan) -> CopyPlan {
 
 /// Whether the OS can clone extents between the two volumes, given the destination supports cloning.
 fn clone_capable(os: Os, src: &VolumeInfo, dst: &VolumeInfo) -> bool {
-    let same_volume = src.id == dst.id;
+    let same_volume = src.same_volume(dst);
     match os {
         // btrfs subvolumes share extents across different st_dev; EXDEV elsewhere disables it once.
         Os::Linux => src.fs == dst.fs,
@@ -419,8 +419,10 @@ impl MethodCache {
         self.0.load(Relaxed) & (1 << m as u8) == 0
     }
 
-    pub(crate) fn disable(&self, m: Method) {
-        self.0.fetch_or(1 << m as u8, Relaxed);
+    /// True when this call disabled the method, false when it already was.
+    pub(crate) fn disable(&self, m: Method) -> bool {
+        let bit = 1 << m as u8;
+        self.0.fetch_or(bit, Relaxed) & bit == 0
     }
 }
 
@@ -432,7 +434,7 @@ mod tests {
 
     fn vol(id: u64, fs: FsKind, storage: StorageKind) -> VolumeInfo {
         VolumeInfo {
-            id,
+            id: Some(id),
             fs,
             storage,
             caps: FsCaps::for_fs(fs),
@@ -602,5 +604,14 @@ mod tests {
         assert!(cache.enabled(Ficlone));
         cache.disable(Ficlone);
         assert!(!cache.enabled(Ficlone) && cache.enabled(ReadWrite));
+    }
+
+    #[test]
+    fn moves_between_unprobed_volumes_do_not_rename() {
+        let unknown = VolumeInfo::unknown(None);
+        let plan = CopyPlan::for_pair(&unknown, &unknown, Op::Move, 8);
+        assert!(!plan.renames());
+        let probed = vol(1, F::Ext4, S::Ssd);
+        assert!(CopyPlan::for_pair(&probed, &probed, Op::Move, 8).renames());
     }
 }

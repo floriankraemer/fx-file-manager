@@ -38,6 +38,9 @@ pub(crate) mod windows;
 #[cfg(windows)]
 pub(crate) use windows as native;
 
+#[cfg(any(target_os = "linux", windows))]
+mod probe_cache;
+
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(target_os = "macos")]
@@ -60,12 +63,13 @@ pub(crate) mod fallback {
 
     pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
         #[cfg(unix)]
-        let id =
-            std::fs::symlink_metadata(path).map_or(0, |m| std::os::unix::fs::MetadataExt::dev(&m));
+        let id = std::fs::symlink_metadata(path)
+            .ok()
+            .map(|m| std::os::unix::fs::MetadataExt::dev(&m));
         #[cfg(not(unix))]
         let id = {
             let _ = path;
-            0
+            None
         };
         crate::VolumeInfo::unknown(id)
     }

@@ -1,16 +1,19 @@
 //! Linux backend: getdents64 via `RawDir`, dirfd-relative statx, statfs + sysfs storage detection.
 
-use crate::pool::pool;
+use super::probe_cache::{TtlCache, cached};
+use crate::pool::run_in_pool;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 use rayon::prelude::*;
 use rustix::fs::{
     AtFlags, CWD, FileType, Mode, OFlags, RawDir, StatxFlags, major, minor, openat, statfs, statx,
 };
+use std::cell::RefCell;
 use std::ffi::CStr;
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Stat calls handed to one rayon task; amortises scheduling over ~tens of microseconds of syscalls.
@@ -33,36 +36,12 @@ pub(crate) fn enumerate(
         Mode::empty(),
     )?;
     let first = out.entries.len();
-    // NUL-terminated copies of the names, so statx can use them without allocating per entry.
-    let mut cnames: Vec<u8> = Vec::new();
-    let mut name_ends: Vec<usize> = Vec::new();
-
-    let mut buf = vec![MaybeUninit::<u8>::uninit(); strategy.buf_size.max(4096)];
-    let mut raw = RawDir::new(&fd, &mut buf);
-    while let Some(entry) = raw.next() {
-        let entry = entry?;
-        let name = entry.file_name();
-        let bytes = name.to_bytes();
-        if bytes == b"." || bytes == b".." {
-            continue;
-        }
-        let kind = match entry.file_type() {
-            FileType::Unknown => kind_via_statx(fd.as_fd(), name),
-            t => kind_from_file_type(t),
-        };
-        out.push_encoded(bytes, kind, bytes[0] == b'.', entry.ino());
-        cnames.extend_from_slice(name.to_bytes_with_nul());
-        name_ends.push(cnames.len());
-    }
+    let cnames = with_buffer(strategy.buf_size.max(4096), |buf| {
+        read_entries(fd.as_fd(), buf, metadata, out)
+    })?;
 
     if metadata {
-        let stats = stat_all(
-            fd.as_fd(),
-            &cnames,
-            &name_ends,
-            &out.entries[first..],
-            strategy,
-        );
+        let stats = stat_all(fd.as_fd(), &cnames, &out.entries[first..], strategy);
         for (e, s) in out.entries[first..].iter_mut().zip(stats) {
             if let Some((size, modified)) = s {
                 e.size = Some(size);
@@ -73,9 +52,70 @@ pub(crate) fn enumerate(
     Ok(())
 }
 
-fn cname<'a>(cnames: &'a [u8], ends: &[usize], i: usize) -> &'a CStr {
-    let start = if i == 0 { 0 } else { ends[i - 1] };
-    CStr::from_bytes_with_nul(&cnames[start..ends[i]]).expect("names are NUL-terminated copies")
+thread_local! {
+    static DIR_BUF: RefCell<Vec<MaybeUninit<u8>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `len`. `f` must not re-enter `enumerate`:
+/// a rayon worker blocked in `stat_all` may steal another listing task.
+fn with_buffer<R>(len: usize, f: impl FnOnce(&mut [MaybeUninit<u8>]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < len {
+            buf.resize(len, MaybeUninit::uninit());
+        }
+        f(&mut buf[..len])
+    })
+}
+
+/// NUL-terminated copies of the names, so statx can use them without allocating per entry.
+#[derive(Default)]
+struct CNames {
+    bytes: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+impl CNames {
+    fn push(&mut self, name: &CStr) {
+        self.bytes.extend_from_slice(name.to_bytes_with_nul());
+        self.ends.push(self.bytes.len());
+    }
+
+    fn get(&self, i: usize) -> &CStr {
+        let start = if i == 0 { 0 } else { self.ends[i - 1] };
+        CStr::from_bytes_with_nul(&self.bytes[start..self.ends[i]])
+            .expect("names are NUL-terminated copies")
+    }
+}
+
+/// Pushes every entry into `out`; collects NUL-terminated names only when `metadata` needs statx.
+fn read_entries(
+    fd: BorrowedFd<'_>,
+    buf: &mut [MaybeUninit<u8>],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<CNames> {
+    let mut cnames = CNames::default();
+    let mut raw = RawDir::new(fd, buf);
+    while let Some(entry) = raw.next() {
+        let entry = entry?;
+        let name = entry.file_name();
+        let bytes = name.to_bytes();
+        let Some(&lead) = bytes.first() else {
+            continue;
+        };
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        let kind = match entry.file_type() {
+            FileType::Unknown => kind_via_statx(fd, name),
+            t => kind_from_file_type(t),
+        };
+        out.push_encoded(bytes, kind, lead == b'.', entry.ino())?;
+        if metadata {
+            cnames.push(name);
+        }
+    }
+    Ok(cnames)
 }
 
 fn kind_from_file_type(t: FileType) -> EntryKind {
@@ -111,8 +151,7 @@ fn stat_one(dirfd: BorrowedFd<'_>, name: &CStr) -> Option<Stat> {
 
 fn stat_all(
     dirfd: BorrowedFd<'_>,
-    cnames: &[u8],
-    ends: &[usize],
+    cnames: &CNames,
     entries: &[crate::Entry],
     strategy: &Strategy,
 ) -> Vec<Option<Stat>> {
@@ -121,7 +160,7 @@ fn stat_all(
     if strategy.inode_order {
         order.sort_unstable_by_key(|&i| entries[i].inode);
     }
-    let one = |i: usize| stat_one(dirfd, cname(cnames, ends, i));
+    let one = |i: usize| stat_one(dirfd, cnames.get(i));
 
     let mut results = vec![None; n];
     if strategy.stat_threads <= 1 || n < MIN_PARALLEL_ENTRIES {
@@ -130,7 +169,7 @@ fn stat_all(
         }
         return results;
     }
-    let done: Vec<Vec<(usize, Option<Stat>)>> = pool(strategy.stat_threads).install(|| {
+    let done: Vec<Vec<(usize, Option<Stat>)>> = run_in_pool(strategy.stat_threads, || {
         order
             .par_chunks(STAT_CHUNK)
             .map(|c| c.iter().map(|&i| (i, one(i))).collect())
@@ -142,18 +181,30 @@ fn stat_all(
     results
 }
 
+static STORAGE: Mutex<TtlCache<u64, StorageKind>> = Mutex::new(TtlCache::new());
+static VOLUMES: Mutex<TtlCache<u64, VolumeInfo>> = Mutex::new(TtlCache::new());
+
+/// One `stat` for the volume identity; the `statfs` and sysfs probes run once per volume.
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    let Ok(fs) = statfs(path) else {
-        return StorageKind::Unknown;
+    match rustix::fs::stat(path) {
+        Ok(st) => cached(&STORAGE, st.st_dev, || probe_storage(path, st.st_dev)),
+        Err(e) => unknown_storage(path, e),
+    }
+}
+
+fn probe_storage(path: &Path, dev: u64) -> StorageKind {
+    let fs = match statfs(path) {
+        Ok(fs) => fs,
+        Err(e) => return unknown_storage(path, e),
     };
     // f_type is signed or 32-bit depending on the arch; compare the low 32 bits.
-    if let Some(kind) = kind_from_fs_magic(fs.f_type as u64 & 0xFFFF_FFFF) {
-        return kind;
-    }
-    let Ok(st) = rustix::fs::stat(path) else {
-        return StorageKind::Unknown;
-    };
-    rotational_kind(major(st.st_dev), minor(st.st_dev))
+    kind_from_fs_magic(fs.f_type as u64 & 0xFFFF_FFFF)
+        .unwrap_or_else(|| rotational_kind(major(dev), minor(dev)))
+}
+
+fn unknown_storage(path: &Path, err: rustix::io::Errno) -> StorageKind {
+    log::debug!("storage of {} unknown: {err}", path.display());
+    StorageKind::Unknown
 }
 
 /// Network and FUSE-like filesystems by `statfs` magic; `None` means "ask the block device".
@@ -185,32 +236,43 @@ fn rotational_kind(major: u32, minor: u32) -> StorageKind {
     kind_from_block_info(rotational.as_deref(), &model)
 }
 
-/// One `stat` and one `statfs`; block-device storage adds a few small sysfs reads.
+/// One `stat` for the volume identity; the `statfs` and sysfs probes run once per volume.
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
-    let Ok(st) = rustix::fs::stat(path) else {
-        return VolumeInfo::unknown(0);
-    };
-    let id = st.st_dev;
-    let Ok(fs) = statfs(path) else {
-        return VolumeInfo::unknown(id);
+    match rustix::fs::stat(path) {
+        Ok(st) => cached(&VOLUMES, st.st_dev, || probe_volume(path, st.st_dev)),
+        Err(e) => {
+            log::warn!("cannot probe volume of {}: {e}", path.display());
+            VolumeInfo::unknown(None)
+        }
+    }
+}
+
+fn probe_volume(path: &Path, id: u64) -> VolumeInfo {
+    let fs = match statfs(path) {
+        Ok(fs) => fs,
+        Err(e) => {
+            log::warn!("cannot probe filesystem of {}: {e}", path.display());
+            return VolumeInfo::unknown(Some(id));
+        }
     };
     let magic = fs.f_type as u64 & 0xFFFF_FFFF;
     let kind = fs_kind_from_magic(magic);
-    let storage = kind_from_fs_magic(magic).unwrap_or_else(|| {
-        let (major, minor) = (major(id), minor(id));
-        let device = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok();
-        let flag = block_attr(major, minor, "removable");
-        if is_removable(flag.as_deref(), device.as_deref().and_then(Path::to_str)) {
-            StorageKind::Removable
-        } else {
-            rotational_kind(major, minor)
-        }
-    });
     VolumeInfo {
-        id,
+        id: Some(id),
         fs: kind,
-        storage,
+        storage: kind_from_fs_magic(magic).unwrap_or_else(|| block_storage(id)),
         caps: FsCaps::for_fs(kind),
+    }
+}
+
+fn block_storage(dev: u64) -> StorageKind {
+    let (major, minor) = (major(dev), minor(dev));
+    let device = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok();
+    let flag = block_attr(major, minor, "removable");
+    if is_removable(flag.as_deref(), device.as_deref().and_then(Path::to_str)) {
+        StorageKind::Removable
+    } else {
+        rotational_kind(major, minor)
     }
 }
 
@@ -323,7 +385,7 @@ mod tests {
     fn volume_info_of_a_temp_dir_is_sane() {
         let dir = tempfile::tempdir().unwrap();
         let info = volume_info(dir.path());
-        assert_eq!(info.id, rustix::fs::stat(dir.path()).unwrap().st_dev);
+        assert_eq!(info.id, Some(rustix::fs::stat(dir.path()).unwrap().st_dev));
         assert_eq!(info.caps, FsCaps::for_fs(info.fs));
     }
 

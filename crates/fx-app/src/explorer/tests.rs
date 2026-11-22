@@ -1,7 +1,7 @@
 use super::loading::list_view;
 use super::preload::PRELOAD_MAX;
 use super::*;
-use crate::ops::NoticeKind;
+use crate::ops::{EntryDetails, NoticeKind};
 use crate::search::{SearchStatus, SearchView};
 use crate::settings::SearchSettings;
 use crate::state::{Bookmark, WindowState};
@@ -130,8 +130,19 @@ fn with_state_in(
         Some(dir.join("state.toml")),
         || {},
     );
+    wait_tab_checks(&mut explorer);
     settle_started(&mut explorer);
     explorer
+}
+
+/// Waits until the startup checks of the restored tabs have been applied.
+fn wait_tab_checks(explorer: &mut Explorer) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while explorer.pending_tab_checks > 0 {
+        assert!(Instant::now() < deadline, "tab checks did not finish");
+        explorer.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn saved(tabs: &[&Path], active_tab: usize) -> WindowState {
@@ -243,6 +254,56 @@ fn bookmark_availability_is_checked_in_the_background() {
 }
 
 #[test]
+fn startup_restores_every_saved_tab_before_any_folder_is_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = mkdirs(dir.path(), &["a"]);
+    let gone = dir.path().join("gone");
+    let state = State {
+        windows: vec![saved(&[&f[0], &gone], 0)],
+        ..State::default()
+    };
+    let mut explorer = Explorer::with_state(
+        None,
+        dir.path().to_path_buf(),
+        Settings::default(),
+        state,
+        None,
+        || {},
+    );
+    assert_eq!(explorer.tabs().len(), 2, "no is_dir before the UI starts");
+    assert_eq!(explorer.pending_tab_checks, 2);
+
+    wait_tab_checks(&mut explorer);
+    assert_eq!(explorer.tabs().len(), 1);
+    assert_eq!(explorer.active().path(), f[0]);
+}
+
+#[test]
+fn an_only_tab_in_a_gone_folder_goes_to_the_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = State {
+        windows: vec![saved(&[&dir.path().join("gone")], 0)],
+        ..State::default()
+    };
+    let explorer = with_state_in(dir.path(), None, dir.path(), Settings::default(), state);
+    assert_eq!(explorer.active().path(), dir.path());
+    assert!(matches!(explorer.active().state(), LoadState::Loaded(_)));
+}
+
+#[test]
+fn a_gone_start_folder_is_replaced_by_home_after_the_background_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("gone");
+    let settings = Settings {
+        restore_session: false,
+        ..Settings::default()
+    };
+    let explorer = with_state_in(dir.path(), None, &gone, settings, State::default());
+    let home = crate::settings::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    assert_eq!(explorer.active().path(), home);
+}
+
+#[test]
 fn session_restores_surviving_tabs_and_clamps_active() {
     let dir = tempfile::tempdir().unwrap();
     let f = mkdirs(dir.path(), &["a", "b"]);
@@ -328,6 +389,7 @@ fn fallback_when_no_saved_tab_survives() {
     let explorer = with_state_in(dir.path(), None, dir.path(), Settings::default(), state);
     assert_eq!(explorer.window_ids().len(), 1);
     assert_eq!(explorer.active().path(), dir.path());
+    assert_eq!(explorer.tabs().len(), 1);
 }
 
 #[test]
@@ -609,6 +671,18 @@ fn suggests_a_free_folder_name() {
 }
 
 #[test]
+fn folder_name_suggestion_reads_the_listing_not_the_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("New folder")).unwrap();
+    let explorer = explorer_in(dir.path());
+    fs::remove_dir(dir.path().join("New folder")).unwrap();
+    assert_eq!(explorer.suggest_folder_name(), "New folder (2)");
+
+    fs::create_dir(dir.path().join("New folder (2)")).unwrap();
+    assert_eq!(explorer.suggest_folder_name(), "New folder (2)");
+}
+
+#[test]
 fn create_folder_selects_the_new_folder_after_reload() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -644,6 +718,17 @@ fn tabs_inside_a_deleted_folder_move_to_the_nearest_existing_parent() {
 
     assert_eq!(explorer.tabs()[1].path(), root);
     assert!(matches!(explorer.tabs()[1].state(), LoadState::Loaded(_)));
+}
+
+#[test]
+fn surviving_parent_is_derived_without_touching_the_filesystem() {
+    use super::file_ops::surviving_parent;
+    let removed = [PathBuf::from("/m/a/b"), PathBuf::from("/m/a")];
+    assert_eq!(
+        surviving_parent(Path::new("/m/a/b/c"), &removed),
+        Some(PathBuf::from("/m"))
+    );
+    assert_eq!(surviving_parent(Path::new("/m/other"), &removed), None);
 }
 
 #[test]
@@ -932,27 +1017,40 @@ fn selection_survives_resort_and_refresh_by_name() {
     assert_eq!(selected_names(&explorer), ["a.txt", "c.txt"]);
 }
 
+/// Requests the properties of `row` and waits for the background read; `None` when the entry is gone.
+fn details_of(explorer: &mut Explorer, row: usize) -> Option<EntryDetails> {
+    assert!(explorer.request_details(row));
+    assert_eq!(explorer.details(), Some(&DetailsState::Loading));
+    wait_for(explorer, "properties", |e| {
+        e.details() != Some(&DetailsState::Loading)
+    });
+    match explorer.details() {
+        Some(DetailsState::Ready(details)) => Some(details.clone()),
+        _ => None,
+    }
+}
+
 #[test]
 fn entry_details_describe_files_dirs_and_permissions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     fs::write(root.join("file.txt"), b"12345").unwrap();
     fs::create_dir(root.join("folder")).unwrap();
-    let explorer = explorer_in(root);
+    let mut explorer = explorer_in(root);
 
-    let file = explorer
-        .entry_details(row_of(&explorer, "file.txt"))
-        .unwrap();
+    let row = row_of(&explorer, "file.txt");
+    let file = details_of(&mut explorer, row).unwrap();
     assert_eq!(file.name, "file.txt");
     assert_eq!(file.path, root.join("file.txt"));
     assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size, Some(5));
     assert!(file.modified.is_some());
 
-    let folder = explorer.entry_details(row_of(&explorer, "folder")).unwrap();
+    let row = row_of(&explorer, "folder");
+    let folder = details_of(&mut explorer, row).unwrap();
     assert_eq!(folder.kind, EntryKind::Dir);
     assert_eq!(folder.size, None, "directories are not walked");
-    assert!(explorer.entry_details(99).is_none());
+    assert!(!explorer.request_details(99));
 }
 
 #[cfg(unix)]
@@ -964,12 +1062,35 @@ fn entry_details_show_unix_mode() {
     let file = root.join("locked.txt");
     fs::write(&file, b"").unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
-    let explorer = explorer_in(root);
+    let mut explorer = explorer_in(root);
 
-    let details = explorer
-        .entry_details(row_of(&explorer, "locked.txt"))
-        .unwrap();
+    let row = row_of(&explorer, "locked.txt");
+    let details = details_of(&mut explorer, row).unwrap();
     assert_eq!(details.permissions, "rw-r-----");
+}
+
+#[test]
+fn details_of_a_vanished_entry_end_as_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("file.txt"), b"").unwrap();
+    let mut explorer = explorer_in(dir.path());
+    let row = row_of(&explorer, "file.txt");
+    fs::remove_file(dir.path().join("file.txt")).unwrap();
+
+    assert!(details_of(&mut explorer, row).is_none());
+    assert_eq!(explorer.details(), Some(&DetailsState::Gone));
+}
+
+#[test]
+fn places_arrive_from_the_background_and_are_taken_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut explorer = explorer_in(dir.path());
+    assert!(explorer.take_places().is_none(), "nothing before a probe");
+
+    explorer.refresh_places();
+    wait_for(&mut explorer, "places", |e| e.fresh_places.is_some());
+    assert!(!explorer.take_places().unwrap().is_empty());
+    assert!(explorer.take_places().is_none());
 }
 
 #[test]
@@ -1379,6 +1500,23 @@ fn revalidate_picks_up_external_files_without_a_loading_flash() {
 }
 
 #[test]
+fn failed_revalidation_keeps_the_loaded_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("a.txt"), b"x").unwrap();
+    let mut explorer = explorer_in(&sub);
+    fs::remove_dir_all(&sub).unwrap();
+    explorer.revalidate();
+    for _ in 0..50 {
+        explorer.poll();
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(matches!(explorer.active().state(), LoadState::Loaded(_)));
+    assert_eq!(names(&explorer), ["a.txt"]);
+}
+
+#[test]
 fn revalidate_keeps_the_running_preload() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -1747,4 +1885,41 @@ fn relative_folder_is_slash_separated_and_empty_at_the_root() {
         .collect();
     folders.sort();
     assert_eq!(folders, ["", "sub/deep/"]);
+}
+
+#[test]
+fn opening_a_listed_folder_needs_no_filesystem_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("folder")).unwrap();
+    let mut explorer = explorer_in(root);
+    let row = row_of(&explorer, "folder");
+    fs::remove_dir(root.join("folder")).unwrap();
+
+    explorer.open_in_new_tab(row);
+
+    assert_eq!(explorer.tabs().len(), 2, "decided from the listing alone");
+    explorer.set_active(0);
+    explorer.activate(row);
+    assert_eq!(explorer.active().path(), root.join("folder"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_a_folder_is_entered_once_the_background_check_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("target")).unwrap();
+    std::os::unix::fs::symlink(root.join("target"), root.join("link")).unwrap();
+    let mut explorer = explorer_in(root);
+
+    explorer.activate(row_of(&explorer, "link"));
+    assert_eq!(
+        explorer.active().path(),
+        root,
+        "nothing happens synchronously"
+    );
+    wait_for(&mut explorer, "symlink entered", |e| {
+        e.active().path() == root.join("link")
+    });
 }

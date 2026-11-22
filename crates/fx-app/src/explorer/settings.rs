@@ -43,6 +43,6 @@ impl Explorer {
                 "no config directory available",
             )),
         };
-        self.report_save(saved);
+        self.report_save("settings", saved);
     }
 }

@@ -3,33 +3,60 @@
 use crate::copy::progress::{ErrorOp, is_cancelled};
 use std::io;
 
-/// `ENOTSUP`/`EXDEV`/`EINVAL`-style failures mean "try the next method" and disable this one for the pair.
-#[cfg_attr(not(unix), allow(dead_code))]
-pub(crate) fn is_unsupported(e: &io::Error) -> bool {
-    matches!(
+/// What a failed copy method means for the rest of the job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fallback {
+    /// The volume pair cannot do this at all: the method is disabled and the chain moves on.
+    Pair,
+    /// This one file is odd (a size or range the method rejects): the next method takes it and the
+    /// method stays enabled for the others.
+    File,
+}
+
+pub(crate) fn fallback_of(e: &io::Error) -> Option<Fallback> {
+    if matches!(
         e.kind(),
-        io::ErrorKind::Unsupported | io::ErrorKind::CrossesDevices | io::ErrorKind::InvalidInput
-    ) || is_unsupported_errno(e)
+        io::ErrorKind::Unsupported | io::ErrorKind::CrossesDevices
+    ) || is_pair_errno(e)
+    {
+        return Some(Fallback::Pair);
+    }
+    (e.kind() == io::ErrorKind::InvalidInput || is_file_errno(e)).then_some(Fallback::File)
 }
 
 #[cfg(unix)]
-fn is_unsupported_errno(e: &io::Error) -> bool {
+fn is_pair_errno(e: &io::Error) -> bool {
     use rustix::io::Errno;
-    const UNSUPPORTED: [Errno; 7] = [
+    const PAIR: [Errno; 5] = [
         Errno::NOSYS,
         Errno::OPNOTSUPP,
         Errno::NOTSUP,
-        Errno::OVERFLOW,
         Errno::NOTTY,
         Errno::XDEV,
-        Errno::INVAL,
     ];
     e.raw_os_error()
-        .is_some_and(|code| UNSUPPORTED.contains(&Errno::from_raw_os_error(code)))
+        .is_some_and(|code| PAIR.contains(&Errno::from_raw_os_error(code)))
+}
+
+#[cfg(unix)]
+fn is_file_errno(e: &io::Error) -> bool {
+    use rustix::io::Errno;
+    e.raw_os_error().is_some_and(|code| {
+        matches!(
+            Errno::from_raw_os_error(code),
+            Errno::INVAL | Errno::OVERFLOW
+        )
+    })
+}
+
+/// ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_CALL_NOT_IMPLEMENTED.
+#[cfg(not(unix))]
+fn is_pair_errno(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(1 | 50 | 120))
 }
 
 #[cfg(not(unix))]
-fn is_unsupported_errno(_e: &io::Error) -> bool {
+fn is_file_errno(_e: &io::Error) -> bool {
     false
 }
 
@@ -93,17 +120,30 @@ mod tests {
         assert!(!is_transient(&io::ErrorKind::PermissionDenied.into()));
         assert!(is_disk_full(&io::ErrorKind::StorageFull.into()));
         assert!(is_disk_full(&io::ErrorKind::QuotaExceeded.into()));
-        assert!(is_unsupported(&io::ErrorKind::Unsupported.into()));
-        assert!(is_unsupported(&io::ErrorKind::CrossesDevices.into()));
-        assert!(!is_unsupported(&io::ErrorKind::PermissionDenied.into()));
+        let pair = |e: io::Error| fallback_of(&e) == Some(Fallback::Pair);
+        assert!(pair(io::ErrorKind::Unsupported.into()));
+        assert!(pair(io::ErrorKind::CrossesDevices.into()));
+        assert_eq!(fallback_of(&io::ErrorKind::PermissionDenied.into()), None);
+        assert_eq!(
+            fallback_of(&io::ErrorKind::InvalidInput.into()),
+            Some(Fallback::File)
+        );
         #[cfg(target_os = "linux")]
         for errno in [
             rustix::io::Errno::XDEV,
             rustix::io::Errno::OPNOTSUPP,
             rustix::io::Errno::NOSYS,
-            rustix::io::Errno::INVAL,
+            rustix::io::Errno::NOTTY,
         ] {
-            assert!(is_unsupported(&errno.into()), "{errno:?}");
+            assert!(pair(errno.into()), "{errno:?}");
+        }
+        #[cfg(target_os = "linux")]
+        for errno in [rustix::io::Errno::INVAL, rustix::io::Errno::OVERFLOW] {
+            assert_eq!(
+                fallback_of(&errno.into()),
+                Some(Fallback::File),
+                "{errno:?}"
+            );
         }
     }
 }

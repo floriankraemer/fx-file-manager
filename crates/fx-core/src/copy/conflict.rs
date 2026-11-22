@@ -167,18 +167,25 @@ fn push_extension(out: &mut OsString, path: &Path) {
     }
 }
 
+/// Longest file name the supported filesystems store, in bytes.
+const NAME_MAX: usize = 255;
+
 /// Where an overwrite stages new content before renaming it over `name`, in the same directory.
 /// Unique per process and call, so concurrent overwrites never touch each other's file.
+/// A name too long to carry the decoration is left out, so the temp name still fits.
 pub(crate) fn temp_name(name: &OsStr) -> OsString {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut out = OsString::from(".");
-    out.push(name);
-    out.push(format!(
+    let unique = format!(
         ".{}-{}.fx-part",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    );
+    let mut out = OsString::from(".");
+    if name.len() + 1 + unique.len() <= NAME_MAX {
+        out.push(name);
+    }
+    out.push(unique);
     out
 }
 
@@ -281,5 +288,7 @@ mod tests {
         assert_ne!(a, b);
         let a = a.to_string_lossy();
         assert!(a.starts_with(".a.txt.") && a.ends_with(".fx-part"), "{a}");
+        let long = temp_name("x".repeat(255).as_ref());
+        assert!(long.len() <= 255 && long.to_string_lossy().ends_with(".fx-part"));
     }
 }

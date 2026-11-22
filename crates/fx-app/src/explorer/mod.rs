@@ -2,12 +2,16 @@
 
 mod bookmarks;
 mod chooser;
+mod details;
 mod entries;
 mod file_ops;
 mod loading;
 mod notices;
+mod open;
 mod opener;
+mod places;
 mod preload;
+mod restore;
 mod revalidate;
 mod search;
 mod session;
@@ -20,19 +24,24 @@ mod windows;
 #[cfg(test)]
 mod tests;
 
+pub use details::DetailsState;
 pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
 
 use crate::ops::{Notice, Outcome};
+use crate::places::Place;
 use crate::settings::Settings;
 use crate::state::State;
 use crate::transfers::Transfers;
 use bookmarks::BookmarkChecked;
+use details::DetailsLoaded;
 use loading::Completed;
+use open::OpenChecked;
 use preload::PreloadDone;
+use restore::TabChecked;
 use revalidate::StatChecked;
 use search::SearchMsg;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -69,6 +78,8 @@ pub struct Explorer {
     /// Where `set_settings` persists. `None` when the platform has no config directory.
     settings_path: Option<PathBuf>,
     notices: VecDeque<Notice>,
+    /// Files whose last save failed. A repeated failure stays silent so a read-only config folder does not flood the UI and log.
+    failing_saves: HashSet<&'static str>,
     /// Internal clipboard set by copy/cut: absolute paths and whether paste should move them.
     /// Shared by all windows, so copy in one window pastes in another.
     // ponytail: app-internal only, not the OS file clipboard; add per-platform clipboard integration if cross-app paste is needed
@@ -86,10 +97,31 @@ pub struct Explorer {
     next_session_save: Instant,
     /// Whether each bookmarked folder exists, as last checked off the UI thread. Missing means not checked yet.
     availability: HashMap<PathBuf, bool>,
+    /// Bookmarks whose check has not answered yet; a path stuck on a dead mount is not re-checked, so threads cannot pile up.
+    bookmark_checking: HashSet<PathBuf>,
     bookmark_tx: Sender<BookmarkChecked>,
     bookmark_rx: Receiver<BookmarkChecked>,
     search_tx: Sender<SearchMsg>,
     search_rx: Receiver<SearchMsg>,
+    /// Bumped per background folder check; older answers are dropped.
+    open_generation: u64,
+    open_tx: Sender<OpenChecked>,
+    open_rx: Receiver<OpenChecked>,
+    /// Where a startup tab whose folder is gone goes when it is its window's only tab.
+    restore_fallback: PathBuf,
+    pending_tab_checks: usize,
+    tab_check_tx: Sender<TabChecked>,
+    tab_check_rx: Receiver<TabChecked>,
+    /// Bumped per properties request; older answers are dropped.
+    details_generation: u64,
+    details: Option<DetailsState>,
+    details_tx: Sender<DetailsLoaded>,
+    details_rx: Receiver<DetailsLoaded>,
+    places_probing: bool,
+    /// The latest probed locations that the UI has not taken yet.
+    fresh_places: Option<Vec<Place>>,
+    places_tx: Sender<Vec<Place>>,
+    places_rx: Receiver<Vec<Place>>,
 }
 
 impl Explorer {
@@ -110,8 +142,9 @@ impl Explorer {
 
     /// Starts with the saved bookmarks and, unless `start` is given, the saved session.
     /// `start` (a folder from the command line) wins over the session. Otherwise one window per saved
-    /// window that still has a directory among its tabs is opened, loading only each window's active tab.
-    /// Without `settings.restore_session`, or when no saved tab survives, one tab opens at `fallback`.
+    /// window is opened at once, loading only each window's active tab; a background check then drops
+    /// tabs whose folder is gone, or sends a window's only tab to `fallback`.
+    /// Without `settings.restore_session`, or with no saved tab, one tab opens at `fallback`.
     /// `state_path` is where bookmark and session changes are written; `None` disables that.
     pub fn with_state(
         start: Option<PathBuf>,
@@ -121,15 +154,20 @@ impl Explorer {
         state_path: Option<PathBuf>,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        let restore = start.is_none() && settings.restore_session;
+        let unverified_start = start.is_none();
+        let restore = unverified_start && settings.restore_session;
         let saved = if restore {
             state.windows.clone()
         } else {
             Vec::new()
         };
         let mut explorer = Self::build(settings, state, state_path, wake);
+        explorer.restore_fallback = absolute(fallback.clone());
         if explorer.restore_windows(saved) == 0 {
             explorer.new_tab(start.unwrap_or(fallback));
+        }
+        if unverified_start {
+            explorer.check_restored_tabs();
         }
         explorer.session_dirty = false;
         explorer.check_bookmarks();
@@ -151,6 +189,10 @@ impl Explorer {
         let (stat_tx, stat_rx) = mpsc::channel();
         let (bookmark_tx, bookmark_rx) = mpsc::channel();
         let (search_tx, search_rx) = mpsc::channel();
+        let (open_tx, open_rx) = mpsc::channel();
+        let (tab_check_tx, tab_check_rx) = mpsc::channel();
+        let (details_tx, details_rx) = mpsc::channel();
+        let (places_tx, places_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -171,6 +213,7 @@ impl Explorer {
             settings,
             settings_path: Settings::path(),
             notices: VecDeque::new(),
+            failing_saves: HashSet::new(),
             clipboard: None,
             preload_tx,
             preload_rx,
@@ -181,10 +224,26 @@ impl Explorer {
             session_dirty: false,
             next_session_save: Instant::now(),
             availability: HashMap::new(),
+            bookmark_checking: HashSet::new(),
             bookmark_tx,
             bookmark_rx,
             search_tx,
             search_rx,
+            open_generation: 0,
+            open_tx,
+            open_rx,
+            restore_fallback: PathBuf::new(),
+            pending_tab_checks: 0,
+            tab_check_tx,
+            tab_check_rx,
+            details_generation: 0,
+            details: None,
+            details_tx,
+            details_rx,
+            places_probing: false,
+            fresh_places: None,
+            places_tx,
+            places_rx,
         }
     }
 
@@ -197,6 +256,10 @@ impl Explorer {
         }
         changed |= self.apply_loads();
         changed |= self.apply_searches();
+        changed |= self.apply_open_checks();
+        changed |= self.apply_tab_checks();
+        changed |= self.apply_details();
+        changed |= self.apply_places();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {

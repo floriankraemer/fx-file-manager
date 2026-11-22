@@ -24,8 +24,9 @@ pub(super) struct Window {
     pub(super) preload_gen: Arc<AtomicU64>,
     /// Folder whose subfolders the current preload covers; `None` once it was cancelled or never started.
     pub(super) preload_parent: Option<PathBuf>,
-    /// At most one mtime check runs at a time.
-    pub(super) stat_in_flight: bool,
+    /// The (tab id, generation) whose mtime check is running. A check for another tab or generation is not blocked,
+    /// so a thread hung on a dead mount cannot disable revalidation after the user navigates away.
+    pub(super) stat_in_flight: Option<(u64, u64)>,
     pub(super) next_tick: Instant,
 }
 
@@ -39,7 +40,7 @@ impl Window {
             preloaded: HashMap::new(),
             preload_gen: Arc::new(AtomicU64::new(0)),
             preload_parent: None,
-            stat_in_flight: false,
+            stat_in_flight: None,
             next_tick: Instant::now() + REVALIDATE_INTERVAL,
         }
     }

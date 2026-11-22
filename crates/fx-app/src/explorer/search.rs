@@ -1,17 +1,32 @@
 //! Recursive search of the active tab: the worker thread, its cancellation and the root-folder notice.
 
 use super::Explorer;
+use super::open::OpenTarget;
 use crate::search::{SearchEvent, SearchView};
-use fx_core::{SearchQuery, WalkOptions, WalkProgress, search};
-use std::path::PathBuf;
+use fx_core::{ListError, SearchQuery, WalkOptions, WalkProgress, Walked, search};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
+use std::time::Instant;
 
 pub(super) struct SearchMsg {
     tab_id: u64,
     generation: u64,
     event: SearchEvent,
+}
+
+fn log_search_end(root: &Path, walked: &Result<Walked, ListError>, started: Instant) {
+    match walked {
+        Ok(w) => log::info!(
+            "search in {} walked {} dirs, {} unreadable, in {:?}",
+            root.display(),
+            w.stats.dirs,
+            w.stats.errors,
+            started.elapsed()
+        ),
+        Err(err) => log::warn!("search root {} failed: {err}", root.display()),
+    }
 }
 
 impl Explorer {
@@ -67,9 +82,11 @@ impl Explorer {
 
     /// Enters the folder or opens the file of result `row`. Entering a folder ends the search.
     pub fn open_search_hit(&mut self, row: usize) {
-        if let Some(path) = self.search_hit_path(row) {
-            self.open_path(path);
-        }
+        let Some(hit) = self.search().and_then(|search| search.hits().get(row)) else {
+            return;
+        };
+        let (path, kind) = (hit.path.clone(), hit.kind);
+        self.open_path(path, kind, OpenTarget::ThisTab);
     }
 
     /// Goes to the folder that holds result `row`, selects the item there and ends the search.
@@ -126,9 +143,11 @@ impl Explorer {
                 wake();
             };
             let opts = WalkOptions::default();
+            let started = Instant::now();
             let walked = search(&root, &query, &opts, &cancel, &progress, |hits| {
                 send(SearchEvent::Hits(hits))
             });
+            log_search_end(&root, &walked, started);
             send(SearchEvent::Done(
                 walked.map(|w| w.stats).map_err(|e| e.to_string()),
             ));

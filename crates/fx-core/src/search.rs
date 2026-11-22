@@ -73,12 +73,17 @@ fn contains_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
     })
 }
 
-/// Length of the UTF-8 sequence led by `b`; 1 for invalid lead bytes so matching never stalls.
-fn char_len(b: u8) -> usize {
-    match b {
+/// Length of the well-formed UTF-8 character at the start of `rest`; 1 for stray or truncated
+/// bytes, so a non-UTF-8 name (Latin-1) never has a wildcard swallow the ASCII that follows.
+fn char_len(rest: &[u8]) -> usize {
+    let len = match rest[0] {
         0xC0..=0xDF => 2,
         0xE0..=0xEF => 3,
         0xF0..=0xF7 => 4,
+        _ => return 1,
+    };
+    match rest.get(1..len) {
+        Some(tail) if tail.iter().all(|b| (0x80..=0xBF).contains(b)) => len,
         _ => 1,
     }
 }
@@ -96,7 +101,7 @@ fn glob_match(glob: &[u8], text: &[u8]) -> bool {
             }
             Some(b'?') => {
                 g += 1;
-                t = (t + char_len(text[t])).min(text.len());
+                t = (t + char_len(&text[t..])).min(text.len());
             }
             Some(&c) if c == text[t].to_ascii_lowercase() => {
                 g += 1;
@@ -106,7 +111,7 @@ fn glob_match(glob: &[u8], text: &[u8]) -> bool {
                 let Some((rg, rt)) = resume else {
                     return false;
                 };
-                let next = (rt + char_len(text[rt])).min(text.len());
+                let next = (rt + char_len(&text[rt..])).min(text.len());
                 resume = Some((rg, next));
                 g = rg;
                 t = next;
@@ -251,6 +256,9 @@ mod tests {
         assert!(q("notes").matches_name(name));
         assert!(q("*.txt").matches_name(name));
         assert!(q("caf?*").matches_name(name));
+        assert!(q("caf?e").matches_name(b"caf\xE9e"));
+        assert!(!q("caf?").matches_name(b"caf\xE9e"));
+        assert!(q("*?e").matches_name(b"caf\xE9e"));
     }
 
     #[test]

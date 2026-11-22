@@ -153,9 +153,19 @@ pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
     Ok(Src { path, meta })
 }
 
+/// Flushes the file `name` of `dir` to disk.
+#[cfg(not(windows))]
+pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
+    File::open(dir.path.join(name))?.sync_all()
+}
+
 pub(crate) fn read_all(src: &Src, out: &mut Vec<u8>) -> io::Result<()> {
     out.clear();
-    File::open(&src.path)?.read_to_end(out).map(|_| ())
+    // The file as it was when opened, even if it has grown since.
+    File::open(&src.path)?
+        .take(src.meta.size)
+        .read_to_end(out)
+        .map(|_| ())
 }
 
 thread_local! {
@@ -200,7 +210,9 @@ pub(crate) fn copy_file(
     if result.is_err() {
         meter.rollback();
         drop(out);
-        let _ = fs::remove_file(&dst_path);
+        if let Err(e) = fs::remove_file(&dst_path) {
+            log::warn!("cannot remove the partial copy {}: {e}", dst_path.display());
+        }
     }
     result
 }
@@ -360,6 +372,6 @@ pub(crate) fn free_space(_path: &Path) -> Option<u64> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn extent_key(_src: &Src) -> Option<u64> {
-    None
+pub(crate) fn probe_file(dir: &Dir, name: &OsStr) -> io::Result<(Src, Option<u64>)> {
+    open_file(dir, name).map(|src| (src, None))
 }

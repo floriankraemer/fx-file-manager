@@ -31,7 +31,7 @@ impl Explorer {
         if matches!(tab.state(), LoadState::Loading) {
             return;
         }
-        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
     }
 
     /// Every `REVALIDATE_INTERVAL`, stats window `w`'s active folder on a worker thread and re-lists it if it changed.
@@ -42,13 +42,17 @@ impl Explorer {
             return;
         }
         window.next_tick = now + REVALIDATE_INTERVAL;
-        if window.stat_in_flight {
-            return;
-        }
         let Some(check) = StatCheck::of(window) else {
             return;
         };
-        window.stat_in_flight = true;
+        if window.stat_in_flight == Some(check.key()) {
+            log::debug!(
+                "mtime check of {} still running, skipped",
+                check.path.display()
+            );
+            return;
+        }
+        window.stat_in_flight = Some(check.key());
         let tx = self.stat_tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
@@ -65,8 +69,10 @@ impl Explorer {
     /// Re-lists folders whose mtime check found them stale.
     pub(super) fn apply_stat_checks(&mut self) {
         while let Ok(checked) = self.stat_rx.try_recv() {
-            if let Some(window) = self.windows.iter_mut().find(|w| w.id == checked.window) {
-                window.stat_in_flight = false;
+            if let Some(window) = self.windows.iter_mut().find(|w| w.id == checked.window)
+                && window.stat_in_flight == Some((checked.tab_id, checked.generation))
+            {
+                window.stat_in_flight = None;
             }
             if checked.stale {
                 self.relist_if_current(&checked);
@@ -85,7 +91,7 @@ impl Explorer {
             return;
         };
         if tab.generation() == checked.generation && !matches!(tab.state(), LoadState::Loading) {
-            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
         }
     }
 }
@@ -114,6 +120,10 @@ impl StatCheck {
             mtime: view.mtime,
             listed_at: view.listed_at,
         })
+    }
+
+    fn key(&self) -> (u64, u64) {
+        (self.tab_id, self.generation)
     }
 
     fn run(self) -> StatChecked {

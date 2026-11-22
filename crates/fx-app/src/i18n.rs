@@ -4,9 +4,9 @@
 //! Plural texts are groups of `key.one`, `key.few`, `key.many`, `key.other`; [`tn`] picks the form and fills `{n}`.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// The UI language. `System` follows the OS locale and falls back to English.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +157,20 @@ static CURRENT: AtomicU8 = AtomicU8::new(Language::En as u8);
 
 /// Sets the language used by [`t`], [`tr`] and [`tn`]. Takes effect on the next call.
 pub fn set_language(lang: Language) {
-    CURRENT.store(lang.resolved() as u8, Ordering::Relaxed);
+    let resolved = lang.resolved();
+    log::info!("language {lang:?} resolved to {resolved:?}");
+    CURRENT.store(resolved as u8, Ordering::Relaxed);
+}
+
+/// Logs each missing key once, so a render loop cannot flood the log.
+fn missing_key(key: &'static str) -> &'static str {
+    static SEEN: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Mutex::default);
+    let first = seen.lock().is_ok_and(|mut seen| seen.insert(key));
+    if first {
+        log::warn!("missing translation key {key}");
+    }
+    key
 }
 
 pub fn current() -> Language {
@@ -178,7 +191,7 @@ pub fn find_in(lang: Language, key: &str) -> Option<&'static str> {
 
 /// The text for `key` in the current language. A missing key yields the key itself.
 pub fn t(key: &'static str) -> &'static str {
-    find_in(current(), key).unwrap_or(key)
+    find_in(current(), key).unwrap_or_else(|| missing_key(key))
 }
 
 /// Like [`t`] with every `{name}` replaced by its value.
@@ -198,7 +211,7 @@ fn fill(text: &str, args: &[(&str, &str)]) -> String {
 }
 
 pub(crate) fn render(lang: Language, key: &'static str, args: &[(&str, &str)]) -> String {
-    fill(find_in(lang, key).unwrap_or(key), args)
+    fill(find_in(lang, key).unwrap_or_else(|| missing_key(key)), args)
 }
 
 pub(crate) fn render_plural(
@@ -213,7 +226,7 @@ pub(crate) fn render_plural(
             lookup(l, &format!("{key}.{}", l.plural(n)))
                 .or_else(|| lookup(l, &format!("{key}.other")))
         })
-        .unwrap_or(key);
+        .unwrap_or_else(|| missing_key(key));
     let n = format_number_in(lang, n);
     let mut all = vec![("n", n.as_str())];
     all.extend_from_slice(args);

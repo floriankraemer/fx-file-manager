@@ -13,15 +13,29 @@ use std::time::{Duration, Instant};
 /// Files at least this large show up as the "current file".
 const CURRENT_FILE_MIN: u64 = 1024 * 1024;
 
+/// One counter per cache line: up to 32 workers bump them, and counters sharing a line would
+/// bounce it between cores on every update.
+#[derive(Debug, Default)]
+#[repr(align(64))]
+pub(crate) struct Counter(AtomicU64);
+
+impl std::ops::Deref for Counter {
+    type Target = AtomicU64;
+
+    fn deref(&self) -> &AtomicU64 {
+        &self.0
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Progress {
-    pub(crate) bytes_done: AtomicU64,
-    pub(crate) files_done: AtomicU64,
-    pub(crate) bytes_total: AtomicU64,
-    pub(crate) files_total: AtomicU64,
-    pub(crate) errors: AtomicU64,
-    pub(crate) skipped: AtomicU64,
-    pub(crate) cloned: AtomicU64,
+    pub(crate) bytes_done: Counter,
+    pub(crate) files_done: Counter,
+    pub(crate) bytes_total: Counter,
+    pub(crate) files_total: Counter,
+    pub(crate) errors: Counter,
+    pub(crate) skipped: Counter,
+    pub(crate) cloned: Counter,
     pub(crate) walk_complete: AtomicBool,
     current: Mutex<Option<PathBuf>>,
 }
@@ -32,7 +46,17 @@ impl Progress {
     }
 
     pub(crate) fn sub(counter: &AtomicU64, n: u64) {
-        counter.fetch_sub(n, Ordering::Relaxed);
+        // A plain CAS loop: `fetch_update` is deprecated on newer toolchains and its replacement
+        // `try_update` is newer than the MSRV.
+        let mut current = counter.load(Ordering::Relaxed);
+        while let Err(seen) = counter.compare_exchange_weak(
+            current,
+            current.saturating_sub(n),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            current = seen;
+        }
     }
 
     /// Records `path` as being copied when it is large enough for anyone to notice.
@@ -238,6 +262,7 @@ impl Shared {
     }
 
     pub(crate) fn cancel(&self) {
+        log::info!("transfer cancel requested");
         self.set_state(CANCELLED);
     }
 
@@ -288,6 +313,7 @@ impl Shared {
         waits.disk_full = true;
         if self.state.load(Ordering::Acquire) == RUNNING {
             self.state.store(PAUSED, Ordering::Release);
+            log::warn!("the destination is full: the transfer is paused");
         }
         // Never call out with the lock held: a watcher may take a snapshot from inside `notify`.
         drop(waits);
@@ -298,13 +324,16 @@ impl Shared {
         }
         waits.disk_full = false;
         if self.is_cancelled() {
+            log::info!("the transfer was cancelled while waiting for free space");
             return Err(cancelled());
         }
-        Ok(if waits.skip_disk_full {
+        let answer = if waits.skip_disk_full {
             DiskFull::Skip
         } else {
             DiskFull::Retry
-        })
+        };
+        log::info!("the transfer resumes after a full destination: {answer:?}");
+        Ok(answer)
     }
 
     /// From now on files that hit a full disk fail instead of pausing; resumes the job.

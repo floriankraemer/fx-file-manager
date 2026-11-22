@@ -133,11 +133,19 @@ fn builtins() -> Vec<Arc<Theme>> {
         .collect()
 }
 
-/// Reads every `*.toml` in `dir`; broken files are reported on stderr and skipped.
+/// Reads every `*.toml` in `dir`; broken files are logged and skipped.
 /// Colors a file leaves out come from Nord Dark or Nord Light, matching its `base`.
 fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!("no user themes folder at {}", dir.display());
+            return Vec::new();
+        }
+        Err(err) => {
+            log::warn!("cannot read the themes folder {}: {err}", dir.display());
+            return Vec::new();
+        }
     };
     let fallback = |base| {
         let id = if base == Base::Light {
@@ -159,8 +167,8 @@ fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
             continue;
         };
         if builtin.iter().any(|t| t.id == id) {
-            eprintln!(
-                "fx: ignoring theme {}: id clashes with a built-in theme",
+            log::warn!(
+                "ignoring theme {}: id clashes with a built-in theme",
                 path.display()
             );
             continue;
@@ -170,7 +178,7 @@ fn load_user_themes(dir: &Path, builtin: &[Arc<Theme>]) -> Vec<Arc<Theme>> {
             .and_then(|text| parse_theme(id, &text, fallback))
         {
             Ok(theme) => out.push(Arc::new(theme)),
-            Err(err) => eprintln!("fx: ignoring theme {}: {err}", path.display()),
+            Err(err) => log::warn!("ignoring theme {}: {err}", path.display()),
         }
     }
     out.sort_by_key(|t| t.name.to_lowercase());
@@ -270,12 +278,21 @@ pub fn row_height(min: f32, font_size: f32) -> f32 {
     min.max(font_size + 6.0)
 }
 
+/// The installed fonts; scanning them is slow, so it happens once per process.
+fn system_fonts() -> &'static fontdb::Database {
+    static DB: OnceLock<fontdb::Database> = OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}
+
 /// Sorted, deduplicated installed font family names (scanned once).
 pub fn system_font_families() -> &'static [String] {
     static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
     FAMILIES.get_or_init(|| {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
+        let db = system_fonts();
         let mut names: Vec<String> = db
             .faces()
             .flat_map(|f| f.families.iter().map(|(n, _)| n.clone()))
@@ -288,8 +305,7 @@ pub fn system_font_families() -> &'static [String] {
 
 /// Loads the first installed family of `families`.
 fn load_font(families: &[&str]) -> Option<egui::FontData> {
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
+    let db = system_fonts();
     families.iter().find_map(|family| {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -320,10 +336,46 @@ const CJK_FONTS: &[&str] = &[
     "Heiti SC",
 ];
 
-/// Whether a system font with Simplified Chinese glyphs is installed. Looked up once.
+/// The system font with Simplified Chinese glyphs, if any. Looked up and copied once.
+fn cjk_font() -> Option<&'static Arc<egui::FontData>> {
+    static CJK: OnceLock<Option<Arc<egui::FontData>>> = OnceLock::new();
+    CJK.get_or_init(|| {
+        let font = load_font(CJK_FONTS);
+        match &font {
+            Some(_) => log::info!("found a system font with Chinese glyphs"),
+            None => log::debug!("no system font with Chinese glyphs found"),
+        }
+        font.map(Arc::new)
+    })
+    .as_ref()
+}
+
+/// Whether a system font with Simplified Chinese glyphs is installed.
 pub fn cjk_font_found() -> bool {
-    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FOUND.get_or_init(|| load_font(CJK_FONTS).is_some())
+    cjk_font().is_some()
+}
+
+fn install_user_font(fonts: &mut egui::FontDefinitions, family: Option<&str>) {
+    let Some(family) = family else { return };
+    let Some(data) = load_font(&[family]) else {
+        log::warn!("configured font family {family:?} is not installed");
+        return;
+    };
+    fonts.font_data.insert("user".to_owned(), data.into());
+    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        list.insert(0, "user".to_owned());
+    }
+}
+
+fn install_cjk_font(fonts: &mut egui::FontDefinitions) {
+    let Some(data) = cjk_font() else {
+        log::warn!("Chinese is selected but no system font with Chinese glyphs is installed");
+        return;
+    };
+    fonts.font_data.insert("cjk".to_owned(), data.clone());
+    for list in fonts.families.values_mut() {
+        list.push("cjk".to_owned());
+    }
 }
 
 /// Installs `family` as the first proportional font and, for Chinese, a CJK fallback last.
@@ -337,17 +389,9 @@ fn apply_font(ctx: &egui::Context, family: Option<&str>, cjk: bool) {
         return;
     }
     let mut fonts = egui::FontDefinitions::default();
-    if let Some(data) = family.and_then(|f| load_font(&[f])) {
-        fonts.font_data.insert("user".to_owned(), data.into());
-        if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            list.insert(0, "user".to_owned());
-        }
-    }
-    if cjk && let Some(data) = load_font(CJK_FONTS) {
-        fonts.font_data.insert("cjk".to_owned(), data.into());
-        for list in fonts.families.values_mut() {
-            list.push("cjk".to_owned());
-        }
+    install_user_font(&mut fonts, family);
+    if cjk {
+        install_cjk_font(&mut fonts);
     }
     ctx.set_fonts(fonts);
     *last = Some(wanted);

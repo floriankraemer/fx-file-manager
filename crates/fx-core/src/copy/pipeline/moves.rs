@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 impl Job<'_> {
     /// Renames a top-level item without ever replacing anything; folders onto folders merge.
     pub(super) fn rename_top(&self, top: &Top) -> io::Result<()> {
+        self.rename_merge(top.item, &top.src_path(), &top.dst_path(), true)?;
         Progress::add(&self.sh.progress.files_total, 1);
-        self.rename_merge(top.item, &top.src_path(), &top.dst_path(), true)
+        Ok(())
     }
 
     fn rename_merge(&self, item: usize, src: &Path, dst: &Path, top: bool) -> io::Result<()> {
@@ -85,7 +86,9 @@ impl Job<'_> {
             }
         }
         // Entries kept by skips or errors keep the folder; that is not a failure of its own.
-        let _ = fs::remove_dir(src);
+        if let Err(e) = fs::remove_dir(src) {
+            log::debug!("{} stays after the merge: {e}", src.display());
+        }
         Ok(())
     }
 
@@ -120,8 +123,15 @@ impl Job<'_> {
     fn flush_destinations(&self, clean: &[&Top]) -> bool {
         let mut devices = std::mem::take(&mut *lock(&self.dst_devices));
         for top in clean {
-            let Ok(m) = os::lstat(&top.dst_parent) else {
-                continue;
+            let m = match os::lstat(&top.dst_parent) {
+                Ok(m) => m,
+                Err(e) => {
+                    log::warn!(
+                        "cannot stat {} for the flush: {e}",
+                        top.dst_parent.display()
+                    );
+                    continue;
+                }
             };
             devices
                 .entry(m.dev)
@@ -129,6 +139,7 @@ impl Job<'_> {
         }
         for dir in devices.values() {
             if let Err(e) = os::barrier(dir) {
+                log::warn!("flush of {} failed, sources are kept: {e}", dir.display());
                 self.sh.record(dir, ErrorOp::Sync, &e, false);
                 return false;
             }
@@ -153,13 +164,19 @@ impl Job<'_> {
     fn try_remove_verified(&self, item: usize, src: &Path, dst: &Path) -> io::Result<bool> {
         let (s, d) = (os::lstat(src)?, os::lstat(dst)?);
         if s.kind != d.kind || same_inode(&s, &d) {
-            return Ok(false);
+            return Ok(kept(
+                src,
+                "the copy is of another kind or is the source itself",
+            ));
         }
         if s.kind == EntryKind::Dir {
             return self.remove_verified_dir(item, src, dst);
         }
         if !self.copy_matches(&s, &d, src, dst)? {
-            return Ok(false);
+            return Ok(kept(
+                src,
+                "it differs from its copy (size, time or link target)",
+            ));
         }
         remove_source(src, s.kind)?;
         Ok(true)
@@ -172,7 +189,12 @@ impl Job<'_> {
             all &= self.remove_verified(item, &src.join(&name), &dst.join(&name));
         }
         // Fails if an entry appeared meanwhile, which then stays with its folder.
-        Ok(all && fs::remove_dir(src).is_ok())
+        if !all {
+            return Ok(false);
+        }
+        Ok(fs::remove_dir(src)
+            .inspect_err(|e| log::warn!("source folder kept: {}: {e}", src.display()))
+            .is_ok())
     }
 
     /// The copy of a non-directory still matches its source.
@@ -188,6 +210,12 @@ impl Job<'_> {
             EntryKind::Dir | EntryKind::Other => true,
         })
     }
+}
+
+/// A move source that stays in place; always false, for the "all removed" tally.
+fn kept(src: &Path, reason: &str) -> bool {
+    log::warn!("source kept: {}: {reason}", src.display());
+    false
 }
 
 /// Renames `src` to the first free `name (n)` next to `dst`.

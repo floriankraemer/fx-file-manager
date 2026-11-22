@@ -6,6 +6,7 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+log = { version = "0.4", features = ["std"] }
 fx-core = { path = "../fx-core" }
 serde = { version = "1.0.229", features = ["derive"] }
 sys-locale = "0.3"

@@ -4,6 +4,7 @@ use crate::storage::StorageKind;
 use std::fmt;
 
 /// `st_dev` on Unix, the volume serial number on Windows. Equal ids mean "same volume", so a rename can work.
+/// A volume whose id could not be probed has none; see [`VolumeInfo::same_volume`].
 pub type VolumeId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -166,15 +167,20 @@ impl FsCaps {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeInfo {
-    pub id: VolumeId,
+    pub id: Option<VolumeId>,
     pub fs: FsKind,
     pub storage: StorageKind,
     pub caps: FsCaps,
 }
 
 impl VolumeInfo {
+    /// Unknown ids never match, not even each other: renaming across two unprobed volumes would fail or copy wrongly.
+    pub fn same_volume(&self, other: &Self) -> bool {
+        self.id.is_some() && self.id == other.id
+    }
+
     /// What a volume that could not be probed is assumed to be: nothing special, every method falls back.
-    pub fn unknown(id: VolumeId) -> Self {
+    pub fn unknown(id: Option<VolumeId>) -> Self {
         Self {
             id,
             fs: FsKind::Other,
@@ -222,5 +228,15 @@ mod tests {
             10_000_000
         );
         assert!(FsCaps::for_fs(FsKind::Ext4).posix_perms);
+    }
+
+    #[test]
+    fn unknown_volumes_are_never_the_same() {
+        let (a, b) = (VolumeInfo::unknown(Some(7)), VolumeInfo::unknown(Some(7)));
+        assert!(a.same_volume(&b));
+        assert!(!a.same_volume(&VolumeInfo::unknown(Some(8))));
+        let none = VolumeInfo::unknown(None);
+        assert!(!none.same_volume(&VolumeInfo::unknown(None)));
+        assert!(!none.same_volume(&a));
     }
 }

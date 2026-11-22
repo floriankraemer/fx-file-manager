@@ -5,9 +5,10 @@ use super::preflight::Top;
 use super::{ItemState, Job, lock, os};
 use crate::EntryKind;
 use crate::copy::Meta;
-use crate::copy::conflict::ConflictPolicy;
+use crate::copy::conflict::{ConflictPolicy, Resolution};
 use crate::copy::plan::Durability;
 use crate::copy::progress::ErrorOp;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -62,6 +63,8 @@ pub(super) struct Entry<'e> {
     pub(super) dst_name: &'e OsStr,
     /// Source and destination are the same entry: go straight to `name copy`.
     pub(super) keep_both: bool,
+    /// The conflict answer given while this entry is copied, so a retry does not ask again.
+    pub(super) answer: Cell<Option<Resolution>>,
 }
 
 impl<'e> Entry<'e> {
@@ -74,6 +77,7 @@ impl<'e> Entry<'e> {
             dst_dir: &fds.dst,
             dst_name: name,
             keep_both: false,
+            answer: Cell::default(),
         }
     }
 }

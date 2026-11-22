@@ -82,10 +82,10 @@ impl IconRenderer {
         let fallback = pack.default_file_icon(Appearance::Dark);
         let icon = match rasterise(pack, assets, icon_id, px) {
             Ok(icon) => icon,
-            // The reason is dropped on purpose: a pack whose art is
-            // incomplete is reported once by the Plugins page (P7), not once
-            // per painted row.
-            Err(_) if icon_id != fallback => rasterise(pack, assets, fallback, px)?,
+            Err(err) if icon_id != fallback => {
+                log::debug!("icon {icon_id} unavailable, using {fallback}: {err}");
+                rasterise(pack, assets, fallback, px)?
+            }
             Err(err) => return Err(err),
         };
 

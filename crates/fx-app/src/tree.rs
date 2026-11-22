@@ -41,7 +41,12 @@ pub(crate) fn list_children(dir: &Path, show_hidden: bool) -> Result<Vec<TreeNod
         sort: false,
         ..ListOptions::default()
     };
-    let listed = list_dir(dir, &opts).map_err(|e| e.to_string())?.listing;
+    let listed = list_dir(dir, &opts)
+        .map_err(|e| {
+            log::debug!("tree: cannot list {}: {e}", dir.display());
+            e.to_string()
+        })?
+        .listing;
     let mut nodes: Vec<TreeNode> = listed
         .entries
         .iter()

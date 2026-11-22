@@ -1,9 +1,11 @@
 //! What the OS copy backend receives from the pipeline and hands back for one file.
 
-use crate::copy::plan::{CopyPlan, MethodCache};
+use super::errors::{Fallback, fallback_of};
+use crate::copy::plan::{CopyPlan, Method, MethodCache};
 use crate::copy::progress::{Progress, Shared};
 use crate::volume::FsCaps;
 use std::io;
+use std::path::Path;
 
 /// What the OS backend needs to copy one file.
 pub(crate) struct FileCtx<'a> {
@@ -14,9 +16,46 @@ pub(crate) struct FileCtx<'a> {
     pub(crate) caps: FsCaps,
     /// fsync each file (macOS, Windows, portable); Linux flushes with one `syncfs` at the barrier instead.
     pub(crate) durable: bool,
+    /// The source and destination volumes, for the log.
+    pub(crate) pair: &'a str,
 }
 
 impl FileCtx<'_> {
+    /// A failed `method`: true when the chain should go on with the next one. An error that rules
+    /// the method out for the whole volume pair disables it, and logs that once per job.
+    pub(crate) fn fall_back(&self, method: Method, e: &io::Error, at: &Path) -> bool {
+        match fallback_of(e) {
+            Some(Fallback::Pair) => {
+                if self.cache.disable(method) {
+                    self.log_disabled(method, e, at);
+                }
+                true
+            }
+            Some(Fallback::File) => {
+                log::debug!("{} skipped for {}: {e}", method.name(), at.display());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// An errno from the kernel is the expected way a method says no; anything else is a surprise.
+    fn log_disabled(&self, method: Method, e: &io::Error, at: &Path) {
+        let level = if e.raw_os_error().is_some() {
+            log::Level::Info
+        } else {
+            log::Level::Warn
+        };
+        log::log!(
+            level,
+            "copy method {} disabled for {}: {e} (os error {:?}), first seen at {}",
+            method.name(),
+            self.pair,
+            e.raw_os_error(),
+            at.display()
+        );
+    }
+
     /// Counts bytes as they are copied and takes them back if the attempt fails.
     pub(crate) fn meter(&self) -> Meter<'_> {
         Meter {

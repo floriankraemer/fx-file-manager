@@ -1,9 +1,12 @@
 //! Windows backend: bulk directory enumeration via `GetFileInformationByHandleEx`.
+use super::probe_cache::{TtlCache, cached};
 use crate::listing::push_wtf8_from_utf16;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 
+use std::cell::RefCell;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, mem, ptr};
 use windows_sys::Win32::Foundation::{
@@ -114,7 +117,7 @@ fn push_entry(
     name: &mut Vec<u8>,
     metadata: bool,
     out: &mut Listing,
-) {
+) -> io::Result<()> {
     name.clear();
     push_wtf8_from_utf16(name, units);
     let attrs = info.FileAttributes;
@@ -133,12 +136,13 @@ fn push_entry(
         kind,
         attrs & FILE_ATTRIBUTE_HIDDEN != 0,
         info.FileId as u64,
-    );
+    )?;
     if metadata {
         let e = out.entries.last_mut().expect("just pushed");
         e.size = u64::try_from(info.EndOfFile).ok();
         e.modified = system_time(info.LastWriteTime);
     }
+    Ok(())
 }
 
 pub(crate) fn enumerate(
@@ -148,12 +152,58 @@ pub(crate) fn enumerate(
     out: &mut Listing,
 ) -> io::Result<()> {
     let handle = open(&wide_path(dir), FILE_LIST_DIRECTORY)?;
-    // u64 elements: 8-byte alignment, which entries keep via NextEntryOffset.
-    let mut buf = vec![0u64; strategy.buf_size.max(4096) / 8];
+    let first = out.entries.len();
+    let read = with_buffer(strategy.buf_size.max(4096) / 8, |buf| {
+        read_blocks(&handle, buf, metadata, out)
+    });
+    match read {
+        // Not a directory, or a filesystem without this info class: nothing has been
+        // pushed yet, so std can redo (and correctly classify) the whole directory.
+        Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            log::debug!(
+                "bulk listing unsupported for {}: {e}; using std",
+                dir.display()
+            );
+            super::std_fs::enumerate(dir, strategy, metadata, out)
+        }
+        read => read,
+    }
+}
+
+fn is_unsupported(err: &io::Error) -> bool {
+    let unsupported = [
+        ERROR_INVALID_PARAMETER,
+        ERROR_INVALID_LEVEL,
+        ERROR_NOT_SUPPORTED,
+    ];
+    err.raw_os_error()
+        .is_some_and(|e| unsupported.iter().any(|&u| u as i32 == e))
+}
+
+thread_local! {
+    static DIR_BUF: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Lends this thread's directory read buffer, grown to `words` u64s. `f` must not re-enter `enumerate`.
+fn with_buffer<R>(words: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
+    DIR_BUF.with_borrow_mut(|buf| {
+        if buf.len() < words {
+            buf.resize(words, 0);
+        }
+        f(&mut buf[..words])
+    })
+}
+
+/// Fetches record batches until the directory ends. The u64 elements give the 8-byte alignment
+/// that entries keep via `NextEntryOffset`.
+fn read_blocks(
+    handle: &Handle,
+    buf: &mut [u64],
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
     let buf_bytes = (buf.len() * 8) as u32;
-    let name_off = mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
     let mut class = FileIdBothDirectoryRestartInfo;
-    let mut first = true;
     let mut name = Vec::new();
     loop {
         // SAFETY: `buf` is valid for `buf_bytes` writable bytes.
@@ -162,45 +212,68 @@ pub(crate) fn enumerate(
         };
         class = FileIdBothDirectoryInfo;
         if ok == 0 {
-            // SAFETY: plain thread-local error read.
-            let e = unsafe { GetLastError() };
-            return match e {
-                ERROR_NO_MORE_FILES => Ok(()),
-                // Not a directory, or a filesystem without this info class: nothing has been
-                // pushed yet, so std can redo (and correctly classify) the whole directory.
-                ERROR_INVALID_PARAMETER | ERROR_INVALID_LEVEL | ERROR_NOT_SUPPORTED if first => {
-                    super::std_fs::enumerate(dir, strategy, metadata, out)
-                }
-                e => Err(io::Error::from_raw_os_error(e as i32)),
+            return match last_error() {
+                e if e.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) => Ok(()),
+                e => Err(e),
             };
         }
-        first = false;
-        let base = buf.as_ptr().cast::<u8>();
-        let mut off = 0usize;
-        loop {
-            // SAFETY: the kernel filled a chain of 8-aligned records inside `buf`;
-            // `off` follows NextEntryOffset and the name lies within the record.
-            let (info, units) = unsafe {
-                let info = &*base.add(off).cast::<FILE_ID_BOTH_DIR_INFO>();
-                let n = info.FileNameLength as usize / 2;
-                (
-                    info,
-                    std::slice::from_raw_parts(base.add(off + name_off).cast::<u16>(), n),
-                )
-            };
-            if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
-                push_entry(info, units, &mut name, metadata, out);
-            }
-            match info.NextEntryOffset {
-                0 => break,
-                next => off += next as usize,
-            }
+        push_batch(buf, &mut name, metadata, out)?;
+    }
+}
+
+/// Walks the chain of records the kernel wrote at the start of `buf`.
+fn push_batch(
+    buf: &[u64],
+    name: &mut Vec<u8>,
+    metadata: bool,
+    out: &mut Listing,
+) -> io::Result<()> {
+    let name_off = mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+    let base = buf.as_ptr().cast::<u8>();
+    let mut off = 0usize;
+    loop {
+        // SAFETY: the kernel filled a chain of 8-aligned records inside `buf`;
+        // `off` follows NextEntryOffset and the name lies within the record.
+        let (info, units) = unsafe {
+            let info = &*base.add(off).cast::<FILE_ID_BOTH_DIR_INFO>();
+            let n = info.FileNameLength as usize / 2;
+            (
+                info,
+                std::slice::from_raw_parts(base.add(off + name_off).cast::<u16>(), n),
+            )
+        };
+        if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
+            push_entry(info, units, name, metadata, out)?;
+        }
+        match info.NextEntryOffset {
+            0 => return Ok(()),
+            next => off += next as usize,
         }
     }
 }
 
+#[derive(Clone, Copy)]
+struct DeviceClass {
+    storage: StorageKind,
+    removable: bool,
+}
+
+const NETWORK: DeviceClass = DeviceClass {
+    storage: StorageKind::Network,
+    removable: false,
+};
+const UNKNOWN: DeviceClass = DeviceClass {
+    storage: StorageKind::Unknown,
+    removable: false,
+};
+
+static DEVICES: Mutex<TtlCache<Vec<u16>, DeviceClass>> = Mutex::new(TtlCache::new());
+
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    let w = wide_path(path);
+    device_class(&wide_path(path)).storage
+}
+
+fn is_unc_remote(w: &[u16]) -> bool {
     let unc = [b'\\' as u16, b'\\' as u16];
     let is_local_prefix = |s: &[u16]| {
         // \\?\C:\ or \\.\C:\ are local; \\?\UNC\ is not.
@@ -209,17 +282,36 @@ pub(crate) fn detect_storage(path: &Path) -> StorageKind {
             !(rest.len() >= 4 && String::from_utf16_lossy(&rest[..4]).eq_ignore_ascii_case("UNC\\"))
         }
     };
-    if w.starts_with(&unc) && !is_local_prefix(&w) {
-        return StorageKind::Network;
+    w.starts_with(&unc) && !is_local_prefix(w)
+}
+
+/// Keyed by the volume mount point, so the device is opened once per volume, not per navigation.
+fn device_class(w: &[u16]) -> DeviceClass {
+    if is_unc_remote(w) {
+        return NETWORK;
     }
-    let Some(root) = volume_root(&w) else {
-        return StorageKind::Unknown;
+    let Some(root) = volume_root(w) else {
+        log::debug!("storage unknown: no volume root");
+        return UNKNOWN;
     };
+    let key = root.iter().take_while(|&&c| c != 0).copied().collect();
+    cached(&DEVICES, key, || probe_device(&root))
+}
+
+/// One volume handle serves both the seek-penalty and the bus-type query.
+fn probe_device(root: &[u16]) -> DeviceClass {
     // SAFETY: GetVolumePathNameW NUL-terminates `root`.
-    if unsafe { GetDriveTypeW(root.as_ptr()) } == DRIVE_REMOTE {
-        return StorageKind::Network;
+    let drive = unsafe { GetDriveTypeW(root.as_ptr()) };
+    if drive == DRIVE_REMOTE {
+        return NETWORK;
     }
-    seek_penalty(&root).unwrap_or(StorageKind::Unknown)
+    let handle = open_volume(root);
+    let storage = handle.as_ref().and_then(seek_penalty);
+    let bus = handle.as_ref().and_then(bus_type);
+    DeviceClass {
+        storage: storage.unwrap_or(StorageKind::Unknown),
+        removable: is_removable(drive, bus),
+    }
 }
 
 /// The NUL-terminated mount point (such as `C:\`) of the volume holding the NUL-terminated `w`.
@@ -238,12 +330,15 @@ fn open_volume(root: &[u16]) -> Option<Handle> {
         GetVolumeNameForVolumeMountPointW(root.as_ptr(), volume.as_mut_ptr(), volume.len() as u32)
     } == 0
     {
+        log::debug!("no volume name for mount point: {}", last_error());
         return None;
     }
     // `\\?\Volume{guid}\` -> `\\?\Volume{guid}` (a trailing slash would open the root dir).
     let len = volume.iter().position(|&c| c == 0)?;
     volume[len - 1] = 0;
-    open(&volume[..len], 0).ok()
+    open(&volume[..len], 0)
+        .inspect_err(|e| log::debug!("cannot open volume device: {e}"))
+        .ok()
 }
 
 /// `IOCTL_STORAGE_QUERY_PROPERTY` for `id` into `out`; false if the device does not answer.
@@ -267,15 +362,16 @@ fn query_property<T>(handle: &Handle, id: STORAGE_PROPERTY_ID, out: &mut T) -> b
             ptr::null_mut(),
         )
     };
+    if ok == 0 {
+        log::debug!("storage property query failed: {}", last_error());
+    }
     ok != 0
 }
 
-/// `root` is a NUL-terminated volume mount point such as `C:\`.
-fn seek_penalty(root: &[u16]) -> Option<StorageKind> {
-    let handle = open_volume(root)?;
+fn seek_penalty(handle: &Handle) -> Option<StorageKind> {
     // SAFETY: all-zero is a valid descriptor.
     let mut desc: DEVICE_SEEK_PENALTY_DESCRIPTOR = unsafe { mem::zeroed() };
-    if !query_property(&handle, StorageDeviceSeekPenaltyProperty, &mut desc) {
+    if !query_property(handle, StorageDeviceSeekPenaltyProperty, &mut desc) {
         None
     } else if desc.IncursSeekPenalty {
         Some(StorageKind::Hdd)
@@ -289,11 +385,10 @@ fn is_removable(drive_type: u32, bus_type: Option<i32>) -> bool {
     drive_type == DRIVE_REMOVABLE || bus_type == Some(BusTypeUsb)
 }
 
-fn bus_type(root: &[u16]) -> Option<i32> {
-    let handle = open_volume(root)?;
+fn bus_type(handle: &Handle) -> Option<i32> {
     // SAFETY: all-zero is a valid descriptor; only the fixed header is requested.
     let mut desc: STORAGE_DEVICE_DESCRIPTOR = unsafe { mem::zeroed() };
-    query_property(&handle, StorageDeviceProperty, &mut desc).then_some(desc.BusType)
+    query_property(handle, StorageDeviceProperty, &mut desc).then_some(desc.BusType)
 }
 
 pub(crate) fn network_share(drive: &str) -> Option<String> {
@@ -311,13 +406,17 @@ pub(crate) fn network_share(drive: &str) -> Option<String> {
 
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     let w = wide_path(path);
-    let storage = detect_storage(path);
+    let class = device_class(&w);
     let unknown = VolumeInfo {
-        storage,
-        ..VolumeInfo::unknown(0)
+        storage: class.storage,
+        ..VolumeInfo::unknown(None)
     };
-    let Ok(handle) = open(&w, 0) else {
-        return unknown;
+    let handle = match open(&w, 0) {
+        Ok(handle) => handle,
+        Err(e) => {
+            log::warn!("cannot probe volume of {}: {e}", path.display());
+            return unknown;
+        }
     };
     let (mut serial, mut flags) = (0u32, 0u32);
     let mut name = [0u16; MAX_PATH + 1];
@@ -335,25 +434,24 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
         )
     };
     if ok == 0 {
+        log::warn!(
+            "cannot probe filesystem of {}: {}",
+            path.display(),
+            last_error()
+        );
         return unknown;
     }
     let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
     let fs = FsKind::from_name(&String::from_utf16_lossy(&name[..len]));
     let mut caps = FsCaps::for_fs(fs);
     caps.clone = flags & FILE_SUPPORTS_BLOCK_REFCOUNTING != 0;
-    let removable = storage != StorageKind::Network
-        && volume_root(&w).is_some_and(|root| {
-            // SAFETY: GetVolumePathNameW NUL-terminates `root`.
-            let drive = unsafe { GetDriveTypeW(root.as_ptr()) };
-            is_removable(drive, bus_type(&root))
-        });
     VolumeInfo {
-        id: u64::from(serial),
+        id: Some(u64::from(serial)),
         fs,
-        storage: if removable {
+        storage: if class.removable {
             StorageKind::Removable
         } else {
-            storage
+            class.storage
         },
         caps,
     }

@@ -16,7 +16,6 @@ mod streaming;
 mod two_phase;
 
 pub(crate) use backend::{Copied, FileCtx, Meter};
-pub(crate) use errors::is_unsupported;
 
 use crate::copy::conflict::ConflictPolicy;
 use crate::copy::plan::{CopyPlan, Durability, MethodCache, Op, Os, Schedule};
@@ -88,7 +87,14 @@ fn rename_same_volume(
             copies.push(top);
             continue;
         }
-        let job = Job::new(sh, req, items, top.plan, &top.dst_vol, false);
+        let job = Job::new(
+            sh,
+            req,
+            items,
+            top.plan,
+            (&top.src_vol, &top.dst_vol),
+            false,
+        );
         match job.rename_top(&top) {
             Ok(()) => {}
             // Bind mounts and btrfs subvolumes share st_dev semantics only partly: copy instead.
@@ -144,8 +150,25 @@ fn copy_groups(
     let last = groups.len().saturating_sub(1);
     let mut kept_sources = Vec::new();
     for (gi, group) in groups.iter().enumerate() {
-        let mut job = Job::new(sh, req, items, group.plan, &group.dst_vol, gi == last);
+        let mut job = Job::new(
+            sh,
+            req,
+            items,
+            group.plan,
+            (&group.src_vol, &group.dst_vol),
+            gi == last,
+        );
         job.roots = group.tops.iter().map(Top::src_path).collect();
+        log::info!(
+            "copy group: {} item(s), {} workers, {:?}, methods {:?}, verify {}, {:?}, {}",
+            group.tops.len(),
+            group.plan.workers,
+            group.plan.schedule,
+            group.plan.methods,
+            group.plan.verify,
+            group.plan.durability,
+            job.pair,
+        );
         job.run_schedule(group);
         if group.plan.durability == Durability::BeforeSourceDelete {
             kept_sources.extend(job.delete_moved_sources(&group.tops, &req.items));
@@ -173,7 +196,7 @@ fn summarize(
             .filter(|(state, ok)| **ok && state.clean())
             .count()
     };
-    Summary {
+    let summary = Summary {
         op: req.op,
         items: req.items.len(),
         items_done,
@@ -186,7 +209,27 @@ fn summarize(
         kept_sources,
         plans: groups.iter().map(|g| g.plan).collect(),
         elapsed: snapshot.elapsed,
-    }
+    };
+    log_summary(&summary);
+    summary
+}
+
+fn log_summary(s: &Summary) {
+    let warnings = s.errors.iter().filter(|e| e.warning).count();
+    log::info!(
+        "{:?} finished: {}/{} items, {} files, {} bytes, {} errors, {warnings} warnings, {} skipped, \
+         cancelled {}, {} sources kept, {:.1?}",
+        s.op,
+        s.items_done,
+        s.items,
+        s.files,
+        s.bytes,
+        s.error_count(),
+        s.skipped,
+        s.cancelled,
+        s.kept_sources.len(),
+        s.elapsed,
+    );
 }
 
 /// Per top-level item: a move deletes its source only if both stay zero.
@@ -222,6 +265,8 @@ struct Job<'a> {
     dst_devices: Mutex<HashMap<u64, PathBuf>>,
     /// Source path of each top-level item of the job, for links whose target lies inside the copied tree.
     roots: Vec<PathBuf>,
+    /// The volume pair in words, for the log.
+    pair: String,
 }
 
 impl<'a> Job<'a> {
@@ -230,7 +275,7 @@ impl<'a> Job<'a> {
         req: &Request,
         items: &'a [Arc<ItemState>],
         plan: CopyPlan,
-        dst: &VolumeInfo,
+        (src, dst): (&VolumeInfo, &VolumeInfo),
         last_group: bool,
     ) -> Self {
         Self {
@@ -247,6 +292,10 @@ impl<'a> Job<'a> {
             renamed: Mutex::default(),
             dst_devices: Mutex::default(),
             roots: Vec::new(),
+            pair: format!(
+                "{:?}/{:?} -> {:?}/{:?}",
+                src.fs, src.storage, dst.fs, dst.storage
+            ),
         }
     }
 
@@ -254,7 +303,11 @@ impl<'a> Job<'a> {
         match group.plan.schedule {
             Schedule::Streaming => self.streaming(&group.tops),
             Schedule::TwoPhase { order } => {
-                self.two_phase(&group.tops, order, group.src_vol.id == group.dst_vol.id);
+                self.two_phase(
+                    &group.tops,
+                    order,
+                    group.src_vol.same_volume(&group.dst_vol),
+                );
             }
         }
     }
@@ -268,6 +321,7 @@ impl<'a> Job<'a> {
             // Linux flushes the whole destination with one syncfs at the barrier instead.
             durable: self.plan.durability == Durability::BeforeSourceDelete
                 && Os::CURRENT != Os::Linux,
+            pair: &self.pair,
         }
     }
 

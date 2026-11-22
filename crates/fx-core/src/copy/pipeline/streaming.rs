@@ -8,6 +8,7 @@ use crate::EntryKind;
 use crate::copy::Meta;
 use crate::copy::progress::{ErrorOp, Progress};
 use crate::pool::copy_pool;
+use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::PathBuf;
@@ -103,6 +104,7 @@ impl Job<'_> {
                 dst_dir: &fds.dst,
                 dst_name: &top.dst_name,
                 keep_both: top.keep_both,
+                answer: Cell::default(),
             };
             self.copy_entry(e, &item, None, false);
         });

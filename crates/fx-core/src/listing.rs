@@ -1,6 +1,7 @@
 //! Domain: a directory listing whose names live in one byte arena.
 
 use std::ffi::OsStr;
+use std::io;
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,15 +34,28 @@ pub struct Listing {
 
 impl Listing {
     /// Appends an entry with no metadata; backends fill `size`/`modified` afterwards.
-    pub fn push(&mut self, name: &OsStr, kind: EntryKind, hidden: bool, inode: u64) {
-        self.push_encoded(name.as_encoded_bytes(), kind, hidden, inode);
+    pub fn push(
+        &mut self,
+        name: &OsStr,
+        kind: EntryKind,
+        hidden: bool,
+        inode: u64,
+    ) -> io::Result<()> {
+        self.push_encoded(name.as_encoded_bytes(), kind, hidden, inode)
     }
 
     /// Like [`push`](Self::push) from bytes already in `OsStr` encoded form
     /// (raw bytes on Unix, WTF-8 on Windows, see [`push_wtf8_from_utf16`]).
-    pub fn push_encoded(&mut self, name: &[u8], kind: EntryKind, hidden: bool, inode: u64) {
-        let name_off = u32::try_from(self.names.len()).expect("name arena exceeds 4 GiB");
-        let name_len = u32::try_from(name.len()).expect("name exceeds 4 GiB");
+    pub fn push_encoded(
+        &mut self,
+        name: &[u8],
+        kind: EntryKind,
+        hidden: bool,
+        inode: u64,
+    ) -> io::Result<()> {
+        let too_big = || io::Error::new(io::ErrorKind::OutOfMemory, "directory names exceed 4 GiB");
+        let name_off = u32::try_from(self.names.len()).map_err(|_| too_big())?;
+        let name_len = u32::try_from(name.len()).map_err(|_| too_big())?;
         self.names.extend_from_slice(name);
         self.entries.push(Entry {
             name_off,
@@ -52,6 +66,7 @@ impl Listing {
             hidden,
             inode,
         });
+        Ok(())
     }
 
     pub fn name_bytes(&self, e: &Entry) -> &[u8] {
@@ -118,8 +133,8 @@ mod tests {
     #[test]
     fn arena_round_trips_names() {
         let mut l = Listing::default();
-        l.push(OsStr::new("a"), EntryKind::File, false, 1);
-        l.push(OsStr::new("bc"), EntryKind::Dir, true, 2);
+        l.push(OsStr::new("a"), EntryKind::File, false, 1).unwrap();
+        l.push(OsStr::new("bc"), EntryKind::Dir, true, 2).unwrap();
         assert_eq!(l.name(&l.entries[0]), "a");
         assert_eq!(l.name(&l.entries[1]), "bc");
     }

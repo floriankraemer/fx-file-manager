@@ -106,6 +106,9 @@ fn preload_folders(
             return;
         }
         let result = list_view(path.clone());
+        if let Err(err) = &result {
+            log::debug!("preload of {} failed: {err}", path.display());
+        }
         if current.load(Ordering::Acquire) != generation {
             return;
         }

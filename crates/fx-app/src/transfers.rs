@@ -38,8 +38,8 @@ pub struct TransferInfo {
     /// The oldest conflict waiting for an answer.
     pub conflict: Option<Conflict>,
     /// Errors and warnings so far.
-    pub errors: Vec<CopyError>,
-    pub summary: Option<Summary>,
+    pub errors: Arc<[CopyError]>,
+    pub summary: Option<Arc<Summary>>,
 }
 
 /// Exponential moving average of bytes/s and files/s.
@@ -101,7 +101,9 @@ struct Entry {
     touched: Vec<PathBuf>,
     queued: Option<Request>,
     running: Option<Transfer>,
-    summary: Option<Summary>,
+    summary: Option<Arc<Summary>>,
+    /// The final report, shared so the panel does not copy it every frame.
+    errors: Arc<[CopyError]>,
     rate: Rate,
 }
 
@@ -130,6 +132,7 @@ impl Transfers {
             queued: Some(req),
             running: None,
             summary: None,
+            errors: Arc::from([]),
             rate: Rate::default(),
         });
     }
@@ -147,13 +150,15 @@ impl Transfers {
                 continue;
             }
             let summary = e.running.take().expect("checked above").join();
+            log_finished(e.id, &e.label, &summary);
             outcomes.push(Outcome {
                 notice: notice(&summary, &e.label),
                 touched: e.touched.clone(),
                 created: None,
                 removed: Vec::new(),
             });
-            e.summary = Some(summary);
+            e.errors = summary.errors.as_slice().into();
+            e.summary = Some(Arc::new(summary));
             changed = true;
         }
         // Clean results are reported by the notice alone; the rest stays in the panel until dismissed.
@@ -178,10 +183,15 @@ impl Transfers {
             let e = &mut self.entries[i];
             let req = e.queued.take().expect("checked above");
             let wake = Arc::clone(wake);
+            log::info!("transfer {} started: {}", e.id, e.label);
             e.running = Some(Transfer::start(req, move || wake()));
             changed = true;
         }
         (outcomes, changed)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -211,11 +221,7 @@ impl Transfers {
                     rate: e.rate.bytes,
                     snapshot,
                     conflict: handle.and_then(|h| h.conflicts().into_iter().next()),
-                    errors: match (handle, &e.summary) {
-                        (Some(h), _) => h.report(),
-                        (None, Some(s)) => s.errors.clone(),
-                        (None, None) => Vec::new(),
-                    },
+                    errors: handle.map_or_else(|| e.errors.clone(), |h| h.report().into()),
                     summary: e.summary.clone(),
                 }
             })
@@ -272,6 +278,37 @@ impl Transfers {
     pub(crate) fn dismiss(&mut self, id: u64) {
         self.entries.retain(|e| e.id != id || e.summary.is_none());
     }
+}
+
+const LOGGED_ERRORS: usize = 3;
+
+/// One summary line plus at most `LOGGED_ERRORS` errors, so a copy with 100k failures does not flood the log.
+fn log_finished(id: u64, label: &str, s: &Summary) {
+    let errors = s.error_count();
+    log::info!(
+        "transfer {id} finished: {label}: {} of {} items, {} files, {} bytes, {errors} errors, cancelled: {}, in {:?}",
+        s.items_done,
+        s.items,
+        s.files,
+        s.bytes,
+        s.cancelled,
+        s.elapsed
+    );
+    if errors == 0 {
+        return;
+    }
+    let first: Vec<String> = s
+        .errors
+        .iter()
+        .filter(|e| !e.warning)
+        .take(LOGGED_ERRORS)
+        .map(ToString::to_string)
+        .collect();
+    log::warn!(
+        "transfer {id}: {errors} errors, first {}: {}",
+        first.len(),
+        first.join("; ")
+    );
 }
 
 /// The one-line result: "Copied 3 items", "Moved 2 of 3 items. 4 errors. First: ...", "Cancelled after ...".
@@ -344,7 +381,7 @@ mod tests {
 
     fn vol(id: u64, storage: StorageKind) -> VolumeInfo {
         VolumeInfo {
-            id,
+            id: Some(id),
             fs: FsKind::Ext4,
             storage,
             caps: FsCaps::for_fs(FsKind::Ext4),

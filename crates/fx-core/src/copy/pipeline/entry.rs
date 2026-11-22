@@ -9,6 +9,7 @@ use crate::EntryKind;
 use crate::copy::Meta;
 use crate::copy::progress::{DiskFull, ErrorOp, Progress, is_cancelled};
 use crate::copy::verify;
+use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
@@ -90,6 +91,13 @@ impl Job<'_> {
         if is_transient(&f.err) && *attempt < RETRY_BACKOFF.len() {
             let pause = RETRY_BACKOFF[*attempt];
             *attempt += 1;
+            log::debug!(
+                "retry {} of {} after {pause:?}: {}: {}",
+                *attempt,
+                RETRY_BACKOFF.len(),
+                path.display(),
+                f.err
+            );
             return self.sh.sleep(pause).is_ok();
         }
         if is_disk_full(&f.err) {
@@ -141,9 +149,17 @@ impl Job<'_> {
 
     fn copy_special(&self, e: &Entry<'_>, path: &Path) -> Result<(Done, u64), Failure> {
         let meta = e.src_dir.stat_at(e.name).at(ErrorOp::Copy)?;
-        let placed = self.place(e, path, &meta, ErrorOp::Unsupported, |n| {
-            os::copy_special(&meta, e.dst_dir, n)
-        })?;
+        let placed = self
+            .place(e, path, &meta, ErrorOp::Copy, |n| {
+                os::copy_special(&meta, e.dst_dir, n)
+            })
+            .map_err(|f| match f.err.kind() {
+                io::ErrorKind::Unsupported => Failure {
+                    op: ErrorOp::Unsupported,
+                    ..f
+                },
+                _ => f,
+            })?;
         Ok((placed.outcome(), 0))
     }
 
@@ -174,14 +190,29 @@ impl Job<'_> {
         };
 
         let ctx = self.ctx();
-        let placed = self.place(e, path, &meta, ErrorOp::Copy, |n| {
-            os::copy_file(&ctx, &src, e.src_dir, e.name, e.dst_dir, n, data.as_deref())
-        })?;
+        let verify_failed = Cell::new(false);
+        let placed = self
+            .place(e, path, &meta, ErrorOp::Copy, |n| {
+                #[cfg(test)]
+                tests::inject_transient(e.name, n)?;
+                let copied =
+                    os::copy_file(&ctx, &src, e.src_dir, e.name, e.dst_dir, n, data.as_deref())?;
+                self.verify_new(e, path, n, meta.size)
+                    .inspect_err(|_| verify_failed.set(true))?;
+                Ok(copied)
+            })
+            .map_err(|f| match verify_failed.get() {
+                true => Failure {
+                    op: ErrorOp::Verify,
+                    ..f
+                },
+                false => f,
+            })?;
         let Placed::Done(copied, final_name) = placed else {
             return Ok((Done::Skipped, 0));
         };
         let cloned = copied.cloned;
-        self.finish_file(e, path, &final_name, copied.warnings, leader)?;
+        self.finish_file(e, &final_name, copied.warnings, leader);
         Ok((Done::Copied { cloned }, meta.size))
     }
 
@@ -232,31 +263,121 @@ impl Job<'_> {
                 Some(Done::Copied { cloned: false })
             }
             Ok(Placed::Skipped) => Some(Done::Skipped),
-            Err(_) => None,
+            Err(f) => {
+                log::debug!(
+                    "cannot link {} to {}: {}",
+                    path.display(),
+                    first.display(),
+                    f.err
+                );
+                None
+            }
         }
     }
 
-    /// Verifies the copy, publishes it to its hardlink group and records metadata warnings.
+    /// Verifies a fresh copy before it is placed: a copy that cannot be trusted is removed (a cancel
+    /// included), so an overwrite never loses the old file to it.
+    fn verify_new(&self, e: &Entry<'_>, src: &Path, name: &OsStr, size: u64) -> io::Result<()> {
+        if !self.plan.verify {
+            return Ok(());
+        }
+        let err = match verify::check(self.sh, src, &e.dst_dir.path().join(name)) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+        Progress::sub(&self.sh.progress.bytes_done, size);
+        if err.kind() == io::ErrorKind::InvalidData {
+            log::warn!("verify mismatch: {}: {err}", src.display());
+        }
+        if let Err(rm) = e.dst_dir.remove_at(name) {
+            log::warn!(
+                "cannot remove the unverified copy {}: {rm}",
+                e.dst_dir.path().join(name).display()
+            );
+        }
+        Err(err)
+    }
+
+    /// Publishes the copy to its hardlink group and records metadata warnings.
     fn finish_file(
         &self,
         e: &Entry<'_>,
-        path: &Path,
         final_name: &OsStr,
         warnings: Vec<io::Error>,
         leader: Option<LinkLeader<'_>>,
-    ) -> Result<(), Failure> {
+    ) {
         let dst_path = e.dst_dir.path().join(final_name);
-        if self.plan.verify
-            && let Err(err) = verify::check(self.sh, path, &dst_path)
-        {
-            // A copy that cannot be trusted is not left behind (a cancel included).
-            let _ = e.dst_dir.remove_at(final_name);
-            return Err(err).at(ErrorOp::Verify);
-        }
         if let Some(leader) = leader {
             leader.finish(dst_path.clone());
         }
         self.warn(&dst_path, ErrorOp::Metadata, warnings);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::copy::conflict::{ConflictPolicy, Resolution};
+    use crate::copy::plan::Op;
+    use crate::copy::{Item, Overrides, Request, TransferHandle};
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+
+    const FAULTY: &str = "fx-fails-once-transiently.bin";
+    static FAIL_NEXT: AtomicBool = AtomicBool::new(false);
+
+    /// Fails the first write to a temp name (an overwrite, after the conflict was answered) of the test's own file.
+    pub(super) fn inject_transient(name: &OsStr, target: &OsStr) -> io::Result<()> {
+        if name == FAULTY && target != name && FAIL_NEXT.swap(false, Ordering::SeqCst) {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
         Ok(())
+    }
+
+    #[test]
+    fn a_retry_reuses_the_answer_to_a_conflict() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(src.join(FAULTY), b"new").unwrap();
+        fs::write(dst.join(FAULTY), b"old").unwrap();
+        FAIL_NEXT.store(true, Ordering::SeqCst);
+        let handle = TransferHandle::new(|| {});
+        let req = Request {
+            items: vec![Item {
+                src: src.join(FAULTY),
+                dst: dst.join(FAULTY),
+            }],
+            op: Op::Copy,
+            policy: ConflictPolicy::Ask,
+            overrides: Overrides::default(),
+        };
+        let worker = {
+            let handle = handle.clone();
+            thread::spawn(move || handle.run(&req))
+        };
+        let conflict = loop {
+            if let Some(c) = handle.conflicts().into_iter().next() {
+                break c;
+            }
+            thread::yield_now();
+        };
+        handle.answer_conflict(conflict.id, Resolution::Overwrite, false);
+        let mut repeated = 0;
+        while !worker.is_finished() {
+            for again in handle.conflicts() {
+                repeated += 1;
+                handle.answer_conflict(again.id, Resolution::Overwrite, false);
+            }
+            thread::yield_now();
+        }
+        let summary = worker.join().unwrap();
+        assert_eq!(summary.files, 1);
+        assert!(!FAIL_NEXT.load(Ordering::SeqCst), "the fault was injected");
+        assert_eq!(repeated, 0, "the conflict was asked again");
+        assert_eq!(fs::read(dst.join(FAULTY)).unwrap(), b"new");
     }
 }

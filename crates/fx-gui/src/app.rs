@@ -10,7 +10,7 @@ use eframe::egui::{
 };
 use fx_app::{
     Explorer, Language, Notice, NoticeKind, Place, SearchView, Settings, State, WindowId, i18n,
-    places,
+    relabel_places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -26,6 +26,8 @@ struct WindowUi {
     scroll_to_selection: bool,
     transfers: views::transfers::State,
     was_focused: bool,
+    /// The last title sent to the window manager.
+    title: String,
     path_edit: Option<views::toolbar::PathEdit>,
     search: views::search::State,
     /// A reveal asked for its item to be scrolled into view once the folder has loaded.
@@ -41,6 +43,7 @@ impl WindowUi {
             scroll_to_selection: false,
             transfers: views::transfers::State::default(),
             was_focused,
+            title: String::new(),
             path_edit: None,
             search: views::search::State::default(),
             reveal_scroll: false,
@@ -106,7 +109,7 @@ impl App {
             .collect();
         let mut app = Self {
             explorer,
-            places: places(),
+            places: Vec::new(),
             windows,
             focused: first,
             quitting: false,
@@ -117,6 +120,7 @@ impl App {
             keymap: command::Keymap::default(),
             applied_keymap: BTreeMap::new(),
         };
+        app.explorer.refresh_places();
         app.apply_keymap();
         app
     }
@@ -133,6 +137,14 @@ impl App {
         if slot.is_none() {
             *slot = dialog;
         }
+    }
+
+    fn open_properties(&mut self, index: usize) {
+        if self.windows[index].dialog.is_some() {
+            return;
+        }
+        let dialog = Dialog::properties(&mut self.explorer);
+        self.open_dialog(index, dialog);
     }
 
     /// Asks first when the settings or `permanent` require it, otherwise deletes right away.
@@ -154,7 +166,7 @@ impl App {
             Action::Rename => self.open_dialog(index, Dialog::rename(&self.explorer)),
             Action::Delete { permanent } => self.delete_selection(index, permanent),
             Action::DeletePaths(paths) => self.delete(index, paths, false),
-            Action::Properties => self.open_dialog(index, Dialog::properties(&self.explorer)),
+            Action::Properties => self.open_properties(index),
             Action::OpenSettings => self.open_settings(ctx, index),
             Action::NewWindow => self.new_window(ctx),
             Action::RenameBookmark(i) => {
@@ -373,6 +385,9 @@ fn run_on_explorer(ex: &mut Explorer, command: Command, actions: &mut Vec<Action
 
 fn cycle_tab(ex: &mut Explorer, step: isize) {
     let n = ex.tabs().len() as isize;
+    if n == 0 {
+        return;
+    }
     ex.set_active((ex.active_index() as isize + step).rem_euclid(n) as usize);
 }
 
@@ -495,18 +510,25 @@ impl App {
         self.explorer.set_window(self.windows[index].id);
         self.track_focus(&ctx, index);
         dnd::forget_areas(&ctx);
+        dnd::track_always(&ctx, self.windows.len() > 1);
 
         self.handle_input(&ctx, index);
-        ctx.send_viewport_cmd(ViewportCommand::Title(format!(
-            "fx — {}",
-            self.explorer.active().path().display()
-        )));
+        self.update_title(&ctx, index);
 
         let mut actions = Vec::new();
         self.panels(ui, index, &mut actions);
         self.overlays(&ctx, index);
         self.dispatch_all(&ctx, index, actions);
         self.drag_and_drop(&ctx, index);
+    }
+
+    fn update_title(&mut self, ctx: &Context, index: usize) {
+        let title = format!("fx — {}", self.explorer.active().path().display());
+        if self.windows[index].title == title {
+            return;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+        self.windows[index].title = title;
     }
 
     fn dispatch_all(&mut self, ctx: &Context, index: usize, actions: Vec<Action>) {
@@ -720,7 +742,7 @@ impl App {
         egui::Panel::bottom("status").show(ui, |ui| {
             views::status::show(ui, &self.explorer);
         });
-        if !self.explorer.transfers().is_empty() {
+        if self.explorer.has_transfers() {
             egui::Panel::bottom("transfers").show(ui, |ui| {
                 let state = &mut self.windows[index].transfers;
                 views::transfers::show(ui, &mut self.explorer, state);
@@ -818,7 +840,11 @@ impl App {
             return;
         }
         if current.4 != self.applied_look.4 {
+            log::info!("language changed to {:?}", current.4);
             self.apply_language(current.4);
+        }
+        if current.0 != self.applied_look.0 {
+            log::info!("theme changed to {}", current.0);
         }
         theme::apply(ctx, self.explorer.settings());
         self.applied_look = current;
@@ -826,8 +852,7 @@ impl App {
 
     fn apply_language(&mut self, language: Language) {
         i18n::set_language(language);
-        // Place labels are translated when listed.
-        self.places = places();
+        relabel_places(&mut self.places);
     }
 }
 
@@ -838,6 +863,10 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.explorer.poll();
+        if let Some(mut places) = self.explorer.take_places() {
+            relabel_places(&mut places);
+            self.places = places;
+        }
         // Keep polling while idle so background revalidation results show up.
         ctx.request_repaint_after(fx_app::REVALIDATE_INTERVAL);
         if self.explorer.transfers_active() {

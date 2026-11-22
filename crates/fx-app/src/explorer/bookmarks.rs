@@ -1,6 +1,7 @@
 //! Bookmarked folders and their background availability checks.
 
 use super::{Explorer, absolute};
+use crate::probe::timed;
 use crate::state::Bookmark;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -104,25 +105,31 @@ impl Explorer {
         self.spawn_bookmark_checks(paths);
     }
 
-    fn spawn_bookmark_checks(&self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
-            return;
-        }
-        let tx = self.bookmark_tx.clone();
-        let wake = Arc::clone(&self.wake);
-        thread::spawn(move || {
-            for path in paths {
-                let available = path.is_dir();
+    /// One short-lived thread per path, so a dead mount only stalls its own check.
+    fn spawn_bookmark_checks(&mut self, paths: Vec<PathBuf>) {
+        for path in paths {
+            if !self.bookmark_checking.insert(path.clone()) {
+                log::debug!(
+                    "bookmark check of {} still running, skipped",
+                    path.display()
+                );
+                continue;
+            }
+            let tx = self.bookmark_tx.clone();
+            let wake = Arc::clone(&self.wake);
+            thread::spawn(move || {
+                let available = timed("bookmark check", path.display(), || path.is_dir());
                 let _ = tx.send(BookmarkChecked { path, available });
                 wake();
-            }
-        });
+            });
+        }
     }
 
     /// Records finished bookmark checks. Returns true if any availability changed.
     pub(super) fn apply_bookmark_checks(&mut self) -> bool {
         let mut changed = false;
         while let Ok(checked) = self.bookmark_rx.try_recv() {
+            self.bookmark_checking.remove(&checked.path);
             // Results for bookmarks removed meanwhile are dropped.
             if self.is_bookmarked(&checked.path) {
                 changed |= self.availability.insert(checked.path, checked.available)

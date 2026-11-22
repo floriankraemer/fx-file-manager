@@ -30,9 +30,25 @@ pub struct State {
     /// Tab and folder the bar belongs to; showing anything else resets it to that tab's search.
     key: Option<(u64, PathBuf)>,
     scroll_to_selection: bool,
+    /// The failure already logged, so the banner does not log it again every frame.
+    logged_failure: Option<String>,
 }
 
 impl State {
+    fn note_failure(&mut self, status: &SearchStatus) {
+        let failure = match status {
+            SearchStatus::Failed(error) => Some(error),
+            _ => None,
+        };
+        if self.logged_failure.as_ref() == failure {
+            return;
+        }
+        if let Some(error) = failure {
+            log::warn!("search failed: {error}");
+        }
+        self.logged_failure = failure.cloned();
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -217,6 +233,7 @@ pub fn results(
             explorer.active().state(),
             LoadState::Loaded(v) if v.storage == StorageKind::Network
         );
+        state.note_failure(view.status());
         banners(ui, view, network);
         if view.matches() == 0 && !view.is_running() {
             empty(ui, view);
