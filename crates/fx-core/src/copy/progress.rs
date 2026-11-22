@@ -13,15 +13,29 @@ use std::time::{Duration, Instant};
 /// Files at least this large show up as the "current file".
 const CURRENT_FILE_MIN: u64 = 1024 * 1024;
 
+/// One counter per cache line: up to 32 workers bump them, and counters sharing a line would
+/// bounce it between cores on every update.
+#[derive(Debug, Default)]
+#[repr(align(64))]
+pub(crate) struct Counter(AtomicU64);
+
+impl std::ops::Deref for Counter {
+    type Target = AtomicU64;
+
+    fn deref(&self) -> &AtomicU64 {
+        &self.0
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Progress {
-    pub(crate) bytes_done: AtomicU64,
-    pub(crate) files_done: AtomicU64,
-    pub(crate) bytes_total: AtomicU64,
-    pub(crate) files_total: AtomicU64,
-    pub(crate) errors: AtomicU64,
-    pub(crate) skipped: AtomicU64,
-    pub(crate) cloned: AtomicU64,
+    pub(crate) bytes_done: Counter,
+    pub(crate) files_done: Counter,
+    pub(crate) bytes_total: Counter,
+    pub(crate) files_total: Counter,
+    pub(crate) errors: Counter,
+    pub(crate) skipped: Counter,
+    pub(crate) cloned: Counter,
     pub(crate) walk_complete: AtomicBool,
     current: Mutex<Option<PathBuf>>,
 }
