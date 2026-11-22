@@ -148,80 +148,52 @@ impl App {
     }
 
     fn dispatch(&mut self, ctx: &Context, index: usize, action: Action) {
-        let ex = &mut self.explorer;
         match action {
             Action::OpenCommandPalette => self.open_palette(index),
-            Action::NewFolder => {
-                let dialog = Dialog::new_folder(ex);
-                self.open_dialog(index, Some(dialog));
-            }
-            Action::Rename => {
-                let dialog = Dialog::rename(ex);
-                self.open_dialog(index, dialog);
-            }
-            Action::Delete { permanent } => {
-                let paths = ex
-                    .active()
-                    .selection()
-                    .iter()
-                    .filter_map(|&row| ex.entry_path(row))
-                    .collect();
-                self.delete(index, paths, permanent);
-            }
+            Action::NewFolder => self.open_dialog(index, Some(Dialog::new_folder(&self.explorer))),
+            Action::Rename => self.open_dialog(index, Dialog::rename(&self.explorer)),
+            Action::Delete { permanent } => self.delete_selection(index, permanent),
             Action::DeletePaths(paths) => self.delete(index, paths, false),
-            Action::Properties => {
-                let dialog = Dialog::properties(ex);
-                self.open_dialog(index, dialog);
-            }
+            Action::Properties => self.open_dialog(index, Dialog::properties(&self.explorer)),
             Action::OpenSettings => self.open_settings(ctx, index),
             Action::NewWindow => self.new_window(ctx),
             Action::RenameBookmark(i) => {
-                let dialog = Dialog::rename_bookmark(ex, i);
-                self.open_dialog(index, dialog);
+                self.open_dialog(index, Dialog::rename_bookmark(&self.explorer, i));
             }
-            Action::OpenAbout => {
-                if self.about {
-                    views::about::focus(ctx);
-                }
-                self.about = true;
-            }
-            Action::Exit => {
-                self.quitting = true;
-                ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
-            }
-            Action::SelectAll => ex.active_mut().select_all(),
-            Action::Refresh => ex.refresh(),
-            Action::Open(row) => ex.activate(row),
-            Action::OpenInNewTab(row) => ex.open_in_new_tab(row),
-            Action::ToggleBookmark(row) => {
-                if let Some(path) = ex.entry_path(row) {
-                    ex.toggle_bookmark(path);
-                }
-            }
-            Action::OpenWith(row) => ex.open_with(row),
-            Action::CopyPath => copy_paths(ctx, ex),
-            Action::Copy => ex.copy_to_clipboard(&ex.active().selection(), false),
-            Action::Cut => ex.copy_to_clipboard(&ex.active().selection(), true),
-            Action::Paste => ex.paste(None),
-            Action::PasteInto(row) => {
-                let folder = ex.entry_path(row);
-                ex.paste(folder);
-            }
+            Action::OpenAbout => self.open_about(ctx),
+            Action::Exit => self.exit(ctx),
             Action::OpenSearch => self.windows[index].search.open(),
             Action::StartSearch(text) => self.start_search(index, text),
-            Action::StopSearch => ex.cancel_search(),
+            Action::StopSearch => self.explorer.cancel_search(),
             Action::CloseSearch => self.close_search(index),
             Action::EscapeSearch => self.escape_search(index),
-            Action::OpenSearchHit(row) => ex.open_search_hit(row),
-            Action::RevealSearchHit(row) => {
-                ex.reveal_search_hit(row);
-                self.windows[index].reveal_scroll = true;
-            }
-            Action::CopySearchHitPath(row) => copy_search_hit_path(ctx, ex, row),
-            Action::SetSort(sort) => ex.active_mut().set_sort(sort),
+            Action::RevealSearchHit(row) => self.reveal_search_hit(index, row),
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
+            action => dispatch_explorer(ctx, &mut self.explorer, action),
         }
+    }
+
+    fn delete_selection(&mut self, index: usize, permanent: bool) {
+        let paths = selected_paths(&self.explorer);
+        self.delete(index, paths, permanent);
+    }
+
+    fn open_about(&mut self, ctx: &Context) {
+        if self.about {
+            views::about::focus(ctx);
+        }
+        self.about = true;
+    }
+
+    fn exit(&mut self, ctx: &Context) {
+        self.quitting = true;
+        ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+    }
+
+    fn reveal_search_hit(&mut self, index: usize, row: usize) {
+        self.explorer.reveal_search_hit(row);
+        self.windows[index].reveal_scroll = true;
     }
 
     /// Starts the search for `text`; the first one from a filesystem root asks for confirmation.
@@ -319,44 +291,11 @@ impl App {
         if ex.search().is_some() && command::needs_folder_listing(command) {
             return false;
         }
-        match command {
-            Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
-            Command::CloseTab => ex.close_tab(ex.active_index()),
-            Command::NextTab => ex.set_active((ex.active_index() + 1) % ex.tabs().len()),
-            Command::PrevTab => {
-                let n = ex.tabs().len();
-                ex.set_active((ex.active_index() + n - 1) % n);
-            }
-            Command::Refresh => ex.refresh(),
-            Command::Back => ex.back(),
-            Command::Forward => ex.forward(),
-            Command::Up => ex.up(),
-            Command::ToggleBookmark => ex.toggle_bookmark_active(),
-            Command::MoveDown => return move_selection(ex, 1),
-            Command::MoveUp => return move_selection(ex, -1),
-            Command::OpenSelected => open_selected(ex, actions),
-            Command::Search => actions.push(Action::OpenSearch),
-            Command::CloseSearch => actions.push(Action::EscapeSearch),
-            Command::RevealSearchHit => {
-                let row = ex.search().and_then(SearchView::selected);
-                actions.extend(row.map(Action::RevealSearchHit));
-            }
-            Command::Rename => actions.push(Action::Rename),
-            Command::Delete => actions.push(Action::Delete { permanent: false }),
-            Command::DeletePermanent => actions.push(Action::Delete { permanent: true }),
-            Command::SelectAll => actions.push(Action::SelectAll),
-            Command::Copy => actions.push(Action::Copy),
-            Command::Cut => actions.push(Action::Cut),
-            Command::Paste => actions.push(Action::Paste),
-            Command::NewFolder => actions.push(Action::NewFolder),
-            Command::Properties => actions.push(Action::Properties),
-            Command::NewWindow => actions.push(Action::NewWindow),
-            Command::OpenSettings => actions.push(Action::OpenSettings),
-            Command::Palette => actions.push(Action::OpenCommandPalette),
-            Command::About => actions.push(Action::OpenAbout),
-            Command::Exit => actions.push(Action::Exit),
+        if let Some(action) = command_action(command) {
+            actions.push(action);
+            return false;
         }
-        false
+        run_on_explorer(ex, command, actions)
     }
 
     /// Consumes the bound shortcuts and runs their commands. Returns true if the selection moved.
@@ -366,10 +305,7 @@ impl App {
             self.keymap
                 .bindings
                 .iter()
-                .filter(|b| {
-                    let m = b.shortcut.modifiers;
-                    !typing || (b.command.def().while_typing && (m.ctrl || m.alt))
-                })
+                .filter(|b| may_fire(b, typing))
                 .filter(|b| i.consume_key(b.shortcut.modifiers, b.shortcut.key))
                 .map(|b| b.command)
                 .collect()
@@ -380,6 +316,102 @@ impl App {
         }
         moved
     }
+}
+
+/// While a text field has the keyboard only bindings that opt in and carry Ctrl or Alt may fire.
+fn may_fire(binding: &command::Binding, typing: bool) -> bool {
+    let m = binding.shortcut.modifiers;
+    !typing || (binding.command.def().while_typing && (m.ctrl || m.alt))
+}
+
+/// The action a command raises, for commands that act through the view-model of the window.
+fn command_action(command: Command) -> Option<Action> {
+    Some(match command {
+        Command::Search => Action::OpenSearch,
+        Command::CloseSearch => Action::EscapeSearch,
+        Command::Rename => Action::Rename,
+        Command::Delete => Action::Delete { permanent: false },
+        Command::DeletePermanent => Action::Delete { permanent: true },
+        Command::SelectAll => Action::SelectAll,
+        Command::Copy => Action::Copy,
+        Command::Cut => Action::Cut,
+        Command::Paste => Action::Paste,
+        Command::NewFolder => Action::NewFolder,
+        Command::Properties => Action::Properties,
+        Command::NewWindow => Action::NewWindow,
+        Command::OpenSettings => Action::OpenSettings,
+        Command::Palette => Action::OpenCommandPalette,
+        Command::About => Action::OpenAbout,
+        Command::Exit => Action::Exit,
+        _ => return None,
+    })
+}
+
+/// Runs the commands that act on the explorer directly. Returns true if the selection moved.
+fn run_on_explorer(ex: &mut Explorer, command: Command, actions: &mut Vec<Action>) -> bool {
+    match command {
+        Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
+        Command::CloseTab => ex.close_tab(ex.active_index()),
+        Command::NextTab => cycle_tab(ex, 1),
+        Command::PrevTab => cycle_tab(ex, -1),
+        Command::Refresh => ex.refresh(),
+        Command::Back => ex.back(),
+        Command::Forward => ex.forward(),
+        Command::Up => ex.up(),
+        Command::ToggleBookmark => ex.toggle_bookmark_active(),
+        Command::MoveDown => return move_selection(ex, 1),
+        Command::MoveUp => return move_selection(ex, -1),
+        Command::OpenSelected => open_selected(ex, actions),
+        Command::RevealSearchHit => {
+            let row = ex.search().and_then(SearchView::selected);
+            actions.extend(row.map(Action::RevealSearchHit));
+        }
+        _ => {}
+    }
+    false
+}
+
+fn cycle_tab(ex: &mut Explorer, step: isize) {
+    let n = ex.tabs().len() as isize;
+    ex.set_active((ex.active_index() as isize + step).rem_euclid(n) as usize);
+}
+
+/// Executes the actions that only touch the explorer.
+fn dispatch_explorer(ctx: &Context, ex: &mut Explorer, action: Action) {
+    match action {
+        Action::SelectAll => ex.active_mut().select_all(),
+        Action::Refresh => ex.refresh(),
+        Action::Open(row) => ex.activate(row),
+        Action::OpenInNewTab(row) => ex.open_in_new_tab(row),
+        Action::ToggleBookmark(row) => toggle_bookmark(ex, row),
+        Action::OpenWith(row) => ex.open_with(row),
+        Action::CopyPath => copy_paths(ctx, ex),
+        Action::Copy => ex.copy_to_clipboard(&ex.active().selection(), false),
+        Action::Cut => ex.copy_to_clipboard(&ex.active().selection(), true),
+        Action::Paste => ex.paste(None),
+        Action::PasteInto(row) => {
+            let folder = ex.entry_path(row);
+            ex.paste(folder);
+        }
+        Action::OpenSearchHit(row) => ex.open_search_hit(row),
+        Action::CopySearchHitPath(row) => copy_search_hit_path(ctx, ex, row),
+        Action::SetSort(sort) => ex.active_mut().set_sort(sort),
+        _ => {}
+    }
+}
+
+fn toggle_bookmark(ex: &mut Explorer, row: usize) {
+    if let Some(path) = ex.entry_path(row) {
+        ex.toggle_bookmark(path);
+    }
+}
+
+fn selected_paths(ex: &Explorer) -> Vec<PathBuf> {
+    ex.active()
+        .selection()
+        .into_iter()
+        .filter_map(|row| ex.entry_path(row))
+        .collect()
 }
 
 /// Moves the selection of the search results when a search shows, else of the folder listing. Returns true.
@@ -408,11 +440,8 @@ fn copy_search_hit_path(ctx: &Context, ex: &Explorer, row: usize) {
 
 /// Puts the paths of the selected entries on the clipboard, one per line.
 fn copy_paths(ctx: &Context, ex: &Explorer) {
-    let paths: Vec<String> = ex
-        .active()
-        .selection()
-        .into_iter()
-        .filter_map(|row| ex.entry_path(row))
+    let paths: Vec<String> = selected_paths(ex)
+        .iter()
         .map(|path| path.display().to_string())
         .collect();
     if !paths.is_empty() {
