@@ -142,9 +142,17 @@ impl Job<'_> {
 
     fn copy_special(&self, e: &Entry<'_>, path: &Path) -> Result<(Done, u64), Failure> {
         let meta = e.src_dir.stat_at(e.name).at(ErrorOp::Copy)?;
-        let placed = self.place(e, path, &meta, ErrorOp::Unsupported, |n| {
-            os::copy_special(&meta, e.dst_dir, n)
-        })?;
+        let placed = self
+            .place(e, path, &meta, ErrorOp::Copy, |n| {
+                os::copy_special(&meta, e.dst_dir, n)
+            })
+            .map_err(|f| match f.err.kind() {
+                io::ErrorKind::Unsupported => Failure {
+                    op: ErrorOp::Unsupported,
+                    ..f
+                },
+                _ => f,
+            })?;
         Ok((placed.outcome(), 0))
     }
 
