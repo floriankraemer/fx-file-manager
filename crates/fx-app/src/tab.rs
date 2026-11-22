@@ -16,6 +16,8 @@ pub enum LoadState {
     Failed(String),
 }
 
+const MAX_HISTORY: usize = 500;
+
 #[derive(Debug)]
 pub struct Tab {
     id: u64,
@@ -242,7 +244,7 @@ impl Tab {
             return;
         }
         let previous = mem::replace(&mut self.path, path);
-        self.back.push(previous);
+        self.push_back(previous);
         self.forward.clear();
         self.clear_selection();
     }
@@ -262,9 +264,17 @@ impl Tab {
             return false;
         };
         let current = mem::replace(&mut self.path, next);
-        self.back.push(current);
+        self.push_back(current);
         self.clear_selection();
         true
+    }
+
+    /// Drops the oldest entry beyond `MAX_HISTORY`, so a long-lived tab does not grow without bound.
+    fn push_back(&mut self, path: PathBuf) {
+        if self.back.len() >= MAX_HISTORY {
+            self.back.remove(0);
+        }
+        self.back.push(path);
     }
 
     pub(crate) fn generation(&self) -> u64 {
