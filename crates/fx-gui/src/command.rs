@@ -470,7 +470,7 @@ pub fn needs_folder_listing(command: Command) -> bool {
 /// Whether `command` applies to the active tab now. Inapplicable commands are shown disabled.
 pub fn enabled(command: Command, explorer: &Explorer) -> bool {
     let tab = explorer.active();
-    let selected = tab.selection().len();
+    let selected = tab.selection_len();
     let search = explorer.search();
     if search.is_some() && needs_folder_listing(command) {
         return false;

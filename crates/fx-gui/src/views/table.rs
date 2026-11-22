@@ -23,8 +23,7 @@ pub(super) fn row_height(density: Density) -> f32 {
 /// Read-only state every row needs, snapshotted before the table borrows the UI.
 struct RowContext<'a> {
     view: &'a DirView,
-    order: &'a [u32],
-    selection: &'a [usize],
+    tab: &'a fx_app::Tab,
     folder: &'a Path,
     settings: &'a Settings,
     now: SystemTime,
@@ -115,8 +114,8 @@ pub fn show(
 ) {
     // Selectable labels grab clicks and drags, so rows would never see double/right clicks.
     ui.style_mut().interaction.selectable_labels = false;
-    let settings = explorer.settings().clone();
     let can_paste = explorer.can_paste();
+    let settings = explorer.settings();
     let tab = explorer.active();
     let Some(view) = loaded_view(ui, tab) else {
         return;
@@ -124,16 +123,15 @@ pub fn show(
 
     let sort = tab.sort();
     let scroll_row = tab.selected().filter(|_| scroll_to_selection);
-    let selection = tab.selection();
-    let order = tab.order().to_vec();
-    let folder = tab.path().to_path_buf();
+    let order_len = tab.order().len();
+    let list_font_size = settings.list_font_size;
+    let density = settings.density;
     let modifiers = ui.input(|input| input.modifiers);
     let rows = RowContext {
         view: &view,
-        order: &order,
-        selection: &selection,
-        folder: &folder,
-        settings: &settings,
+        tab,
+        folder: tab.path(),
+        settings,
         now: SystemTime::now(),
         can_paste,
     };
@@ -143,25 +141,25 @@ pub fn show(
     let mut spans = Vec::new();
     let header = HeaderContext {
         sort,
-        settings: &settings,
+        settings,
         last: &last,
     };
 
-    let scroll = table_builder(ui, &settings, scroll_row)
+    let scroll = table_builder(ui, settings, scroll_row)
         .header(22.0, |row| header_row(row, &header, &mut spans, &mut out))
         .body(|body| {
             body.rows(
-                theme::row_height(row_height(settings.density), settings.list_font_size),
-                order.len(),
+                theme::row_height(row_height(density), list_font_size),
+                order_len,
                 |mut row| entry_row(&mut row, &rows, explorer, &mut out, actions),
             );
         });
     if let Some(drag) = &out.column_drag {
         paint_column_drag(ui, drag, &spans, &settings.list_columns);
     }
-    out.column_widths = store_header_layout(ui, layout_key, &last, &settings, spans);
+    out.column_widths = store_header_layout(ui, layout_key, &last, settings, spans);
     background_area(ui, &scroll, settings.show_hidden, can_paste, actions);
-    apply(ui, explorer, out, &selection, modifiers);
+    apply(ui, explorer, out, modifiers);
 }
 
 /// The loaded listing; while loading or after a failure it draws that state and returns `None`.
@@ -388,9 +386,9 @@ fn entry_row(
     actions: &mut Vec<Action>,
 ) {
     let i = row.index();
-    let entry = &ctx.view.listing.entries[ctx.order[i] as usize];
+    let entry = &ctx.view.listing.entries[ctx.tab.order()[i] as usize];
     let name = ctx.view.listing.name(entry).to_string_lossy();
-    let is_selected = ctx.selection.binary_search(&i).is_ok();
+    let is_selected = ctx.tab.is_selected(i);
     row.set_selected(is_selected);
     entry_cells(row, entry, &name, ctx);
 
@@ -399,15 +397,24 @@ fn entry_row(
         out.right_clicked = Some(i);
     }
     let is_dir = entry.kind == EntryKind::Dir;
-    let menu = RowMenu {
-        row: i,
-        is_dir,
-        bookmarked: is_dir && explorer.is_bookmarked(&ctx.folder.join(name.as_ref())),
-        selected: if is_selected { ctx.selection.len() } else { 1 },
-        can_paste: ctx.can_paste,
-    };
-    resp.context_menu(|ui| row_menu(ui, &menu, actions));
-    if is_dir && let Some(drop) = drop_on_folder(&resp, ctx.folder.join(name.as_ref())) {
+    resp.context_menu(|ui| {
+        let menu = RowMenu {
+            row: i,
+            is_dir,
+            bookmarked: is_dir && explorer.is_bookmarked(&ctx.folder.join(name.as_ref())),
+            selected: if is_selected {
+                ctx.tab.selection_len()
+            } else {
+                1
+            },
+            can_paste: ctx.can_paste,
+        };
+        row_menu(ui, &menu, actions);
+    });
+    if is_dir
+        && dnd::recording(&resp.ctx)
+        && let Some(drop) = drop_on_folder(&resp, ctx.folder.join(name.as_ref()))
+    {
         out.drop = Some(drop);
     }
     record_clicks(&resp, i, is_dir && ctx.settings.list_single_click, out);
@@ -519,20 +526,14 @@ fn background_area(
 }
 
 /// Applies the frame's interactions in a fixed order: selection first, then activation and drag and drop.
-fn apply(
-    ui: &Ui,
-    explorer: &mut Explorer,
-    out: Interaction,
-    selection: &[usize],
-    modifiers: Modifiers,
-) {
+fn apply(ui: &Ui, explorer: &mut Explorer, out: Interaction, modifiers: Modifiers) {
     apply_columns(explorer, &out);
     apply_selection(explorer, &out, modifiers);
     if let Some(i) = out.activate {
         explorer.activate(i);
     }
     if let Some(i) = out.drag_started {
-        start_drag(ui, explorer, i, selection);
+        start_drag(ui, explorer, i);
     }
     if let Some((paths, folder)) = out.drop {
         let copy = dnd::copying(ui.ctx(), explorer.settings().drag_copy_modifier);
@@ -571,12 +572,12 @@ fn apply_columns(explorer: &mut Explorer, out: &Interaction) {
     explorer.set_settings(settings);
 }
 
-fn start_drag(ui: &Ui, explorer: &mut Explorer, row: usize, selection: &[usize]) {
+fn start_drag(ui: &Ui, explorer: &mut Explorer, row: usize) {
     // Dragging an unselected row drags just that row, as in other file managers.
-    if selection.binary_search(&row).is_err() {
+    if !explorer.active().is_selected(row) {
         explorer.active_mut().click(row, false, false);
     }
-    let rows = explorer.active().selection().to_vec();
+    let rows = explorer.active().selection();
     let paths = rows
         .iter()
         .filter_map(|&r| explorer.entry_path(r))

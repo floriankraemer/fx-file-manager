@@ -10,8 +10,9 @@ use fx_app::{Explorer, SortColumn, SortSpec, t};
 const HEIGHT: f32 = 28.0;
 
 pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
-    let has_selection = !explorer.active().selection().is_empty();
-    let one_selected = explorer.active().selection().len() == 1;
+    let selected = explorer.active().selection_len();
+    let has_selection = selected > 0;
+    let one_selected = selected == 1;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         if command(ui, Glyph::NewFolder, t("cmd.new_folder"), true, false)
