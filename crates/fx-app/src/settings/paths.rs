@@ -3,18 +3,37 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// Writes a temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
+/// Writes a uniquely named temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
 pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    let mut file = File::create(&tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    let result = write_synced(&tmp, text).and_then(|()| fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+        return result;
+    }
+    sync_parent_dir(path);
+    Ok(())
 }
+
+fn write_synced(tmp: &Path, text: &str) -> io::Result<()> {
+    let mut file = File::create(tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) {
+    let Some(dir) = path.parent() else { return };
+    if let Err(err) = File::open(dir).and_then(|dir| dir.sync_all()) {
+        log::debug!("cannot sync {}: {err}", dir.display());
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) {}
 
 /// `$HOME`, else `%USERPROFILE%`.
 pub(crate) fn home_dir() -> Option<PathBuf> {
