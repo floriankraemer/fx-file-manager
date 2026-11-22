@@ -43,6 +43,9 @@ pub(crate) fn enumerate(
         let entry = entry?;
         let name = entry.file_name();
         let bytes = name.to_bytes();
+        let Some(&lead) = bytes.first() else {
+            continue;
+        };
         if bytes == b"." || bytes == b".." {
             continue;
         }
@@ -50,7 +53,7 @@ pub(crate) fn enumerate(
             FileType::Unknown => kind_via_statx(fd.as_fd(), name),
             t => kind_from_file_type(t),
         };
-        out.push_encoded(bytes, kind, bytes[0] == b'.', entry.ino())?;
+        out.push_encoded(bytes, kind, lead == b'.', entry.ino())?;
         cnames.extend_from_slice(name.to_bytes_with_nul());
         name_ends.push(cnames.len());
     }
