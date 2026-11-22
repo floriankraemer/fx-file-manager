@@ -468,6 +468,11 @@ fn viewport_of(id: WindowId) -> ViewportId {
 }
 
 impl App {
+    /// The root window is being closed, not quit, while another window can take its place.
+    fn root_close_hands_over(&self, ctx: &Context) -> bool {
+        self.windows.len() > 1 && !self.quitting && ctx.input(|i| i.viewport().close_requested())
+    }
+
     /// Handles the root window being closed while other windows exist: the next window takes its place.
     fn promote_next_window(&mut self, ctx: &Context) {
         let next = viewport_of(self.windows[1].id);
@@ -491,31 +496,46 @@ impl App {
         self.track_focus(&ctx, index);
         dnd::forget_areas(&ctx);
 
-        let mut actions = Vec::new();
-        let palette_moved = self.palette_frame(&ctx, index, &mut actions);
-        let idle = self.windows[index].dialog.is_none()
-            && self.settings.is_none()
-            && self.windows[index].palette.is_none();
-        let keys_moved = idle && self.handle_keys(&ctx, &mut actions);
-        self.windows[index].scroll_to_selection = palette_moved || keys_moved;
-        for action in actions.drain(..) {
-            self.dispatch(&ctx, index, action);
-        }
-        self.windows[index].scroll_to_selection |= self.take_reveal_scroll(index);
+        self.handle_input(&ctx, index);
         ctx.send_viewport_cmd(ViewportCommand::Title(format!(
             "fx — {}",
             self.explorer.active().path().display()
         )));
 
+        let mut actions = Vec::new();
         self.panels(ui, index, &mut actions);
         self.overlays(&ctx, index);
+        self.dispatch_all(&ctx, index, actions);
+        self.drag_and_drop(&ctx, index);
+    }
+
+    fn dispatch_all(&mut self, ctx: &Context, index: usize, actions: Vec<Action>) {
         for action in actions {
-            self.dispatch(&ctx, index, action);
+            self.dispatch(ctx, index, action);
         }
-        self.highlight_drop_target(&ctx, index);
-        self.drop_os_files(&ctx, index);
-        self.hand_drag_to_os(&ctx, index);
-        self.finish_drag(&ctx, index);
+    }
+
+    /// Runs the palette and the shortcuts of window `index`, then the actions they raised.
+    fn handle_input(&mut self, ctx: &Context, index: usize) {
+        let mut actions = Vec::new();
+        let palette_moved = self.palette_frame(ctx, index, &mut actions);
+        let keys_moved = self.is_idle(index) && self.handle_keys(ctx, &mut actions);
+        self.windows[index].scroll_to_selection = palette_moved || keys_moved;
+        self.dispatch_all(ctx, index, actions);
+        self.windows[index].scroll_to_selection |= self.take_reveal_scroll(index);
+    }
+
+    /// No dialog, settings or palette takes the keyboard from window `index`.
+    fn is_idle(&self, index: usize) -> bool {
+        let window = &self.windows[index];
+        window.dialog.is_none() && window.palette.is_none() && self.settings.is_none()
+    }
+
+    fn drag_and_drop(&mut self, ctx: &Context, index: usize) {
+        self.highlight_drop_target(ctx, index);
+        self.drop_os_files(ctx, index);
+        self.hand_drag_to_os(ctx, index);
+        self.finish_drag(ctx, index);
     }
 
     /// True once, when a reveal's folder has loaded and its item is selected.
@@ -591,27 +611,26 @@ impl App {
 
     /// Outlines what a drag would land on, while it hovers window `index`.
     fn highlight_drop_target(&self, ctx: &Context, index: usize) {
-        if dnd::os_hovering(ctx) {
+        let area = if dnd::os_hovering(ctx) {
             ctx.request_repaint();
-            if let Some(area) = self.external_area(ctx, index) {
-                dnd::highlight(ctx, area.rect);
-            }
-            return;
+            self.external_area(ctx, index)
+        } else {
+            self.internal_drop_area(ctx, index)
+        };
+        if let Some(area) = area {
+            dnd::highlight(ctx, area.rect);
         }
-        let Some(dragged) = DragAndDrop::payload::<Dragged>(ctx) else {
-            return;
-        };
-        let Some(source) = self.windows.iter().position(|w| w.id == dragged.from) else {
-            return;
-        };
+    }
+
+    /// The area a drag from another window would land on, when that lies in window `index`.
+    fn internal_drop_area(&self, ctx: &Context, index: usize) -> Option<DropArea> {
+        let dragged = DragAndDrop::payload::<Dragged>(ctx)?;
+        let source = self.windows.iter().position(|w| w.id == dragged.from)?;
         if source == index {
-            return;
+            return None;
         }
-        if let Some(target) = self.drop_target(ctx, source, &dragged.paths)
-            && target.viewport == self.viewport_at(index)
-        {
-            dnd::highlight(ctx, target.rect);
-        }
+        self.drop_target(ctx, source, &dragged.paths)
+            .filter(|target| target.viewport == self.viewport_at(index))
     }
 
     /// Copies files dropped from outside fx into the tree folder or listing they landed on.
@@ -799,12 +818,16 @@ impl App {
             return;
         }
         if current.4 != self.applied_look.4 {
-            i18n::set_language(current.4);
-            // Place labels are translated when listed.
-            self.places = places();
+            self.apply_language(current.4);
         }
         theme::apply(ctx, self.explorer.settings());
         self.applied_look = current;
+    }
+
+    fn apply_language(&mut self, language: Language) {
+        i18n::set_language(language);
+        // Place labels are translated when listed.
+        self.places = places();
     }
 }
 
@@ -821,8 +844,7 @@ impl eframe::App for App {
             // Progress is sampled, not pushed: 10 Hz is smooth and costs nothing.
             ctx.request_repaint_after(TRANSFER_REFRESH);
         }
-        if self.windows.len() > 1 && !self.quitting && ctx.input(|i| i.viewport().close_requested())
-        {
+        if self.root_close_hands_over(ctx) {
             self.promote_next_window(ctx);
         }
         self.keep_focus_valid();
