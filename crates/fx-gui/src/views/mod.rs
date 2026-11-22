@@ -10,6 +10,7 @@ pub mod menubar;
 #[cfg(any(windows, target_os = "macos"))]
 pub mod native_drag;
 pub mod palette;
+pub mod search;
 pub mod settings;
 pub mod sidebar;
 pub mod status;

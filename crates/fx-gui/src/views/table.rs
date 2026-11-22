@@ -13,7 +13,7 @@ use fx_core::{Entry, EntryKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-fn row_height(density: Density) -> f32 {
+pub(super) fn row_height(density: Density) -> f32 {
     match density {
         Density::Compact => 20.0,
         Density::Comfortable => 28.0,

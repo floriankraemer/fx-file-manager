@@ -13,6 +13,10 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
                 actions.push(Action::NewWindow);
                 ui.close();
             }
+            if menu::item(ui, t("command.search"), &hint(Command::Search), true) {
+                actions.push(Action::OpenSearch);
+                ui.close();
+            }
             if menu::item(
                 ui,
                 t("command.command_palette"),

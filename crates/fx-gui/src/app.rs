@@ -9,7 +9,8 @@ use eframe::egui::{
     self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
 };
 use fx_app::{
-    Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, places,
+    Explorer, Language, Notice, NoticeKind, Place, SearchView, Settings, State, WindowId, i18n,
+    places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -26,6 +27,9 @@ struct WindowUi {
     transfers: views::transfers::State,
     was_focused: bool,
     path_edit: Option<views::toolbar::PathEdit>,
+    search: views::search::State,
+    /// A reveal asked for its item to be scrolled into view once the folder has loaded.
+    reveal_scroll: bool,
 }
 
 impl WindowUi {
@@ -38,6 +42,8 @@ impl WindowUi {
             transfers: views::transfers::State::default(),
             was_focused,
             path_edit: None,
+            search: views::search::State::default(),
+            reveal_scroll: false,
         }
     }
 }
@@ -201,9 +207,46 @@ impl App {
                 let folder = ex.entry_path(row);
                 ex.paste(folder);
             }
+            Action::OpenSearch => self.windows[index].search.open(),
+            Action::StartSearch(text) => self.start_search(index, text),
+            Action::StopSearch => ex.cancel_search(),
+            Action::CloseSearch => self.close_search(index),
+            Action::EscapeSearch => self.escape_search(index),
+            Action::OpenSearchHit(row) => ex.open_search_hit(row),
+            Action::RevealSearchHit(row) => {
+                ex.reveal_search_hit(row);
+                self.windows[index].reveal_scroll = true;
+            }
+            Action::CopySearchHitPath(row) => copy_search_hit_path(ctx, ex, row),
             Action::SetSort(sort) => ex.active_mut().set_sort(sort),
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
+        }
+    }
+
+    /// Starts the search for `text`; the first one from a filesystem root asks for confirmation.
+    fn start_search(&mut self, index: usize, text: String) {
+        let ex = &mut self.explorer;
+        let fresh = ex.search().is_none() && !text.trim().is_empty();
+        if fresh && ex.search_needs_root_notice() {
+            self.open_dialog(index, Some(Dialog::search_root(text)));
+            return;
+        }
+        ex.start_search(&text);
+    }
+
+    fn close_search(&mut self, index: usize) {
+        self.explorer.clear_search();
+        self.windows[index].search.close();
+    }
+
+    /// Esc: a running search stops and keeps its results; otherwise the search closes.
+    fn escape_search(&mut self, index: usize) {
+        match self.explorer.search() {
+            Some(search) if search.is_running() => self.explorer.cancel_search(),
+            Some(_) => self.close_search(index),
+            None if self.windows[index].search.is_open() => self.close_search(index),
+            None => {}
         }
     }
 
@@ -273,6 +316,9 @@ impl App {
     /// Runs `command`. Returns true if the selection moved.
     fn run(&mut self, command: Command, actions: &mut Vec<Action>) -> bool {
         let ex = &mut self.explorer;
+        if ex.search().is_some() && command::needs_folder_listing(command) {
+            return false;
+        }
         match command {
             Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
             Command::CloseTab => ex.close_tab(ex.active_index()),
@@ -286,18 +332,14 @@ impl App {
             Command::Forward => ex.forward(),
             Command::Up => ex.up(),
             Command::ToggleBookmark => ex.toggle_bookmark_active(),
-            Command::MoveDown => {
-                ex.active_mut().move_selection(1);
-                return true;
-            }
-            Command::MoveUp => {
-                ex.active_mut().move_selection(-1);
-                return true;
-            }
-            Command::OpenSelected => {
-                if let Some(row) = ex.active().selected() {
-                    ex.activate(row);
-                }
+            Command::MoveDown => return move_selection(ex, 1),
+            Command::MoveUp => return move_selection(ex, -1),
+            Command::OpenSelected => open_selected(ex, actions),
+            Command::Search => actions.push(Action::OpenSearch),
+            Command::CloseSearch => actions.push(Action::EscapeSearch),
+            Command::RevealSearchHit => {
+                let row = ex.search().and_then(SearchView::selected);
+                actions.extend(row.map(Action::RevealSearchHit));
             }
             Command::Rename => actions.push(Action::Rename),
             Command::Delete => actions.push(Action::Delete { permanent: false }),
@@ -337,6 +379,30 @@ impl App {
             moved |= self.run(command, actions);
         }
         moved
+    }
+}
+
+/// Moves the selection of the search results when a search shows, else of the folder listing. Returns true.
+fn move_selection(ex: &mut Explorer, delta: isize) -> bool {
+    match ex.search() {
+        Some(_) => ex.move_search_selection(delta),
+        None => ex.active_mut().move_selection(delta),
+    }
+    true
+}
+
+fn open_selected(ex: &mut Explorer, actions: &mut Vec<Action>) {
+    if let Some(search) = ex.search() {
+        actions.extend(search.selected().map(Action::OpenSearchHit));
+    } else if let Some(row) = ex.active().selected() {
+        ex.activate(row);
+    }
+}
+
+fn copy_search_hit_path(ctx: &Context, ex: &Explorer, row: usize) {
+    let hit = ex.search().and_then(|s| s.hits().get(row));
+    if let Some(hit) = hit {
+        ctx.copy_text(hit.path.display().to_string());
     }
 }
 
@@ -406,6 +472,7 @@ impl App {
         for action in actions.drain(..) {
             self.dispatch(&ctx, index, action);
         }
+        self.windows[index].scroll_to_selection |= self.take_reveal_scroll(index);
         ctx.send_viewport_cmd(ViewportCommand::Title(format!(
             "fx — {}",
             self.explorer.active().path().display()
@@ -420,6 +487,16 @@ impl App {
         self.drop_os_files(&ctx, index);
         self.hand_drag_to_os(&ctx, index);
         self.finish_drag(&ctx, index);
+    }
+
+    /// True once, when a reveal's folder has loaded and its item is selected.
+    fn take_reveal_scroll(&mut self, index: usize) -> bool {
+        let ready =
+            self.windows[index].reveal_scroll && self.explorer.active().selected().is_some();
+        if ready {
+            self.windows[index].reveal_scroll = false;
+        }
+        ready
     }
 
     /// The viewport window `index` is shown in; the first window lives in the root viewport.
@@ -582,6 +659,13 @@ impl App {
         egui::Panel::top("toolbar").show(ui, |ui| {
             views::toolbar::show(ui, &mut self.explorer, &mut self.windows[index].path_edit);
         });
+        self.windows[index].search.sync(&self.explorer);
+        if self.windows[index].search.is_open() {
+            egui::Panel::top("search").show(ui, |ui| {
+                let state = &mut self.windows[index].search;
+                views::search::bar(ui, &mut self.explorer, state, actions);
+            });
+        }
         egui::Panel::top("commands").show(ui, |ui| {
             views::commandbar::show(ui, &self.explorer, actions);
         });
@@ -602,7 +686,18 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))
             .show(ui, |ui| {
-                views::table::show(ui, &mut self.explorer, scroll_to_selection, actions);
+                if self.explorer.search().is_some() {
+                    let state = &mut self.windows[index].search;
+                    views::search::results(
+                        ui,
+                        &mut self.explorer,
+                        state,
+                        scroll_to_selection,
+                        actions,
+                    );
+                } else {
+                    views::table::show(ui, &mut self.explorer, scroll_to_selection, actions);
+                }
             });
     }
 

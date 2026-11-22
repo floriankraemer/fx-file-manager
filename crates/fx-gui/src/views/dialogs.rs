@@ -38,6 +38,10 @@ pub enum Dialog {
         fresh: bool,
     },
     Properties(EntryDetails),
+    /// Searching from a filesystem root; `text` is the query that waits for the answer.
+    SearchRoot {
+        text: String,
+    },
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
     Conflict {
         transfer: u64,
@@ -80,6 +84,10 @@ impl Dialog {
         }
     }
 
+    pub fn search_root(text: String) -> Self {
+        Self::SearchRoot { text }
+    }
+
     pub fn properties(explorer: &Explorer) -> Option<Self> {
         let row = explorer.active().selected()?;
         explorer.entry_details(row).map(Self::Properties)
@@ -115,6 +123,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties(details) => properties(ctx, details),
+        Dialog::SearchRoot { text } => search_root(ctx, explorer, text),
         Dialog::Conflict {
             transfer,
             conflict,
@@ -394,6 +403,29 @@ fn name_field(
         out.response.request_focus();
     }
     submit
+}
+
+fn search_root(ctx: &Context, explorer: &mut Explorer, text: &str) -> bool {
+    modal(ctx, "search-root-dialog", |ui| {
+        ui.heading(t("search.root_notice.title"));
+        ui.add_space(6.0);
+        let root = explorer.active().path().display().to_string();
+        ui.label(tr("search.root_notice.body", &[("root", &root)]));
+        let (mut go, mut silence) = (false, false);
+        button_row(ui, |ui| {
+            let proceed = ui.button(t("search.root_notice.continue"));
+            silence = ui.button(t("search.root_notice.dont_show")).clicked();
+            default_focus(ui, &proceed);
+            go = proceed.clicked();
+        });
+        if silence {
+            explorer.disable_search_root_notice();
+        }
+        if go || silence {
+            explorer.start_search(text);
+        }
+        go || silence
+    })
 }
 
 fn properties(ctx: &Context, details: &EntryDetails) -> bool {
