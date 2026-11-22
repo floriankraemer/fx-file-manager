@@ -222,21 +222,15 @@ mod platform {
     /// The X connection and the root window of its first screen, opened once.
     static X: OnceLock<Option<(RustConnection, u32)>> = OnceLock::new();
     /// Whether fx was started in a Wayland session, before `prefer_x11` hid it from the environment.
-    static WAYLAND: OnceLock<bool> = OnceLock::new();
     static FAILING: AtomicBool = AtomicBool::new(false);
 
-    pub fn note_wayland_session(wayland: bool) {
-        let _ = WAYLAND.set(wayland);
-    }
-
-    /// Under Wayland the X server only knows the pointer over its own windows, so its reading goes stale.
+    /// A native Wayland client cannot read the pointer through X. `prefer_x11` drops `WAYLAND_DISPLAY`
+    /// whenever XWayland is available, so fx runs as an X client there and the X pointer stays valid
+    /// during a drag through the implicit grab.
     pub fn cursor(pixels_per_point: f32) -> Option<Pos2> {
-        let wayland = WAYLAND
-            .get()
-            .copied()
-            .unwrap_or_else(|| std::env::var_os("WAYLAND_DISPLAY").is_some());
+        let wayland = std::env::var("WAYLAND_DISPLAY").ok();
         let display = std::env::var("DISPLAY").ok();
-        if !x11_session(wayland.then_some("wayland"), display.as_deref()) {
+        if !x11_session(wayland.as_deref(), display.as_deref()) {
             return None;
         }
         let pixels = query_x_pointer()?;
@@ -296,12 +290,6 @@ mod platform {
             assert!(query_x_pointer().is_some());
         }
     }
-}
-
-/// Records whether the session was Wayland, which the X11 pointer reading cannot serve.
-#[cfg(all(unix, not(target_os = "macos")))]
-pub fn note_wayland_session(wayland: bool) {
-    platform::note_wayland_session(wayland);
 }
 
 /// True in the frame `viewport` saw the pointer button released.
