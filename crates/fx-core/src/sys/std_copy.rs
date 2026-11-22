@@ -161,7 +161,11 @@ pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
 
 pub(crate) fn read_all(src: &Src, out: &mut Vec<u8>) -> io::Result<()> {
     out.clear();
-    File::open(&src.path)?.read_to_end(out).map(|_| ())
+    // The file as it was when opened, even if it has grown since.
+    File::open(&src.path)?
+        .take(src.meta.size)
+        .read_to_end(out)
+        .map(|_| ())
 }
 
 thread_local! {

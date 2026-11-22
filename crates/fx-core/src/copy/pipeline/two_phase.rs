@@ -343,6 +343,9 @@ impl Job<'_> {
 /// Reads a small file whole, ahead of its copy.
 fn prefetch(dir: &os::Dir, name: &OsStr) -> Option<Prefetched> {
     let src = os::open_file(dir, name).ok()?;
+    if src.meta().size > BATCH_FILE_MAX {
+        return None;
+    }
     let mut data = Vec::new();
     os::read_all(&src, &mut data).ok()?;
     Some((src, data))
