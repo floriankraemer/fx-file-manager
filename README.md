@@ -3,6 +3,7 @@
 # fx File Manager
 
 A performance optimized cross platform file manager written in Rust.
+It searches file names recursively with results that stream in while the walk runs, and needs no index.
 
 <p align="center"><img src="docs/screenshot.png" alt="Screenshot of the fx File Manager"></p>
 

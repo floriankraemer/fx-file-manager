@@ -30,6 +30,51 @@ bench/copy/run.sh /data/datasets /mnt/target D2 D3     # hyperfine: fx vs cp -a,
 
 Run `run.sh` as root for cold-cache numbers; results land in `bench/copy/results/`.
 
+## Search benchmarks
+
+Targets from issue #7, measured with release builds:
+
+| Target | Goal |
+|--------|------|
+| Time to first result | under 50 ms on a warm SSD |
+| Full walk of a 1M-file tree | within 15% of `fx walk --quiet` on the same tree (warm SSD) |
+| Cancel latency | under 20 ms from cancel to the last worker stopping |
+
+```
+cargo build --release -p fx-cli
+target/release/fx walk TREE --quiet
+target/release/fx find TREE 'zzzqqq' --quiet     # no matches: pure matching overhead
+target/release/fx find TREE '*.rs' --quiet       # many matches: adds one path allocation per match
+cargo run --release -p fx-core --example search_cancel -- TREE 50
+```
+
+Numbers below are the median of 9 runs after one warm-up run, on a Ryzen 7 5800X3D (16 threads), Linux 6.18 under WSL2, ext4 on a virtual disk.
+Storage detection reports `unknown` there, so the walk uses the SSD strategy (one thread per core).
+All runs are warm cache; cold cache, HDD and network were not measured.
+
+Synthetic tree: 1,000,000 empty files in 5,050 folders (200 files per folder; every 7th file ends in `.rs`, the rest in `.txt`).
+
+| Run | Matches | Total | vs `walk --quiet` |
+|-----|---------|-------|-------------------|
+| `fx walk --quiet` | - | 35.9 ms | baseline |
+| `fx find zzzqqq --quiet` | 0 | 37.3 ms | +4% |
+| `fx find '*.rs' --quiet` | 145,000 | 52.1 ms | +45% |
+| `fx find file1 --quiet` | 500,000 | 65.2 ms | +82% |
+
+- Time to first result is 1.7 ms on the synthetic tree (a run in 9 saw 4.4 ms).
+  On `/usr` (241k files, 36k folders, a 25-match query) it is 12 to 21 ms.
+- Cancel latency, from setting the flag to `search` returning with every worker stopped, over 50 runs: median 0.31 ms and worst 0.81 ms on the synthetic tree; median 0.44 ms and worst 6.1 ms on `/usr`.
+- Real trees, full walk: `/usr` takes about 300 ms for both `walk --quiet` and a non-matching `find`; `~/.cargo/registry` (50k files) takes about 14 ms for `walk --quiet` and 15 ms for a non-matching `find`.
+
+Status against the targets:
+
+- First result: met on a warm SSD-like disk.
+- Cancel: met.
+- Full walk within 15%: met when few entries match (+4%), missed when many do (+45% at 14.5% of entries matching, +82% at 50%).
+  A match costs one `PathBuf` allocation and a batch vector, and `walk` allocates paths for folders only.
+  Realistic queries match a small share of entries, but the target is not met for match-heavy queries.
+- Not measured: the Linux kernel checkout, cold cache, HDD, network, and UI frame times while results stream in.
+
 ## Builds and releases
 
 Linux and Windows artifacts are built in Docker (`docker/Dockerfile`), so they need no local toolchain:
