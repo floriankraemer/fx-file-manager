@@ -231,22 +231,32 @@ impl TransferHandle {
 /// A transfer running on its own thread.
 pub struct Transfer {
     handle: TransferHandle,
-    thread: thread::JoinHandle<Summary>,
+    worker: Worker,
+}
+
+enum Worker {
+    Running(thread::JoinHandle<Summary>),
+    /// The thread could not be spawned: the transfer ended before it began.
+    NotStarted(Box<Summary>),
 }
 
 impl Transfer {
     pub fn start(req: Request, notify: impl Fn() + Send + Sync + 'static) -> Self {
         let handle = TransferHandle::new(notify);
-        let worker = handle.clone();
-        let thread = thread::Builder::new()
+        let (op, items) = (req.op, req.items.clone());
+        let runner = handle.clone();
+        let spawned = thread::Builder::new()
             .name("fx-transfer".into())
             .spawn(move || {
-                let summary = worker.run(&req);
-                worker.0.notify();
+                let summary = runner.run(&req);
+                runner.0.notify();
                 summary
-            })
-            .expect("failed to spawn transfer thread");
-        Self { handle, thread }
+            });
+        let worker = match spawned {
+            Ok(thread) => Worker::Running(thread),
+            Err(e) => Worker::NotStarted(Box::new(handle.not_started(op, &items, &e))),
+        };
+        Self { handle, worker }
     }
 
     pub fn handle(&self) -> &TransferHandle {
@@ -254,14 +264,44 @@ impl Transfer {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.thread.is_finished()
+        match &self.worker {
+            Worker::Running(thread) => thread.is_finished(),
+            Worker::NotStarted(_) => true,
+        }
     }
 
     /// Waits for the end. A panic in the engine is re-raised here.
     pub fn join(self) -> Summary {
-        self.thread
-            .join()
-            .unwrap_or_else(|p| std::panic::resume_unwind(p))
+        match self.worker {
+            Worker::Running(thread) => thread
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p)),
+            Worker::NotStarted(summary) => *summary,
+        }
+    }
+}
+
+impl TransferHandle {
+    /// The summary of a transfer whose thread could not be spawned: every item failed.
+    fn not_started(&self, op: Op, items: &[Item], e: &std::io::Error) -> Summary {
+        log::error!("cannot start the transfer thread: {e}");
+        for item in items {
+            self.0.record(&item.src, ErrorOp::Preflight, e, false);
+        }
+        Summary {
+            op,
+            items: items.len(),
+            items_done: 0,
+            files: 0,
+            bytes: 0,
+            cloned: 0,
+            skipped: 0,
+            errors: self.0.report(),
+            cancelled: false,
+            kept_sources: Vec::new(),
+            plans: Vec::new(),
+            elapsed: Duration::ZERO,
+        }
     }
 }
 
