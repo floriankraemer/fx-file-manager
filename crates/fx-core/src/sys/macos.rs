@@ -71,11 +71,25 @@ pub(crate) fn enumerate(
         read_blocks(&fd, &mut list, buf, metadata, out)
     });
     match read {
+        Ok(skipped) => {
+            warn_skipped(dir, skipped);
+            Ok(())
+        }
         // Filesystem without getattrlistbulk: nothing pushed yet, let std do it all.
         Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            log::debug!(
+                "getattrlistbulk unsupported for {}: {e}; using std",
+                dir.display()
+            );
             super::std_fs::enumerate(dir, strategy, metadata, out)
         }
-        read => read,
+        Err(e) => Err(e),
+    }
+}
+
+fn warn_skipped(dir: &Path, skipped: usize) {
+    if skipped > 0 {
+        log::warn!("skipped {skipped} unreadable records in {}", dir.display());
     }
 }
 
@@ -97,7 +111,8 @@ fn with_buffer<R>(words: usize, f: impl FnOnce(&mut [u64]) -> R) -> R {
     })
 }
 
-/// Calls `getattrlistbulk` until the directory is exhausted. The u64 elements of `buf` give the
+/// Calls `getattrlistbulk` until the directory is exhausted and returns how many records could not
+/// be decoded. The u64 elements of `buf` give the
 /// 8-byte alignment the kernel expects; records themselves are only 4-byte aligned, so they are
 /// parsed from byte slices, never by pointer cast.
 fn read_blocks(
@@ -106,8 +121,9 @@ fn read_blocks(
     buf: &mut [u64],
     metadata: bool,
     out: &mut Listing,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let buf_bytes = buf.len() * 8;
+    let mut skipped = 0;
     loop {
         // SAFETY: `list` and `buf` are valid for the sizes passed.
         let n = unsafe {
@@ -120,7 +136,7 @@ fn read_blocks(
             )
         };
         match n {
-            0 => return Ok(()),
+            0 => return Ok(skipped),
             n if n < 0 => {
                 let err = io::Error::last_os_error();
                 if err.kind() != io::ErrorKind::Interrupted {
@@ -132,21 +148,22 @@ fn read_blocks(
                 // view the same allocation as bytes and only read within record lengths.
                 let bytes =
                     unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), buf_bytes) };
-                push_records(fd, bytes, n, metadata, out)?;
+                skipped += push_records(fd, bytes, n, metadata, out)?;
             }
         }
     }
 }
 
-/// Walks the `count` length-prefixed records the kernel packed into `bytes`.
+/// Walks the `count` length-prefixed records the kernel packed into `bytes`; returns the undecodable ones.
 fn push_records(
     fd: &Fd,
     bytes: &[u8],
     count: c_int,
     metadata: bool,
     out: &mut Listing,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let mut off = 0;
+    let mut skipped = 0;
     for _ in 0..count {
         let Some(len) = read_u32(bytes, off).map(|l| l as usize) else {
             return Err(corrupt());
@@ -155,12 +172,13 @@ fn push_records(
             .checked_add(len)
             .and_then(|end| bytes.get(off..end))
             .ok_or_else(corrupt)?;
-        if let Some(p) = parse_record(rec) {
-            push(fd, &p, metadata, out)?;
+        match parse_record(rec) {
+            Some(p) => push(fd, &p, metadata, out)?,
+            None => skipped += 1,
         }
         off += len;
     }
-    Ok(())
+    Ok(skipped)
 }
 
 fn corrupt() -> io::Error {
@@ -333,7 +351,11 @@ fn storage_of(fstype: &std::ffi::CStr) -> StorageKind {
 }
 
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    fs_type_name(path).map_or(StorageKind::Unknown, |t| storage_of(&t))
+    let Some(fstype) = fs_type_name(path) else {
+        log::debug!("storage of {} unknown: statfs failed", path.display());
+        return StorageKind::Unknown;
+    };
+    storage_of(&fstype)
 }
 
 /// `getattrlist(ATTR_VOL_CAPABILITIES)`: does the volume say it supports `clonefile` (`VOL_CAP_INT_CLONE`)?
@@ -375,11 +397,15 @@ fn volume_clone_capability(path: &Path) -> Option<bool> {
 /// (every APFS volume supports `clonefile`); the per-pair method cache still falls back on the first ENOTSUP.
 // ponytail: removable media stay `Ssd` until a DiskArbitration probe is justified.
 pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
-    let id = std::fs::symlink_metadata(path).ok().map(|m| {
-        use std::os::unix::fs::MetadataExt;
-        m.dev()
-    });
+    let id = std::fs::symlink_metadata(path)
+        .inspect_err(|e| log::warn!("cannot probe volume of {}: {e}", path.display()))
+        .ok()
+        .map(|m| {
+            use std::os::unix::fs::MetadataExt;
+            m.dev()
+        });
     let Some(fstype) = fs_type_name(path) else {
+        log::warn!("cannot probe filesystem of {}", path.display());
         return crate::VolumeInfo::unknown(id);
     };
     let fs = crate::FsKind::from_name(&fstype.to_string_lossy());
