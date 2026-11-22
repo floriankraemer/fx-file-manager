@@ -375,7 +375,7 @@ fn volume_clone_capability(path: &Path) -> Option<bool> {
 /// (every APFS volume supports `clonefile`); the per-pair method cache still falls back on the first ENOTSUP.
 // ponytail: removable media stay `Ssd` until a DiskArbitration probe is justified.
 pub(crate) fn volume_info(path: &Path) -> crate::VolumeInfo {
-    let id = std::fs::symlink_metadata(path).map_or(0, |m| {
+    let id = std::fs::symlink_metadata(path).ok().map(|m| {
         use std::os::unix::fs::MetadataExt;
         m.dev()
     });

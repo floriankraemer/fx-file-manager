@@ -254,7 +254,11 @@ impl<'a> Job<'a> {
         match group.plan.schedule {
             Schedule::Streaming => self.streaming(&group.tops),
             Schedule::TwoPhase { order } => {
-                self.two_phase(&group.tops, order, group.src_vol.id == group.dst_vol.id);
+                self.two_phase(
+                    &group.tops,
+                    order,
+                    group.src_vol.same_volume(&group.dst_vol),
+                );
             }
         }
     }

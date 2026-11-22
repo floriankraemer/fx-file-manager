@@ -361,7 +361,7 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     let storage = detect_storage(path);
     let unknown = VolumeInfo {
         storage,
-        ..VolumeInfo::unknown(0)
+        ..VolumeInfo::unknown(None)
     };
     let Ok(handle) = open(&w, 0) else {
         return unknown;
@@ -395,7 +395,7 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
             is_removable(drive, bus_type(&root))
         });
     VolumeInfo {
-        id: u64::from(serial),
+        id: Some(u64::from(serial)),
         fs,
         storage: if removable {
             StorageKind::Removable

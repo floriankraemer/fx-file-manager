@@ -344,7 +344,7 @@ mod tests {
 
     fn vol(id: u64, storage: StorageKind) -> VolumeInfo {
         VolumeInfo {
-            id,
+            id: Some(id),
             fs: FsKind::Ext4,
             storage,
             caps: FsCaps::for_fs(FsKind::Ext4),

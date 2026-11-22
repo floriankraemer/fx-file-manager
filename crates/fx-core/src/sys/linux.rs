@@ -225,11 +225,11 @@ fn rotational_kind(major: u32, minor: u32) -> StorageKind {
 /// One `stat` and one `statfs`; block-device storage adds a few small sysfs reads.
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     let Ok(st) = rustix::fs::stat(path) else {
-        return VolumeInfo::unknown(0);
+        return VolumeInfo::unknown(None);
     };
     let id = st.st_dev;
     let Ok(fs) = statfs(path) else {
-        return VolumeInfo::unknown(id);
+        return VolumeInfo::unknown(Some(id));
     };
     let magic = fs.f_type as u64 & 0xFFFF_FFFF;
     let kind = fs_kind_from_magic(magic);
@@ -244,7 +244,7 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
         }
     });
     VolumeInfo {
-        id,
+        id: Some(id),
         fs: kind,
         storage,
         caps: FsCaps::for_fs(kind),
@@ -360,7 +360,7 @@ mod tests {
     fn volume_info_of_a_temp_dir_is_sane() {
         let dir = tempfile::tempdir().unwrap();
         let info = volume_info(dir.path());
-        assert_eq!(info.id, rustix::fs::stat(dir.path()).unwrap().st_dev);
+        assert_eq!(info.id, Some(rustix::fs::stat(dir.path()).unwrap().st_dev));
         assert_eq!(info.caps, FsCaps::for_fs(info.fs));
     }
 
