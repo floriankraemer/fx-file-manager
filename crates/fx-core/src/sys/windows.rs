@@ -114,7 +114,7 @@ fn push_entry(
     name: &mut Vec<u8>,
     metadata: bool,
     out: &mut Listing,
-) {
+) -> io::Result<()> {
     name.clear();
     push_wtf8_from_utf16(name, units);
     let attrs = info.FileAttributes;
@@ -133,12 +133,13 @@ fn push_entry(
         kind,
         attrs & FILE_ATTRIBUTE_HIDDEN != 0,
         info.FileId as u64,
-    );
+    )?;
     if metadata {
         let e = out.entries.last_mut().expect("just pushed");
         e.size = u64::try_from(info.EndOfFile).ok();
         e.modified = system_time(info.LastWriteTime);
     }
+    Ok(())
 }
 
 pub(crate) fn enumerate(
@@ -189,7 +190,7 @@ pub(crate) fn enumerate(
                 )
             };
             if units != [b'.' as u16] && units != [b'.' as u16, b'.' as u16] {
-                push_entry(info, units, &mut name, metadata, out);
+                push_entry(info, units, &mut name, metadata, out)?;
             }
             match info.NextEntryOffset {
                 0 => break,

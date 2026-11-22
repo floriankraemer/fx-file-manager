@@ -32,7 +32,7 @@ pub(crate) fn enumerate(
             None
         };
         let (hidden, inode) = hidden_and_inode(&entry, &name, md.as_ref());
-        out.push(&name, kind, hidden, inode);
+        out.push(&name, kind, hidden, inode)?;
         if metadata && let Some(md) = md {
             let e = out.entries.last_mut().expect("just pushed");
             e.size = Some(md.len());

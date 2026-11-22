@@ -50,7 +50,7 @@ pub(crate) fn enumerate(
             FileType::Unknown => kind_via_statx(fd.as_fd(), name),
             t => kind_from_file_type(t),
         };
-        out.push_encoded(bytes, kind, bytes[0] == b'.', entry.ino());
+        out.push_encoded(bytes, kind, bytes[0] == b'.', entry.ino())?;
         cnames.extend_from_slice(name.to_bytes_with_nul());
         name_ends.push(cnames.len());
     }

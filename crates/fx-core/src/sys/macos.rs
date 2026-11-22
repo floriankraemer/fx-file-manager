@@ -125,7 +125,7 @@ fn push_records(
             .and_then(|end| bytes.get(off..end))
             .ok_or_else(corrupt)?;
         if let Some(p) = parse_record(rec) {
-            push(fd, &p, metadata, out);
+            push(fd, &p, metadata, out)?;
         }
         off += len;
     }
@@ -243,12 +243,12 @@ fn read_timespec(rec: &[u8], at: usize) -> Option<SystemTime> {
     .checked_add(nsec)
 }
 
-fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) {
+fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) -> io::Result<()> {
     let bytes = &p.name[..p.name.len() - 1];
     let hidden = bytes.first() == Some(&b'.') || p.flags & libc::UF_HIDDEN != 0;
-    out.push_encoded(bytes, p.kind, hidden, p.inode);
+    out.push_encoded(bytes, p.kind, hidden, p.inode)?;
     if !metadata {
-        return;
+        return Ok(());
     }
     let e = out.entries.last_mut().expect("just pushed");
     e.modified = p.modified;
@@ -258,6 +258,7 @@ fn push(dir: &Fd, p: &Parsed<'_>, metadata: bool, out: &mut Listing) {
         (EntryKind::File, Some(len)) => Some(len),
         _ => lstat_size(dir, p.name),
     };
+    Ok(())
 }
 
 /// `name` must be NUL-terminated.

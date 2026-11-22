@@ -236,7 +236,7 @@ mod tests {
     fn listing_of(names: &[(&str, EntryKind)]) -> Listing {
         let mut l = Listing::default();
         for (name, kind) in names {
-            l.push(OsStr::new(name), *kind, false, 0);
+            l.push(OsStr::new(name), *kind, false, 0).unwrap();
         }
         l
     }

@@ -76,9 +76,9 @@ mod tests {
     #[test]
     fn dirs_first() {
         let mut l = Listing::default();
-        l.push(OsStr::new("a10"), EntryKind::File, false, 0);
-        l.push(OsStr::new("z"), EntryKind::Dir, false, 0);
-        l.push(OsStr::new("A2"), EntryKind::File, false, 0);
+        l.push(OsStr::new("a10"), EntryKind::File, false, 0).unwrap();
+        l.push(OsStr::new("z"), EntryKind::Dir, false, 0).unwrap();
+        l.push(OsStr::new("A2"), EntryKind::File, false, 0).unwrap();
         sort(&mut l);
         let order: Vec<_> = l.entries.iter().map(|e| l.name(e).to_owned()).collect();
         assert_eq!(order, ["z", "A2", "a10"]);
