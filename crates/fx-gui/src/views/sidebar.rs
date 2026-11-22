@@ -3,16 +3,12 @@ use super::{dnd, menu};
 use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
-use eframe::egui::{Color32, Rect, Response, RichText, ScrollArea, Sense, Ui, pos2, vec2};
+use eframe::egui::{
+    Color32, CursorIcon, Label, Rect, Response, RichText, ScrollArea, Sense, Stroke, Ui, pos2, vec2,
+};
 use fx_app::{Children, Explorer, Place, PlaceGroup, bookmark_places, t, tr};
 use std::path::{Path, PathBuf};
 
-const GROUPS: [PlaceGroup; 4] = [
-    PlaceGroup::Places,
-    PlaceGroup::Bookmarks,
-    PlaceGroup::Drives,
-    PlaceGroup::Wsl,
-];
 const INDENT: f32 = 16.0;
 const CHEVRON_W: f32 = 12.0;
 
@@ -27,6 +23,10 @@ enum Action {
     NotFound(PathBuf),
     AddBookmark(PathBuf),
     RemoveBookmark(usize),
+    /// Move the first group to the slot of the second.
+    MoveGroup(PlaceGroup, PlaceGroup),
+    /// Move the bookmark at the first index to the second.
+    MoveBookmark(usize, usize),
 }
 
 /// Which bookmark a row shows and whether its folder can be used.
@@ -54,6 +54,8 @@ pub fn show(
                 explorer,
                 current: &path,
                 scroll,
+                last_bookmark_rows: Vec::new(),
+                bookmark_rows: Vec::new(),
                 action: &mut action,
                 actions,
             };
@@ -91,16 +93,25 @@ struct TreeWalk<'a> {
     /// The active folder, highlighted and scrolled to.
     current: &'a Path,
     scroll: bool,
+    /// Top and bottom edge of each bookmark row, last frame and this frame (later rows are not laid out yet while dragging).
+    last_bookmark_rows: Vec<(f32, f32)>,
+    bookmark_rows: Vec<(f32, f32)>,
     action: &'a mut Option<Action>,
     actions: &'a mut Vec<crate::action::Action>,
 }
 
-/// Every non-empty group: a heading followed by its top-level folders.
+/// Every shown, non-empty group: a draggable heading followed by its top-level folders.
 fn place_groups(ui: &mut Ui, places: &[Place], walk: &mut TreeWalk<'_>) {
     let explorer = walk.explorer;
     ui.spacing_mut().item_spacing.y = 0.0;
     let bookmarks = bookmark_places(explorer.bookmarks());
-    for group in GROUPS {
+    let tops_key = ui.scope_id().with("group-tops");
+    let last_tops: Vec<(PlaceGroup, f32)> = ui.data(|d| d.get_temp(tops_key)).unwrap_or_default();
+    let mut tops = Vec::new();
+    let rows_key = tops_key.with("bookmark-rows");
+    walk.last_bookmark_rows = ui.data(|d| d.get_temp(rows_key)).unwrap_or_default();
+    walk.bookmark_rows.clear();
+    for group in explorer.settings().sidebar_groups() {
         let places = if group == PlaceGroup::Bookmarks {
             &bookmarks[..]
         } else {
@@ -109,14 +120,8 @@ fn place_groups(ui: &mut Ui, places: &[Place], walk: &mut TreeWalk<'_>) {
         if places.iter().all(|p| p.group != group) {
             continue;
         }
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(group.title().to_uppercase())
-                .small()
-                .strong()
-                .color(theme::dim()),
-        );
-        ui.add_space(2.0);
+        tops.push((group, ui.cursor().top()));
+        group_heading(ui, group, &last_tops, walk.action);
         for (i, place) in places.iter().enumerate().filter(|(_, p)| p.group == group) {
             let title = place.title(explorer.settings().show_share_names);
             // Not yet checked counts as available.
@@ -127,6 +132,53 @@ fn place_groups(ui: &mut Ui, places: &[Place], walk: &mut TreeWalk<'_>) {
             node(ui, walk, &title, &place.path, bookmark, 0);
         }
     }
+    let rows = std::mem::take(&mut walk.bookmark_rows);
+    ui.data_mut(|d| {
+        d.insert_temp(tops_key, tops);
+        d.insert_temp(rows_key, rows);
+    });
+}
+
+/// The group heading. Dragging it onto another group's block moves the group there.
+/// `tops` are the groups' top edges from the previous frame, as this frame's later groups are not laid out yet.
+fn group_heading(
+    ui: &mut Ui,
+    group: PlaceGroup,
+    tops: &[(PlaceGroup, f32)],
+    action: &mut Option<Action>,
+) {
+    ui.add_space(8.0);
+    let heading = RichText::new(group.title().to_uppercase())
+        .small()
+        .strong()
+        .color(theme::dim());
+    let resp = ui
+        .add(Label::new(heading).sense(Sense::drag()))
+        .on_hover_cursor(CursorIcon::Grab);
+    ui.add_space(2.0);
+    if !resp.dragged() && !resp.drag_stopped() {
+        return;
+    }
+    let Some(target) = ui
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| drop_target(tops, p.y))
+    else {
+        return;
+    };
+    if resp.drag_stopped() {
+        *action = (target.0 != group).then_some(Action::MoveGroup(group, target.0));
+        return;
+    }
+    ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+    let y = target.1;
+    let line = Stroke::new(2.0, theme::accent());
+    ui.painter().hline(ui.max_rect().x_range(), y, line);
+}
+
+/// The group whose block contains `y`, with the block's top edge.
+fn drop_target(tops: &[(PlaceGroup, f32)], y: f32) -> Option<(PlaceGroup, f32)> {
+    let hit = tops.iter().rev().find(|(_, top)| *top <= y);
+    hit.or(tops.first()).copied()
 }
 
 fn apply(
@@ -155,6 +207,12 @@ fn apply(
         }
         Action::AddBookmark(p) => explorer.add_bookmark(p),
         Action::RemoveBookmark(i) => explorer.remove_bookmark(i),
+        Action::MoveBookmark(from, to) => explorer.move_bookmark(from, to),
+        Action::MoveGroup(group, target) => {
+            let mut settings = explorer.settings().clone();
+            settings.move_sidebar_group(group, target);
+            explorer.set_settings(settings);
+        }
     }
 }
 
@@ -192,7 +250,16 @@ fn node(
     };
 
     let row_h = theme::row_height(22.0, explorer.settings().tree_font_size);
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+    // Only bookmark rows can be dragged (to reorder them).
+    let sense = if bookmark.is_some() {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), sense);
+    if let Some(b) = bookmark {
+        bookmark_drag(ui, &resp, b.index, walk);
+    }
     let selected = path == walk.current;
     if selected && walk.scroll {
         resp.scroll_to_me(None);
@@ -239,6 +306,39 @@ fn node(
             node(ui, walk, &k.name, &k.path, None, depth + 1);
         }
     }
+}
+
+/// Reorders bookmarks: dragging a row onto another row's slot moves it there.
+fn bookmark_drag(ui: &Ui, resp: &Response, index: usize, walk: &mut TreeWalk<'_>) {
+    walk.bookmark_rows
+        .push((resp.rect.top(), resp.rect.bottom()));
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(CursorIcon::Grab);
+    }
+    if !resp.dragged() && !resp.drag_stopped() {
+        return;
+    }
+    let Some(to) = ui
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| nearest_row(&walk.last_bookmark_rows, p.y))
+    else {
+        return;
+    };
+    if resp.drag_stopped() {
+        *walk.action = (to != index).then_some(Action::MoveBookmark(index, to));
+        return;
+    }
+    ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+    let (top, bottom) = walk.last_bookmark_rows[to];
+    let y = if to > index { bottom } else { top };
+    ui.painter()
+        .hline(resp.rect.x_range(), y, Stroke::new(2.0, theme::accent()));
+}
+
+/// Index of the row whose vertical span contains `y`, or the closest one.
+fn nearest_row(rows: &[(f32, f32)], y: f32) -> Option<usize> {
+    let gap = |(top, bottom): (f32, f32)| (top - y).max(y - bottom).max(0.0);
+    (0..rows.len()).min_by(|a, b| gap(rows[*a]).total_cmp(&gap(rows[*b])))
 }
 
 /// Paints highlight, chevron, folder icon and label; returns the chevron's hit area.
