@@ -7,6 +7,7 @@ pub mod i18n;
 mod ops;
 mod place_group;
 mod places;
+mod search;
 mod settings;
 mod state;
 mod tab;
@@ -26,6 +27,7 @@ pub use i18n::{Language, t, tn, tr};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use place_group::PlaceGroup;
 pub use places::{Place, bookmark_places, breadcrumbs, places};
+pub use search::{SearchStatus, SearchView};
 pub use settings::{
     ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
     MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_RESULT_CAP, SearchSettings, Settings, start_dir,

@@ -7,6 +7,7 @@ mod loading;
 mod opener;
 mod preload;
 mod revalidate;
+mod search;
 mod session;
 mod settings;
 mod tabs;
@@ -30,6 +31,7 @@ use bookmarks::BookmarkChecked;
 use loading::Completed;
 use preload::PreloadDone;
 use revalidate::StatChecked;
+use search::SearchMsg;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,6 +124,8 @@ pub struct Explorer {
     availability: HashMap<PathBuf, bool>,
     bookmark_tx: Sender<BookmarkChecked>,
     bookmark_rx: Receiver<BookmarkChecked>,
+    search_tx: Sender<SearchMsg>,
+    search_rx: Receiver<SearchMsg>,
 }
 
 impl Explorer {
@@ -182,6 +186,7 @@ impl Explorer {
         let (preload_tx, preload_rx) = mpsc::channel();
         let (stat_tx, stat_rx) = mpsc::channel();
         let (bookmark_tx, bookmark_rx) = mpsc::channel();
+        let (search_tx, search_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -214,6 +219,8 @@ impl Explorer {
             availability: HashMap::new(),
             bookmark_tx,
             bookmark_rx,
+            search_tx,
+            search_rx,
         }
     }
 
@@ -307,6 +314,7 @@ impl Explorer {
             self.save_state();
         }
         changed |= self.apply_loads();
+        changed |= self.apply_searches();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {

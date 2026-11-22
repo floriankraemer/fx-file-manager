@@ -20,6 +20,7 @@ impl Explorer {
         self.session_dirty = true;
         let window = &mut self.windows[w];
         let tab = &mut window.tabs[index];
+        tab.clear_search_if_moved();
         let generation = tab.begin_load();
         let tab_id = tab.id();
         let path = tab.path().to_path_buf();
