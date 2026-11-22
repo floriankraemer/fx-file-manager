@@ -659,6 +659,17 @@ fn tabs_inside_a_deleted_folder_move_to_the_nearest_existing_parent() {
 }
 
 #[test]
+fn surviving_parent_is_derived_without_touching_the_filesystem() {
+    use super::file_ops::surviving_parent;
+    let removed = [PathBuf::from("/m/a/b"), PathBuf::from("/m/a")];
+    assert_eq!(
+        surviving_parent(Path::new("/m/a/b/c"), &removed),
+        Some(PathBuf::from("/m"))
+    );
+    assert_eq!(surviving_parent(Path::new("/m/other"), &removed), None);
+}
+
+#[test]
 fn permanent_delete_removes_files_and_trees() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

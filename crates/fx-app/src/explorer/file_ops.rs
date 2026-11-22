@@ -148,8 +148,8 @@ impl Explorer {
     fn reload_tab_after(&mut self, w: usize, index: usize, outcome: &Outcome) {
         let tab = &mut self.windows[w].tabs[index];
         let path = tab.path().to_path_buf();
-        if outcome.removed.iter().any(|gone| path.starts_with(gone)) {
-            tab.navigate_to(nearest_existing(&path));
+        if let Some(parent) = surviving_parent(&path, &outcome.removed) {
+            tab.navigate_to(parent);
             return self.start_load(w, index);
         }
         if !outcome.touched.contains(&path) {
@@ -175,11 +175,14 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
-fn nearest_existing(path: &Path) -> PathBuf {
-    path.ancestors()
-        .find(|a| a.exists())
-        .unwrap_or(path)
-        .to_path_buf()
+/// Where a tab inside a removed folder goes: the parent of the outermost removed folder holding it.
+/// Derived from the outcome alone, so no ancestor is probed on a possibly dead mount.
+pub(super) fn surviving_parent(path: &Path, removed: &[PathBuf]) -> Option<PathBuf> {
+    let outermost = removed
+        .iter()
+        .filter(|gone| path.starts_with(gone))
+        .min_by_key(|gone| gone.components().count())?;
+    Some(outermost.parent().unwrap_or(path).to_path_buf())
 }
 
 /// The name of the entry the operation created directly inside `dir`.
