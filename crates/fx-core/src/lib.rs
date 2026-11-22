@@ -4,6 +4,7 @@ mod copy;
 mod list;
 mod listing;
 mod pool;
+mod search;
 mod sort;
 mod storage;
 mod sys;
@@ -17,6 +18,7 @@ pub use copy::{
 };
 pub use list::{Backend, ListError, ListOptions, Listed, list_dir};
 pub use listing::{Entry, EntryKind, Listing};
+pub use search::{GlobScope, Hit, SearchQuery, search};
 pub use sort::natural_cmp;
 pub use storage::{StorageKind, Strategy};
 #[cfg(windows)]
