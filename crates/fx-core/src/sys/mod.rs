@@ -38,6 +38,9 @@ pub(crate) mod windows;
 #[cfg(windows)]
 pub(crate) use windows as native;
 
+#[cfg(any(target_os = "linux", windows))]
+mod probe_cache;
+
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(target_os = "macos")]

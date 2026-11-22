@@ -1,5 +1,6 @@
 //! Linux backend: getdents64 via `RawDir`, dirfd-relative statx, statfs + sysfs storage detection.
 
+use super::probe_cache::{TtlCache, cached};
 use crate::pool::run_in_pool;
 use crate::{EntryKind, FsCaps, FsKind, Listing, StorageKind, Strategy, VolumeInfo};
 use rayon::prelude::*;
@@ -12,6 +13,7 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Stat calls handed to one rayon task; amortises scheduling over ~tens of microseconds of syscalls.
@@ -179,20 +181,25 @@ fn stat_all(
     results
 }
 
+static STORAGE: Mutex<TtlCache<u64, StorageKind>> = Mutex::new(TtlCache::new());
+static VOLUMES: Mutex<TtlCache<u64, VolumeInfo>> = Mutex::new(TtlCache::new());
+
+/// One `stat` for the volume identity; the `statfs` and sysfs probes run once per volume.
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
+    match rustix::fs::stat(path) {
+        Ok(st) => cached(&STORAGE, st.st_dev, || probe_storage(path, st.st_dev)),
+        Err(e) => unknown_storage(path, e),
+    }
+}
+
+fn probe_storage(path: &Path, dev: u64) -> StorageKind {
     let fs = match statfs(path) {
         Ok(fs) => fs,
         Err(e) => return unknown_storage(path, e),
     };
     // f_type is signed or 32-bit depending on the arch; compare the low 32 bits.
-    if let Some(kind) = kind_from_fs_magic(fs.f_type as u64 & 0xFFFF_FFFF) {
-        return kind;
-    }
-    let st = match rustix::fs::stat(path) {
-        Ok(st) => st,
-        Err(e) => return unknown_storage(path, e),
-    };
-    rotational_kind(major(st.st_dev), minor(st.st_dev))
+    kind_from_fs_magic(fs.f_type as u64 & 0xFFFF_FFFF)
+        .unwrap_or_else(|| rotational_kind(major(dev), minor(dev)))
 }
 
 fn unknown_storage(path: &Path, err: rustix::io::Errno) -> StorageKind {
@@ -229,16 +236,18 @@ fn rotational_kind(major: u32, minor: u32) -> StorageKind {
     kind_from_block_info(rotational.as_deref(), &model)
 }
 
-/// One `stat` and one `statfs`; block-device storage adds a few small sysfs reads.
+/// One `stat` for the volume identity; the `statfs` and sysfs probes run once per volume.
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
-    let st = match rustix::fs::stat(path) {
-        Ok(st) => st,
+    match rustix::fs::stat(path) {
+        Ok(st) => cached(&VOLUMES, st.st_dev, || probe_volume(path, st.st_dev)),
         Err(e) => {
             log::warn!("cannot probe volume of {}: {e}", path.display());
-            return VolumeInfo::unknown(None);
+            VolumeInfo::unknown(None)
         }
-    };
-    let id = st.st_dev;
+    }
+}
+
+fn probe_volume(path: &Path, id: u64) -> VolumeInfo {
     let fs = match statfs(path) {
         Ok(fs) => fs,
         Err(e) => {
@@ -248,21 +257,22 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
     };
     let magic = fs.f_type as u64 & 0xFFFF_FFFF;
     let kind = fs_kind_from_magic(magic);
-    let storage = kind_from_fs_magic(magic).unwrap_or_else(|| {
-        let (major, minor) = (major(id), minor(id));
-        let device = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok();
-        let flag = block_attr(major, minor, "removable");
-        if is_removable(flag.as_deref(), device.as_deref().and_then(Path::to_str)) {
-            StorageKind::Removable
-        } else {
-            rotational_kind(major, minor)
-        }
-    });
     VolumeInfo {
         id: Some(id),
         fs: kind,
-        storage,
+        storage: kind_from_fs_magic(magic).unwrap_or_else(|| block_storage(id)),
         caps: FsCaps::for_fs(kind),
+    }
+}
+
+fn block_storage(dev: u64) -> StorageKind {
+    let (major, minor) = (major(dev), minor(dev));
+    let device = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok();
+    let flag = block_attr(major, minor, "removable");
+    if is_removable(flag.as_deref(), device.as_deref().and_then(Path::to_str)) {
+        StorageKind::Removable
+    } else {
+        rotational_kind(major, minor)
     }
 }
 
