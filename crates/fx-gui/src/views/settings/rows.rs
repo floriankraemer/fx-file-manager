@@ -4,12 +4,15 @@ use super::{CHECK_INDENT, COMBO_WIDTH, Category, FIELD_WIDTH};
 use crate::theme;
 use eframe::egui::{self, RichText, Sense, TextEdit, Ui};
 use fx_app::{
-    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, Language, ListColumn,
-    MAX_FONT_SIZE, MIN_FONT_SIZE, PlaceGroup, Settings, open_with_system, t,
+    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice, Language,
+    ListColumn, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_RESULT_CAP, PlaceGroup, Settings,
+    open_with_system, t,
 };
 
 /// The worker override goes up to robocopy's `/MT` maximum.
 const MAX_COPY_WORKERS: u32 = 128;
+/// Upper bound of the result limit field; a list this long already holds every file of a large disk.
+const MAX_RESULT_CAP: usize = 100_000_000;
 
 /// Mutable state the option rows edit.
 pub struct Form<'a> {
@@ -331,7 +334,55 @@ pub(super) const ROWS: &[Row] = &[
             note(ui, t("settings.verify_copies_note"), CHECK_INDENT);
         },
     },
+    Row {
+        category: Category::Search,
+        group: "settings.group.search",
+        label: "settings.search_result_cap",
+        kind: Kind::Field,
+        show: |ui, f, _| result_cap_row(ui, &mut f.draft.search.result_cap),
+    },
+    Row {
+        category: Category::Search,
+        group: "settings.group.search",
+        label: "settings.search_glob_scope",
+        kind: Kind::Field,
+        show: |ui, f, _| {
+            combo(
+                ui,
+                "search-glob-scope",
+                &mut f.draft.search.glob_scope,
+                &[GlobScopeChoice::Name, GlobScopeChoice::RelativePath],
+                glob_scope_text,
+            );
+            note(ui, t("settings.search_glob_scope_note"), 0.0);
+        },
+    },
+    Row {
+        category: Category::Search,
+        group: "settings.group.search",
+        label: "settings.search_warn_root",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.search.warn_root, l);
+        },
+    },
 ];
+
+fn glob_scope_text(scope: GlobScopeChoice) -> &'static str {
+    match scope {
+        GlobScopeChoice::Name => t("search.scope.name"),
+        GlobScopeChoice::RelativePath => t("search.scope.relative_path"),
+    }
+}
+
+fn result_cap_row(ui: &mut Ui, cap: &mut usize) {
+    ui.add(
+        egui::DragValue::new(cap)
+            .range(MIN_RESULT_CAP..=MAX_RESULT_CAP)
+            .speed(100.0),
+    );
+    note(ui, t("settings.search_result_cap_note"), 0.0);
+}
 
 /// A combo box of `choices`, each shown as `text(choice)`.
 fn combo<T: Copy + PartialEq>(

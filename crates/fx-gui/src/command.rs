@@ -23,6 +23,9 @@ pub enum Command {
     MoveDown,
     MoveUp,
     OpenSelected,
+    Search,
+    CloseSearch,
+    RevealSearchHit,
     Rename,
     Delete,
     DeletePermanent,
@@ -151,6 +154,30 @@ pub const COMMANDS: &[Def] = &[
         "command_group.navigation",
         &["enter"],
         false,
+    ),
+    def(
+        Command::Search,
+        "search",
+        "command.search",
+        "command_group.navigation",
+        &["ctrl+f", "ctrl+e"],
+        true,
+    ),
+    def(
+        Command::CloseSearch,
+        "close_search",
+        "command.close_search",
+        "command_group.navigation",
+        &["escape"],
+        false,
+    ),
+    def(
+        Command::RevealSearchHit,
+        "reveal_search_hit",
+        "command.reveal_search_hit",
+        "command_group.navigation",
+        &["ctrl+enter"],
+        true,
     ),
     def(
         Command::MoveUp,
@@ -424,11 +451,33 @@ pub fn shortcuts(command: Command, overrides: &BTreeMap<String, Vec<String>>) ->
         .collect()
 }
 
+/// Commands that act on the folder listing, which a search result list replaces.
+pub fn needs_folder_listing(command: Command) -> bool {
+    matches!(
+        command,
+        Command::Rename
+            | Command::Delete
+            | Command::DeletePermanent
+            | Command::SelectAll
+            | Command::Copy
+            | Command::Cut
+            | Command::Paste
+            | Command::NewFolder
+            | Command::Properties
+    )
+}
+
 /// Whether `command` applies to the active tab now. Inapplicable commands are shown disabled.
 pub fn enabled(command: Command, explorer: &Explorer) -> bool {
     let tab = explorer.active();
     let selected = tab.selection().len();
+    let search = explorer.search();
+    if search.is_some() && needs_folder_listing(command) {
+        return false;
+    }
     match command {
+        Command::RevealSearchHit => search.is_some_and(|s| s.selected().is_some()),
+        Command::OpenSelected if search.is_some() => search.is_some_and(|s| s.selected().is_some()),
         Command::NextTab | Command::PrevTab | Command::CloseTab => explorer.tabs().len() > 1,
         Command::Back => tab.can_back(),
         Command::Forward => tab.can_forward(),
@@ -553,6 +602,10 @@ mod tests {
             ("ctrl+shift+n", Command::NewFolder),
             ("alt+enter", Command::Properties),
             ("ctrl+comma", Command::OpenSettings),
+            ("ctrl+f", Command::Search),
+            ("ctrl+e", Command::Search),
+            ("escape", Command::CloseSearch),
+            ("ctrl+enter", Command::RevealSearchHit),
             ("f1", Command::About),
             ("ctrl+d", Command::ToggleBookmark),
             ("ctrl+shift+p", Command::Palette),
@@ -567,7 +620,7 @@ mod tests {
                 "{text} -> {command:?}"
             );
         }
-        assert_eq!(keymap.bindings.len(), 26);
+        assert_eq!(keymap.bindings.len(), 30);
     }
 
     #[test]

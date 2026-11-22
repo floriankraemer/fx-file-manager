@@ -192,8 +192,14 @@ verify_copies = "验证复制结果"
 verify_copies_note = "重新读取每个已复制的文件并比较校验和。不一致会作为错误报告。速度较慢。"
 drag_copy_modifier = "放下时按住以复制"
 drag_copy_modifier_note = "不按住时放下会移动项目。"
+search_result_cap = "搜索结果上限"
+search_result_cap_note = "搜索在达到此数量的匹配项后停止。最小值为 100。"
+search_glob_scope = "通配符匹配范围"
+search_glob_scope_note = "适用于包含 * 或 ? 的查询。纯文本始终匹配名称。"
+search_warn_root = "从文件系统根目录搜索前提醒"
 
 [settings.cat]
+search = "搜索"
 general = "常规"
 appearance = "外观"
 fonts = "字体"
@@ -203,6 +209,7 @@ transfers = "复制和移动"
 keyboard = "键盘"
 
 [settings.group]
+search = "搜索"
 interface = "界面"
 startup = "启动"
 files = "文件"
@@ -326,6 +333,7 @@ overwrite_if_newer = "较新时覆盖"
 skip_identical = "跳过相同文件（续传）"
 
 [unit]
+s = "秒"
 b = "字节"
 kb = "KB"
 mb = "MB"
@@ -354,6 +362,9 @@ clipboard = "剪贴板"
 application = "应用程序"
 
 [command]
+search = "在文件夹中搜索"
+close_search = "停止或关闭搜索"
+reveal_search_hit = "在所在文件夹中显示搜索结果"
 new_tab = "新建标签页"
 close_tab = "关闭标签页"
 next_tab = "下一个标签页"
@@ -393,3 +404,32 @@ alt = "Alt（macOS 上为 Option）"
 [drag]
 move.other = "移动 {n} 个项目"
 copy.other = "复制 {n} 个项目"
+
+[search]
+col_folder = "文件夹"
+glob = "* ? 通配符"
+placeholder = "在 {folder} 中搜索"
+stop = "停止"
+clear = "清除"
+running = "正在搜索…"
+complete = "已完成"
+stopped = "已停止"
+stopped_at_cap = "已达上限而停止"
+cap_note = "显示前 {n} 个匹配项。请细化查询以查看更多。"
+failed = "搜索失败：{error}"
+no_matches = "没有文件或文件夹匹配“{query}”"
+reveal = "在文件夹中显示"
+network_slow = "正在搜索网络驱动器，可能需要较长时间"
+matches.other = "{n} 个匹配项"
+folders.other = "已遍历 {n} 个文件夹"
+unreadable.other = "{n} 个文件夹无法读取"
+
+[search.scope]
+name = "仅文件名"
+relative_path = "相对于搜索文件夹的路径"
+
+[search.root_notice]
+title = "搜索整个驱动器？"
+body = "从 {root} 开始搜索会遍历此驱动器上的每个文件夹，可能耗时很长。你可以随时停止。"
+continue = "搜索"
+dont_show = "不再显示"

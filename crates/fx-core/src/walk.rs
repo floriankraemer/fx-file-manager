@@ -7,7 +7,7 @@ use crate::storage::{StorageKind, Strategy};
 use crate::sys;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::thread;
 
 #[derive(Clone, Copy, Debug)]
@@ -46,6 +46,15 @@ pub struct Walked {
 
 type Enumerate = fn(&Path, &Strategy, bool, &mut Listing) -> io::Result<()>;
 
+/// Live counters a caller can read from another thread while a walk runs.
+#[derive(Debug, Default)]
+pub struct WalkProgress {
+    /// Directories read so far, the root included.
+    pub dirs_read: AtomicU64,
+    /// Subdirectories that could not be read so far.
+    pub unreadable: AtomicU64,
+}
+
 #[derive(Default)]
 struct Counters {
     files: AtomicU64,
@@ -59,6 +68,8 @@ struct Walk<'a, F> {
     enumerate: Enumerate,
     strategy: Strategy,
     on_dir: &'a F,
+    cancel: &'a AtomicBool,
+    progress: &'a WalkProgress,
     counters: Counters,
 }
 
@@ -66,6 +77,27 @@ struct Walk<'a, F> {
 /// (root included), from many threads, in no particular order. Unsorted.
 /// A root that cannot be read is an error; unreadable subdirectories only bump `errors`.
 pub fn walk<F>(root: &Path, opts: &WalkOptions, on_dir: F) -> Result<Walked, ListError>
+where
+    F: Fn(&Path, &Listing) + Sync,
+{
+    walk_cancellable(
+        root,
+        opts,
+        &AtomicBool::new(false),
+        &WalkProgress::default(),
+        on_dir,
+    )
+}
+
+/// Like [`walk`], but stops reading directories once `cancel` is set and publishes live counts to `progress`.
+/// Returns normally; the stats cover what was visited before the stop.
+pub fn walk_cancellable<F>(
+    root: &Path,
+    opts: &WalkOptions,
+    cancel: &AtomicBool,
+    progress: &WalkProgress,
+    on_dir: F,
+) -> Result<Walked, ListError>
 where
     F: Fn(&Path, &Listing) + Sync,
 {
@@ -87,6 +119,8 @@ where
         enumerate,
         strategy,
         on_dir: &on_dir,
+        cancel,
+        progress,
         counters: Counters::default(),
     };
     let walk = &walk;
@@ -110,6 +144,10 @@ where
 
 impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
     fn visit<'s>(&'s self, scope: &rayon::Scope<'s>, dir: &Path, listing: &Listing) {
+        if self.cancelled() {
+            return;
+        }
+        self.progress.dirs_read.fetch_add(1, Relaxed);
         (self.on_dir)(dir, listing);
         let c = &self.counters;
         for e in &listing.entries {
@@ -127,14 +165,22 @@ impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
         }
     }
 
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Relaxed)
+    }
+
     fn visit_dir<'s>(&'s self, scope: &rayon::Scope<'s>, dir: &Path) {
         // ponytail: path-based; openat(parent_fd, name) on Linux is the upgrade path
         // (skips re-resolving the whole path per directory) if profiling shows path lookup dominates.
+        if self.cancelled() {
+            return;
+        }
         let mut listing = Listing::default();
         match (self.enumerate)(dir, &self.strategy, false, &mut listing) {
             Ok(()) => self.visit(scope, dir, &listing),
             Err(_) => {
                 self.counters.errors.fetch_add(1, Relaxed);
+                self.progress.unreadable.fetch_add(1, Relaxed);
             }
         }
     }

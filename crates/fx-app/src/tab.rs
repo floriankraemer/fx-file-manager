@@ -1,5 +1,6 @@
 //! One explorer tab: location, history, load state, the visible row order, and the selection.
 
+use crate::search::{SearchEvent, SearchView};
 use crate::settings::FolderOrder;
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
 use std::collections::BTreeSet;
@@ -36,6 +37,9 @@ pub struct Tab {
     filter: String,
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
+    /// Bumped per search and per clear; worker results carrying an older value are stale and dropped.
+    search_generation: u64,
+    search: Option<SearchView>,
 }
 
 impl Tab {
@@ -61,6 +65,8 @@ impl Tab {
             filter: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
+            search_generation: 0,
+            search: None,
         }
     }
 
@@ -263,6 +269,59 @@ impl Tab {
 
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn search(&self) -> Option<&SearchView> {
+        self.search.as_ref()
+    }
+
+    pub(crate) fn search_mut(&mut self) -> Option<&mut SearchView> {
+        self.search.as_mut()
+    }
+
+    /// Replaces any search with a new one rooted at the tab's path and returns the generation its results must carry.
+    /// Dropping the old view cancels its walk.
+    pub(crate) fn begin_search(&mut self, query: String, cap: usize) -> (u64, &SearchView) {
+        self.search_generation += 1;
+        let view = self
+            .search
+            .insert(SearchView::new(self.path.clone(), query, cap));
+        (self.search_generation, view)
+    }
+
+    pub(crate) fn cancel_search(&mut self) {
+        if let Some(search) = &mut self.search {
+            search.cancel();
+        }
+    }
+
+    /// Drops the search and its results, and makes any in-flight batch stale.
+    pub(crate) fn clear_search(&mut self) {
+        self.search_generation += 1;
+        self.search = None;
+    }
+
+    /// A search is rooted where the tab was when it started; once the tab is elsewhere it goes away.
+    pub(crate) fn clear_search_if_moved(&mut self) {
+        let moved = self.search.as_ref().is_some_and(|s| s.root() != self.path);
+        if moved {
+            self.clear_search();
+        }
+    }
+
+    /// Returns true if the event belonged to the current search and changed it.
+    pub(crate) fn apply_search(
+        &mut self,
+        generation: u64,
+        event: SearchEvent,
+        show_hidden: bool,
+    ) -> bool {
+        if generation != self.search_generation {
+            return false;
+        }
+        self.search
+            .as_mut()
+            .is_some_and(|search| search.apply(event, show_hidden))
     }
 
     /// Marks the tab as loading and returns the generation the new result must carry.

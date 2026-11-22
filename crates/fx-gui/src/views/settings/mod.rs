@@ -27,6 +27,7 @@ pub enum Category {
     Listing,
     Behavior,
     Transfers,
+    Search,
     Keyboard,
 }
 
@@ -45,13 +46,14 @@ const COMBO_WIDTH: f32 = 240.0;
 const BUTTON_MIN_WIDTH: f32 = 84.0;
 
 impl Category {
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::General,
         Category::Appearance,
         Category::Fonts,
         Category::Listing,
         Category::Behavior,
         Category::Transfers,
+        Category::Search,
         Category::Keyboard,
     ];
 
@@ -63,6 +65,7 @@ impl Category {
             Category::Listing => t("settings.cat.listing"),
             Category::Behavior => t("settings.cat.behavior"),
             Category::Transfers => t("settings.cat.transfers"),
+            Category::Search => t("settings.cat.search"),
             Category::Keyboard => t("settings.cat.keyboard"),
         }
     }

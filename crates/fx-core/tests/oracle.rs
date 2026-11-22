@@ -216,3 +216,27 @@ fn walk_root_errors_are_errors() {
     let e = walk(&tmp.path().join("nope"), &WalkOptions::default(), |_, _| {}).unwrap_err();
     assert!(matches!(e, fx_core::ListError::NotFound(_)), "{e}");
 }
+
+#[test]
+fn cancelled_walk_stops_early_with_valid_stats() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+    let tmp = tempfile::tempdir().unwrap();
+    for i in 0..200 {
+        fs::create_dir_all(tmp.path().join(format!("d{i}/sub"))).unwrap();
+    }
+    let cancel = AtomicBool::new(false);
+    let seen = AtomicU64::new(0);
+    let walked = fx_core::walk_cancellable(
+        tmp.path(),
+        &WalkOptions::default(),
+        &cancel,
+        &fx_core::WalkProgress::default(),
+        |_, _| {
+            seen.fetch_add(1, Relaxed);
+            cancel.store(true, Relaxed);
+        },
+    )
+    .unwrap();
+    assert_eq!(seen.load(Relaxed), 1, "only the root is visited");
+    assert!(walked.stats.dirs <= 200);
+}
