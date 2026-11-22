@@ -2,16 +2,30 @@
 
 use super::Explorer;
 use crate::search::{SearchEvent, SearchView};
-use fx_core::{SearchQuery, WalkOptions, WalkProgress, search};
-use std::path::PathBuf;
+use fx_core::{ListError, SearchQuery, WalkOptions, WalkProgress, Walked, search};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
+use std::time::Instant;
 
 pub(super) struct SearchMsg {
     tab_id: u64,
     generation: u64,
     event: SearchEvent,
+}
+
+fn log_search_end(root: &Path, walked: &Result<Walked, ListError>, started: Instant) {
+    match walked {
+        Ok(w) => log::info!(
+            "search in {} walked {} dirs, {} unreadable, in {:?}",
+            root.display(),
+            w.stats.dirs,
+            w.stats.errors,
+            started.elapsed()
+        ),
+        Err(err) => log::warn!("search root {} failed: {err}", root.display()),
+    }
 }
 
 impl Explorer {
@@ -126,9 +140,11 @@ impl Explorer {
                 wake();
             };
             let opts = WalkOptions::default();
+            let started = Instant::now();
             let walked = search(&root, &query, &opts, &cancel, &progress, |hits| {
                 send(SearchEvent::Hits(hits))
             });
+            log_search_end(&root, &walked, started);
             send(SearchEvent::Done(
                 walked.map(|w| w.stats).map_err(|e| e.to_string()),
             ));
