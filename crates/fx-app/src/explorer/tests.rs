@@ -1481,7 +1481,20 @@ fn search_tree() -> tempfile::TempDir {
     fs::write(root.join("sub").join("beta.txt"), b"").unwrap();
     fs::write(root.join(".secret").join("alpha_in_secret.txt"), b"").unwrap();
     fs::write(root.join(".alpha_dot"), b"").unwrap();
+    hide_on_windows(&root.join(".alpha_dot"));
     dir
+}
+
+/// Windows hides by attribute, not by leading dot.
+fn hide_on_windows(path: &Path) {
+    if cfg!(windows) {
+        let status = std::process::Command::new("attrib")
+            .arg("+H")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
 }
 
 fn search_explorer(root: &Path, search: SearchSettings) -> Explorer {
