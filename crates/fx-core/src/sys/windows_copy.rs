@@ -8,7 +8,7 @@ pub(crate) use super::std_copy::{
 
 use super::windows::wide_path;
 use crate::EntryKind;
-use crate::copy::pipeline::{Copied, FileCtx, Meter, is_unsupported};
+use crate::copy::pipeline::{Copied, FileCtx, Meter};
 use crate::copy::{Meta, Method, progress::cancelled};
 use crate::volume::FsCaps;
 use std::ffi::{OsStr, OsString, c_void};
@@ -120,8 +120,10 @@ pub(crate) fn copy_file(
     if src.meta.sparse {
         // CopyFile2 is not documented to keep holes, so sparse files take the range-aware path;
         // destinations without sparse support (FAT, exFAT, shares) fall back to the dense chain.
-        match created(ctx, &dst_path, sparse_copy(ctx, src, &dst_path)) {
-            Err(e) if e.kind() == io::ErrorKind::Unsupported => {}
+        match created(ctx, &dst_path, |m| sparse_copy(src, &dst_path, ctx, m)) {
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+                log::debug!("{} is copied dense: {e}", dst_path.display());
+            }
             other => return other,
         }
     }
@@ -130,12 +132,14 @@ pub(crate) fn copy_file(
             continue;
         }
         let result = match method {
-            Method::CopyFile2 => created(ctx, &dst_path, copy_file2(ctx, src, &dst_path)),
-            Method::DuplicateExtents => {
-                created(ctx, &dst_path, duplicate_extents(ctx, src, &dst_path))
-            }
+            Method::CopyFile2 => created(ctx, &dst_path, |m| {
+                copy_file2(ctx, src, &dst_path, m).map(|cloned| (cloned, Vec::new()))
+            }),
+            Method::DuplicateExtents => created(ctx, &dst_path, |m| {
+                duplicate_extents(ctx, src, &dst_path, m)
+            }),
             Method::RawSmall if src.meta.size < RAW_SMALL_MAX => {
-                created(ctx, &dst_path, raw_small(ctx, src, &dst_path))
+                created(ctx, &dst_path, |m| raw_small(ctx, src, &dst_path, m))
             }
             Method::ReadWrite => {
                 return super::std_copy::copy_file(ctx, src, src_dir, name, dst, dst_name, None);
@@ -143,9 +147,9 @@ pub(crate) fn copy_file(
             _ => continue,
         };
         match result {
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists && is_unsupported(&e) => {
-                ctx.cache.disable(method)
-            }
+            Err(e)
+                if e.kind() != io::ErrorKind::AlreadyExists
+                    && ctx.fall_back(method, &e, &dst_path) => {}
             other => return other,
         }
     }
@@ -155,23 +159,31 @@ pub(crate) fn copy_file(
     ))
 }
 
-/// Shared tail of the methods that create `dst` themselves: durability for moves, cleanup on failure.
-/// `copy_file` checked that `dst` did not exist, and every method creates it exclusively, so on any
-/// error but `AlreadyExists` whatever is at `dst` is ours to remove.
-fn created(ctx: &FileCtx<'_>, dst: &Path, result: io::Result<bool>) -> io::Result<Copied> {
-    let result = result.and_then(|cloned| {
+/// What a method that creates `dst` itself reports: whether it cloned, and its metadata warnings.
+type Outcome = (bool, Vec<io::Error>);
+
+/// Shared tail of the methods that create `dst` themselves: byte accounting, durability for moves,
+/// cleanup on failure. `copy_file` checked that `dst` did not exist, and every method creates it
+/// exclusively, so on any error but `AlreadyExists` whatever is at `dst` is ours to remove.
+fn created(
+    ctx: &FileCtx<'_>,
+    dst: &Path,
+    run: impl FnOnce(&mut Meter<'_>) -> io::Result<Outcome>,
+) -> io::Result<Copied> {
+    let mut meter = ctx.meter();
+    let result = run(&mut meter).and_then(|(cloned, warnings)| {
         if ctx.durable {
             flush(dst)?;
         }
-        Ok(Copied {
-            cloned,
-            warnings: Vec::new(),
-        })
+        Ok(Copied { cloned, warnings })
     });
-    if let Err(e) = &result
-        && e.kind() != io::ErrorKind::AlreadyExists
-    {
-        let _ = remove_ours(dst);
+    if let Err(e) = &result {
+        meter.rollback();
+        if e.kind() != io::ErrorKind::AlreadyExists
+            && let Err(remove) = remove_ours(dst)
+        {
+            log::warn!("cannot remove the partial copy {}: {remove}", dst.display());
+        }
     }
     result
 }
@@ -214,9 +226,9 @@ fn remove_ours(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
-struct Callback<'a, 'b> {
+struct Callback<'a, 'b, 'm> {
     ctx: &'a FileCtx<'b>,
-    meter: Meter<'a>,
+    meter: &'a mut Meter<'m>,
     reported: u64,
 }
 
@@ -226,7 +238,7 @@ unsafe extern "system" fn progress(
 ) -> COPYFILE2_MESSAGE_ACTION {
     // SAFETY: `context` is the `Callback` passed to CopyFile2 below, alive for the whole call;
     // CopyFile2 invokes the routine on the calling thread only.
-    let cb = unsafe { &mut *(context as *mut Callback<'_, '_>) };
+    let cb = unsafe { &mut *(context as *mut Callback<'_, '_, '_>) };
     // SAFETY: CopyFile2 passes a valid message; the union member matches its type.
     let msg = unsafe { &*msg };
     if msg.Type == COPYFILE2_CALLBACK_CHUNK_FINISHED {
@@ -242,7 +254,7 @@ unsafe extern "system" fn progress(
     }
 }
 
-fn copy_file2(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
+fn copy_file2(ctx: &FileCtx<'_>, src: &Src, dst: &Path, meter: &mut Meter<'_>) -> io::Result<bool> {
     ctx.shared.checkpoint()?;
     let (from, to) = (wide_path(&src.path), wide_path(dst));
     let mut flags = COPY_FILE_FAIL_IF_EXISTS | COPY_FILE_COPY_SYMLINK;
@@ -255,7 +267,7 @@ fn copy_file2(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
     }
     let mut cb = Callback {
         ctx,
-        meter: ctx.meter(),
+        meter,
         reported: 0,
     };
     let params = COPYFILE2_EXTENDED_PARAMETERS {
@@ -272,7 +284,6 @@ fn copy_file2(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
         cb.meter.add(src.meta.size.saturating_sub(cb.reported));
         return Ok(false);
     }
-    cb.meter.rollback();
     // HRESULT_FROM_WIN32: facility 7 carries the Win32 code in the low word.
     let code = if (hr as u32) & 0xFFFF_0000 == 0x8007_0000 {
         (hr as u32 & 0xFFFF) as i32
@@ -296,7 +307,19 @@ fn create_like(src: &Src, dst: &Path) -> io::Result<(File, File)> {
     Ok((input, out))
 }
 
-fn finish_like(src: &Src, input: &File, out: &File, dst: &Path) -> io::Result<()> {
+/// The times and attributes of the source. The content is complete by now, so a failure is a warning.
+fn finish_like(src: &Src, input: &File, out: &File, dst: &Path) -> Vec<io::Error> {
+    let mut warnings = Vec::new();
+    if let Err(e) = copy_times(input, out) {
+        warnings.push(e);
+    }
+    if let Err(e) = set_attributes(dst, src.meta.mode) {
+        warnings.push(e);
+    }
+    warnings
+}
+
+fn copy_times(input: &File, out: &File) -> io::Result<()> {
     let md = input.metadata()?;
     let mut times = FileTimes::new()
         .set_accessed(md.accessed()?)
@@ -304,8 +327,7 @@ fn finish_like(src: &Src, input: &File, out: &File, dst: &Path) -> io::Result<()
     if let Ok(created) = md.created() {
         times = times.set_created(created);
     }
-    out.set_times(times)?;
-    set_attributes(dst, src.meta.mode)
+    out.set_times(times)
 }
 
 fn set_attributes(path: &Path, attributes: u32) -> io::Result<()> {
@@ -376,62 +398,63 @@ fn copy_range(
     Ok(())
 }
 
-fn sparse_copy(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
+fn sparse_copy(
+    src: &Src,
+    dst: &Path,
+    ctx: &FileCtx<'_>,
+    meter: &mut Meter<'_>,
+) -> io::Result<Outcome> {
     let (input, out) = create_like(src, dst)?;
     let unsupported = |e: io::Error| io::Error::new(io::ErrorKind::Unsupported, e);
     ioctl::<(), ()>(raw(&out), FSCTL_SET_SPARSE, None, None).map_err(unsupported)?;
     let size = src.meta.size;
     let ranges = allocated_ranges(&input, size).map_err(unsupported)?;
     out.set_len(size)?;
-    let mut meter = ctx.meter();
-    let result = (|| {
-        let mut buf = vec![0u8; CHUNK.min(ctx.plan.buf_size.max(64 << 10))];
-        for range in ranges {
-            copy_range(ctx, &input, &out, range, &mut buf, &mut meter)?;
-        }
-        finish_like(src, &input, &out, dst)
-    })();
-    if result.is_err() {
-        meter.rollback();
+    let mut buf = vec![0u8; CHUNK.min(ctx.plan.buf_size.max(64 << 10))];
+    for range in ranges {
+        copy_range(ctx, &input, &out, range, &mut buf, meter)?;
     }
-    result.map(|()| false)
+    Ok((false, finish_like(src, &input, &out, dst)))
 }
 
 /// Experimental (issue #22): one read and one write for a small file, plus times and attributes.
 /// Unlike `CopyFile2` it does not carry alternate data streams or security descriptors.
-fn raw_small(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
+fn raw_small(
+    ctx: &FileCtx<'_>,
+    src: &Src,
+    dst: &Path,
+    meter: &mut Meter<'_>,
+) -> io::Result<Outcome> {
     ctx.shared.checkpoint()?;
     let size = src.meta.size as usize;
     let (input, out) = create_like(src, dst)?;
-    let mut meter = ctx.meter();
-    let result = (|| {
-        let mut buf = vec![0u8; size];
-        let mut read = 0;
-        while read < size {
-            match input.seek_read(&mut buf[read..], read as u64)? {
-                0 => {
-                    return Err(io::Error::other(
-                        "the file changed while it was being copied",
-                    ));
-                }
-                n => read += n,
+    let mut buf = vec![0u8; size];
+    let mut read = 0;
+    while read < size {
+        match input.seek_read(&mut buf[read..], read as u64)? {
+            0 => {
+                return Err(io::Error::other(
+                    "the file changed while it was being copied",
+                ));
             }
+            n => read += n,
         }
-        let mut written = 0;
-        while written < size {
-            written += out.seek_write(&buf[written..], written as u64)?;
-        }
-        meter.add(size as u64);
-        finish_like(src, &input, &out, dst)
-    })();
-    if result.is_err() {
-        meter.rollback();
     }
-    result.map(|()| false)
+    let mut written = 0;
+    while written < size {
+        written += out.seek_write(&buf[written..], written as u64)?;
+    }
+    meter.add(size as u64);
+    Ok((false, finish_like(src, &input, &out, dst)))
 }
 
 /// ReFS block cloning: same volume, cluster-aligned ranges, matching integrity-stream settings.
-fn duplicate_extents(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<bool> {
+fn duplicate_extents(
+    ctx: &FileCtx<'_>,
+    src: &Src,
+    dst: &Path,
+    meter: &mut Meter<'_>,
+) -> io::Result<Outcome> {
     ctx.shared.checkpoint()?;
     let (input, out) = create_like(src, dst)?;
     let mut integrity = FSCTL_GET_INTEGRITY_INFORMATION_BUFFER::default();
@@ -469,9 +492,8 @@ fn duplicate_extents(ctx: &FileCtx<'_>, src: &Src, dst: &Path) -> io::Result<boo
         )?;
         off += len;
     }
-    ctx.meter().add(size);
-    finish_like(src, &input, &out, dst)?;
-    Ok(true)
+    meter.add(size);
+    Ok((true, finish_like(src, &input, &out, dst)))
 }
 
 /// Post-order times and attributes; a directory handle needs `FILE_FLAG_BACKUP_SEMANTICS`.

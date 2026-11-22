@@ -419,8 +419,10 @@ impl MethodCache {
         self.0.load(Relaxed) & (1 << m as u8) == 0
     }
 
-    pub(crate) fn disable(&self, m: Method) {
-        self.0.fetch_or(1 << m as u8, Relaxed);
+    /// True when this call disabled the method, false when it already was.
+    pub(crate) fn disable(&self, m: Method) -> bool {
+        let bit = 1 << m as u8;
+        self.0.fetch_or(bit, Relaxed) & bit == 0
     }
 }
 

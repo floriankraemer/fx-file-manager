@@ -3,7 +3,7 @@
 //! Linux `FICLONE` -> `copy_file_range` -> `sendfile` -> read/write, macOS `fclonefileat` -> read/write.
 
 use crate::EntryKind;
-use crate::copy::pipeline::{Copied, FileCtx, is_unsupported};
+use crate::copy::pipeline::{Copied, FileCtx};
 use crate::copy::{Meta, Method, Time};
 use crate::volume::FsCaps;
 use rustix::fs::{
@@ -24,6 +24,7 @@ use std::sync::OnceLock;
 mod experimental;
 
 /// Bounds cancel latency and progress granularity of in-kernel copies.
+#[cfg(target_os = "linux")]
 const CHUNK: usize = 16 * 1024 * 1024;
 
 pub(crate) struct Dir {
@@ -118,13 +119,23 @@ impl Dir {
                 continue;
             }
             let name = OsStr::from_bytes(name);
-            let kind = match entry.file_type() {
-                FileType::Unknown => self.stat_at(name)?.kind,
-                t => kind_of(t),
-            };
-            out.push((name.to_os_string(), kind));
+            if let Some(kind) = self.entry_kind(name, entry.file_type())? {
+                out.push((name.to_os_string(), kind));
+            }
         }
         Ok(out)
+    }
+
+    /// `None` for an entry that vanished between the listing and its `fstatat`.
+    fn entry_kind(&self, name: &OsStr, t: FileType) -> io::Result<Option<EntryKind>> {
+        if t != FileType::Unknown {
+            return Ok(Some(kind_of(t)));
+        }
+        match self.stat_at(name) {
+            Ok(m) => Ok(Some(m.kind)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -175,8 +186,15 @@ pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
-    let meta = meta(&fstat(&fd)?);
+    let mut meta = meta(&fstat(&fd)?);
+    // Compressed filesystems allocate fewer blocks than the size without having holes.
+    meta.sparse = meta.sparse && has_hole(fd.as_fd(), meta.size);
     Ok(Src { fd, meta })
+}
+
+/// Whether `SEEK_HOLE` finds a hole before the end of the file; the implicit hole at EOF does not count.
+fn has_hole(fd: BorrowedFd<'_>, size: u64) -> bool {
+    seek(fd, SeekFrom::Hole(0)).is_ok_and(|hole| hole < size)
 }
 
 /// Flushes the file `name` of `dir` to disk.
@@ -186,22 +204,22 @@ pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
     Ok(rustix::fs::fsync(fd)?)
 }
 
+/// Reads the file as it was when opened: at most `meta.size` bytes, even if it has grown since.
 pub(crate) fn read_all(src: &Src, out: &mut Vec<u8>) -> io::Result<()> {
+    let size = src.meta.size as usize;
     out.clear();
-    out.reserve(src.meta.size as usize);
-    let mut chunk = vec![0u8; (src.meta.size as usize).clamp(4096, CHUNK)];
-    let mut off = 0u64;
-    loop {
-        match rustix::io::pread(&src.fd, &mut chunk[..], off) {
-            Ok(0) => return Ok(()),
-            Ok(n) => {
-                out.extend_from_slice(&chunk[..n]);
-                off += n as u64;
-            }
+    out.resize(size, 0);
+    let mut off = 0;
+    while off < size {
+        match rustix::io::pread(&src.fd, &mut out[off..], off as u64) {
+            Ok(0) => break,
+            Ok(n) => off += n,
             Err(Errno::INTR) => {}
             Err(e) => return Err(e.into()),
         }
     }
+    out.truncate(off);
+    Ok(())
 }
 
 fn timestamps(m: &Meta) -> Timestamps {
@@ -258,7 +276,7 @@ pub(crate) fn copy_file(
                 meter.add(data.len() as u64);
                 false
             }
-            None => write_data(ctx, src, out.as_fd(), &mut meter)?,
+            None => write_data(ctx, src, out.as_fd(), &mut meter, (dst, dst_name))?,
         };
         let warnings = copy_metadata(ctx, src, out.as_fd(), cloned);
         if ctx.durable {
@@ -269,9 +287,21 @@ pub(crate) fn copy_file(
     if result.is_err() {
         meter.rollback();
         drop(out);
-        let _ = unlinkat(&dst.fd, dst_name, AtFlags::empty());
+        remove_debris(dst, dst_name);
     }
     result
+}
+
+/// Removes a partial copy; one that stays behind is worth a warning.
+fn remove_debris(dst: &Dir, name: &OsStr) {
+    if let Err(e) = unlinkat(&dst.fd, name, AtFlags::empty())
+        && e != Errno::NOENT
+    {
+        log::warn!(
+            "cannot remove the partial copy {}: {e}",
+            at((dst, name)).display()
+        );
+    }
 }
 
 fn write_at(fd: BorrowedFd<'_>, mut data: &[u8], mut off: u64) -> io::Result<()> {
@@ -289,7 +319,12 @@ fn write_at(fd: BorrowedFd<'_>, mut data: &[u8], mut off: u64) -> io::Result<()>
     Ok(())
 }
 
-/// Byte ranges holding data; `[(0, u64::MAX)]` means "everything, to EOF" (dense files and growing files).
+/// The whole file as one region. A file that reports no size (procfs) is read to EOF.
+fn dense(size: u64) -> (u64, u64) {
+    (0, if size == 0 { u64::MAX } else { size })
+}
+
+/// Byte ranges holding data of a sparse file.
 fn data_regions(fd: BorrowedFd<'_>, size: u64) -> io::Result<Vec<(u64, u64)>> {
     let mut regions = Vec::new();
     let mut pos = 0;
@@ -298,7 +333,7 @@ fn data_regions(fd: BorrowedFd<'_>, size: u64) -> io::Result<Vec<(u64, u64)>> {
             Ok(start) => start,
             Err(Errno::NXIO) => break,
             // No SEEK_DATA support: treat the file as dense.
-            Err(_) => return Ok(vec![(0, u64::MAX)]),
+            Err(_) => return Ok(vec![dense(size)]),
         };
         let end = match seek(fd, SeekFrom::Hole(start)) {
             Ok(end) => end.min(size),
@@ -319,13 +354,17 @@ fn write_data(
     src: &Src,
     out: BorrowedFd<'_>,
     meter: &mut crate::copy::pipeline::Meter<'_>,
+    dst: (&Dir, &OsStr),
 ) -> io::Result<bool> {
     let size = src.meta.size;
     // copy_file_range alone fills holes: walk the data regions of sparse files instead.
-    let regions = if src.meta.sparse {
-        data_regions(src.fd.as_fd(), size)?
+    let sparse_regions;
+    let whole = [dense(size)];
+    let regions: &[(u64, u64)] = if src.meta.sparse {
+        sparse_regions = data_regions(src.fd.as_fd(), size)?;
+        &sparse_regions
     } else {
-        vec![(0, u64::MAX)]
+        &whole
     };
     let large = size >= ctx.plan.large_file;
     let uncached = ctx.plan.uncached_from.is_some_and(|limit| size >= limit);
@@ -350,7 +389,7 @@ fn write_data(
             }
         }
         tried = true;
-        let result = run_method(method, ctx, src, out, &regions, meter, uncached);
+        let result = run_method(method, ctx, src, out, regions, meter, uncached);
         match result {
             Ok(()) => {
                 if src.meta.sparse && !method.clones() {
@@ -359,9 +398,7 @@ fn write_data(
                 }
                 return Ok(method.clones());
             }
-            Err(e) if method != Method::ReadWrite && is_unsupported(&e) => {
-                ctx.cache.disable(method)
-            }
+            Err(e) if method != Method::ReadWrite && ctx.fall_back(method, &e, &at(dst)) => {}
             Err(e) => return Err(e),
         }
     }
@@ -369,6 +406,10 @@ fn write_data(
         io::ErrorKind::Unsupported,
         "no copy method of the plan works for this file",
     ))
+}
+
+fn at(dst: (&Dir, &OsStr)) -> PathBuf {
+    dst.0.path().join(dst.1)
 }
 
 /// Methods `write_data` runs on the opened destination on this OS.
@@ -740,7 +781,9 @@ pub(crate) fn raise_fd_limit() {
         let want = limit.maximum.unwrap_or(cap).min(cap);
         if limit.current.is_some_and(|c| c < want) {
             limit.current = Some(want);
-            let _ = setrlimit(Resource::Nofile, limit);
+            if let Err(e) = setrlimit(Resource::Nofile, limit) {
+                log::warn!("cannot raise the open file limit to {want}: {e}");
+            }
         }
     });
 }
@@ -793,10 +836,12 @@ mod linux {
         for &region in regions {
             copied += copy_region(ctx, src, out, region, meter, kind, uncached)?;
         }
-        // 5.3-5.18 returned 0 without copying on some virtual filesystems.
-        if copied == 0 && src.meta.size > 0 && kind == Kind::CopyFileRange {
+        // 5.3-5.18 returned 0 without copying on some virtual filesystems. An all-hole file has no
+        // regions and a file that shrank has nothing left: neither says anything about the method,
+        // so only this file goes to the next one.
+        if copied == 0 && src.meta.size > 0 && !regions.is_empty() && kind == Kind::CopyFileRange {
             return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
+                io::ErrorKind::InvalidInput,
                 "copy_file_range copied nothing",
             ));
         }
@@ -857,41 +902,76 @@ mod linux {
         }
     }
 
+    /// All xattr names of `src`, NUL separated; empty when there are none (no allocation then).
+    fn list_xattrs(src: BorrowedFd<'_>, warnings: &mut Vec<io::Error>) -> Vec<u8> {
+        use rustix::fs::flistxattr;
+        // Most files have none or a few short names: the stack buffer avoids any allocation.
+        let mut small = [0u8; 256];
+        let mut size = 4096;
+        let mut result = flistxattr(src, &mut small[..]).map(|len| small[..len].to_vec());
+        while result == Err(Errno::RANGE) {
+            let mut names = vec![0u8; size];
+            result = flistxattr(src, &mut names[..]).map(|len| {
+                names.truncate(len);
+                names
+            });
+            size *= 4;
+        }
+        match result {
+            Ok(names) => names,
+            // No xattrs support on the source filesystem: nothing to copy.
+            Err(Errno::OPNOTSUPP | Errno::NOSYS) => Vec::new(),
+            Err(e) => fail_listing(e, warnings),
+        }
+    }
+
+    fn fail_listing(e: Errno, warnings: &mut Vec<io::Error>) -> Vec<u8> {
+        warnings.push(e.into());
+        Vec::new()
+    }
+
+    /// The value of one attribute; `None` when it cannot be read (a failure other than a vanished
+    /// attribute is logged).
+    fn read_xattr(
+        src: BorrowedFd<'_>,
+        name: &std::ffi::CStr,
+        value: &mut Vec<u8>,
+    ) -> Option<usize> {
+        use rustix::fs::fgetxattr;
+        if value.is_empty() {
+            value.resize(4096, 0);
+        }
+        loop {
+            match fgetxattr(src, name, &mut value[..]) {
+                Ok(n) => return Some(n),
+                Err(Errno::RANGE) => value.resize(value.len() * 4, 0),
+                Err(Errno::NODATA) => return None,
+                Err(e) => {
+                    log::warn!("cannot read xattr {name:?}: {e}");
+                    return None;
+                }
+            }
+        }
+    }
+
     /// `security.*` labels belong to the destination's policy, so their failures are ignored.
     pub(super) fn copy_xattrs(
         src: BorrowedFd<'_>,
         out: BorrowedFd<'_>,
         warnings: &mut Vec<io::Error>,
     ) {
-        use rustix::fs::{XattrFlags, fgetxattr, flistxattr, fsetxattr};
-        let mut names = vec![0u8; 1024];
-        let len = loop {
-            match flistxattr(src, &mut names[..]) {
-                Ok(len) => break len,
-                Err(Errno::RANGE) => names.resize(names.len() * 4, 0),
-                // No xattrs support on the source filesystem: nothing to copy.
-                Err(Errno::OPNOTSUPP | Errno::NOSYS) => return,
-                Err(e) => {
-                    warnings.push(e.into());
-                    return;
-                }
-            }
-        };
-        let mut value = vec![0u8; 4096];
-        for name in names[..len].split(|&b| b == 0).filter(|n| !n.is_empty()) {
+        use rustix::fs::{XattrFlags, fsetxattr};
+        let names = list_xattrs(src, warnings);
+        let mut value = Vec::new();
+        for name in names.split(|&b| b == 0).filter(|n| !n.is_empty()) {
             let Ok(name) =
                 std::ffi::CStr::from_bytes_with_nul(&[name, b"\0"].concat()).map(|c| c.to_owned())
             else {
                 continue;
             };
-            let n = loop {
-                match fgetxattr(src, name.as_c_str(), &mut value[..]) {
-                    Ok(n) => break Some(n),
-                    Err(Errno::RANGE) => value.resize(value.len() * 4, 0),
-                    Err(_) => break None,
-                }
+            let Some(n) = read_xattr(src, name.as_c_str(), &mut value) else {
+                continue;
             };
-            let Some(n) = n else { continue };
             match fsetxattr(out, name.as_c_str(), &value[..n], XattrFlags::empty()) {
                 Ok(()) => {}
                 Err(_) if name.to_bytes().starts_with(b"security.") => {}
@@ -963,8 +1043,8 @@ mod linux {
 mod macos {
     use super::{Dir, FileCtx, Src, timestamps};
     use crate::copy::Method;
-    use crate::copy::pipeline::{Copied, is_unsupported};
-    use rustix::fs::{AtFlags, unlinkat, utimensat};
+    use crate::copy::pipeline::Copied;
+    use rustix::fs::{AtFlags, utimensat};
     use rustix::fs::{CloneFlags, fclonefileat};
     use std::ffi::OsStr;
     use std::io;
@@ -985,10 +1065,12 @@ mod macos {
         ctx.shared.checkpoint()?;
         if let Err(e) = fclonefileat(&src.fd, &dst.fd, dst_name, CloneFlags::NOFOLLOW) {
             let e = io::Error::from(e);
-            if e.kind() == io::ErrorKind::AlreadyExists || !is_unsupported(&e) {
+            let at = dst.path().join(dst_name);
+            if e.kind() == io::ErrorKind::AlreadyExists
+                || !ctx.fall_back(Method::CloneFileAt, &e, &at)
+            {
                 return Err(e);
             }
-            ctx.cache.disable(Method::CloneFileAt);
             return Ok(None);
         }
         match finish_clone(ctx, src, dst, dst_name) {
@@ -1000,7 +1082,7 @@ mod macos {
                 }))
             }
             Err(e) => {
-                let _ = unlinkat(&dst.fd, dst_name, AtFlags::empty());
+                super::remove_debris(dst, dst_name);
                 Err(e)
             }
         }
@@ -1102,6 +1184,7 @@ mod tests {
             shared: &sh,
             caps: FsCaps::for_fs(FsKind::Ext4),
             durable: true,
+            pair: "",
         };
         let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
         let copied = copy_one(&ctx, t.path(), "a", &data).unwrap();
@@ -1139,6 +1222,7 @@ mod tests {
             shared: &sh,
             caps: FsCaps::for_fs(FsKind::Ext4),
             durable: false,
+            pair: "",
         };
         let err = copy_one(&ctx, t.path(), "a", &[7u8; 10_000]).unwrap_err();
         assert!(is_cancelled(&err));
@@ -1163,6 +1247,7 @@ mod tests {
             shared: &sh,
             caps: FsCaps::for_fs(FsKind::Ext4),
             durable: false,
+            pair: "",
         };
         copy_one(&ctx, t.path(), "a", data).unwrap();
         assert_eq!(sh.snapshot().bytes_done, data.len() as u64);
@@ -1204,6 +1289,7 @@ mod tests {
             shared: &sh,
             caps: FsCaps::for_fs(FsKind::Ext4),
             durable: false,
+            pair: "",
         };
         match experimental::uring_copy(&ctx, &src, out.as_fd(), &mut ctx.meter()) {
             Ok(()) => assert_eq!(std::fs::read(t.path().join("b")).unwrap(), pattern(1000)),
@@ -1229,6 +1315,7 @@ mod tests {
             shared: &sh,
             caps: FsCaps::for_fs(FsKind::Ext4),
             durable: false,
+            pair: "",
         };
         let mut meter = ctx.meter();
         let size = data.len() as u64;
@@ -1253,6 +1340,40 @@ mod tests {
         for method in [Method::ParallelRanged, Method::ODirect] {
             assert_eq!(copy_with(method, &data), data, "{}", method.name());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_all_hole_file_does_not_disable_copy_file_range() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("out")).unwrap();
+        std::fs::File::create(t.path().join("hole"))
+            .unwrap()
+            .set_len(64 << 20)
+            .unwrap();
+        let (src_dir, dst_dir) = (
+            Dir::open(t.path()).unwrap(),
+            Dir::open(&t.path().join("out")).unwrap(),
+        );
+        let src = open_file(&src_dir, "hole".as_ref()).unwrap();
+        let sh = Shared::new(Box::new(|| {}));
+        let cache = MethodCache::default();
+        let plan = plan(&[Method::CopyFileRange, Method::ReadWrite]);
+        let ctx = FileCtx {
+            plan: &plan,
+            cache: &cache,
+            shared: &sh,
+            caps: FsCaps::for_fs(FsKind::Ext4),
+            durable: false,
+            pair: "",
+        };
+        let hole: &std::ffi::OsStr = "hole".as_ref();
+        copy_file(&ctx, &src, &src_dir, hole, &dst_dir, hole, None).unwrap();
+        assert_eq!(
+            std::fs::metadata(t.path().join("out/hole")).unwrap().len(),
+            64 << 20
+        );
+        assert!(cache.enabled(Method::CopyFileRange));
     }
 
     #[test]
