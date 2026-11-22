@@ -16,7 +16,14 @@ impl Explorer {
     pub(super) fn restore_windows(&mut self, saved: Vec<WindowState>) -> usize {
         let mut restored = 0;
         for window in saved {
+            let saved_tabs = window.tabs.len();
             let (tabs, active) = surviving_tabs(window);
+            if tabs.len() < saved_tabs {
+                log::info!(
+                    "dropped {} saved tab(s) whose folder is gone",
+                    saved_tabs - tabs.len()
+                );
+            }
             if tabs.is_empty() {
                 continue;
             }
