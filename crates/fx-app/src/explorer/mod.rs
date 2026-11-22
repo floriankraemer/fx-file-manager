@@ -69,6 +69,8 @@ pub struct Explorer {
     /// Where `set_settings` persists. `None` when the platform has no config directory.
     settings_path: Option<PathBuf>,
     notices: VecDeque<Notice>,
+    /// Files whose last save failed. A repeated failure stays silent so a read-only config folder does not flood the UI and log.
+    failing_saves: HashSet<&'static str>,
     /// Internal clipboard set by copy/cut: absolute paths and whether paste should move them.
     /// Shared by all windows, so copy in one window pastes in another.
     // ponytail: app-internal only, not the OS file clipboard; add per-platform clipboard integration if cross-app paste is needed
@@ -173,6 +175,7 @@ impl Explorer {
             settings,
             settings_path: Settings::path(),
             notices: VecDeque::new(),
+            failing_saves: HashSet::new(),
             clipboard: None,
             preload_tx,
             preload_rx,

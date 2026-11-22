@@ -57,18 +57,29 @@ impl Explorer {
         };
         if let Some(path) = &self.state_path {
             let saved = self.state.save_to(path);
-            self.report_save(saved);
+            self.report_save("state", saved);
         }
     }
 
-    /// Turns a failed save into an error notice.
-    pub(super) fn report_save(&mut self, saved: io::Result<()>) {
-        if let Err(err) = saved {
-            self.notify(
-                NoticeKind::Error,
-                crate::tr("notice.save_failed", &[("error", &err.to_string())]),
-            );
+    /// Turns the first failed save of `what` into an error notice; repeats are only logged at debug until a save succeeds.
+    pub(super) fn report_save(&mut self, what: &'static str, saved: io::Result<()>) {
+        let Err(err) = saved else {
+            if self.failing_saves.remove(what) {
+                log::info!("saving {what} works again");
+            } else {
+                log::debug!("saved {what}");
+            }
+            return;
+        };
+        if !self.failing_saves.insert(what) {
+            log::debug!("saving {what} still fails: {err}");
+            return;
         }
+        log::warn!("cannot save {what}: {err}");
+        self.notify(
+            NoticeKind::Error,
+            crate::tr("notice.save_failed", &[("error", &err.to_string())]),
+        );
     }
 }
 
