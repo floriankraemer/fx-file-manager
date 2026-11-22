@@ -404,6 +404,7 @@ overwrite_if_newer = "Перезаписувати, якщо новіший"
 skip_identical = "Пропускати однакові файли (продовження)"
 
 [unit]
+s = "с"
 b = "Б"
 kb = "КБ"
 mb = "МБ"
@@ -432,6 +433,9 @@ clipboard = "Буфер обміну"
 application = "Застосунок"
 
 [command]
+search = "Пошук у папці"
+close_search = "Зупинити або закрити пошук"
+reveal_search_hit = "Показати результат у папці"
 new_tab = "Нова вкладка"
 close_tab = "Закрити вкладку"
 next_tab = "Наступна вкладка"
@@ -479,6 +483,8 @@ copy.many = "Копіювати {n} елементів"
 copy.other = "Копіювати {n} елемента"
 
 [search]
+col_folder = "Папка"
+glob = "* ? шаблон"
 placeholder = "Шукати в {folder}"
 stop = "Зупинити"
 clear = "Очистити"

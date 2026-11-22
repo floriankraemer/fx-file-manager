@@ -332,6 +332,7 @@ overwrite_if_newer = "较新时覆盖"
 skip_identical = "跳过相同文件（续传）"
 
 [unit]
+s = "秒"
 b = "字节"
 kb = "KB"
 mb = "MB"
@@ -360,6 +361,9 @@ clipboard = "剪贴板"
 application = "应用程序"
 
 [command]
+search = "在文件夹中搜索"
+close_search = "停止或关闭搜索"
+reveal_search_hit = "在所在文件夹中显示搜索结果"
 new_tab = "新建标签页"
 close_tab = "关闭标签页"
 next_tab = "下一个标签页"
@@ -401,6 +405,8 @@ move.other = "移动 {n} 个项目"
 copy.other = "复制 {n} 个项目"
 
 [search]
+col_folder = "文件夹"
+glob = "* ? 通配符"
 placeholder = "在 {folder} 中搜索"
 stop = "停止"
 clear = "清除"

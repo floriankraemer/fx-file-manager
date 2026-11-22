@@ -356,6 +356,7 @@ overwrite_if_newer = "Überschreiben, wenn neuer"
 skip_identical = "Identische Dateien überspringen (Fortsetzen)"
 
 [unit]
+s = "s"
 b = "B"
 kb = "KB"
 mb = "MB"
@@ -384,6 +385,9 @@ clipboard = "Zwischenablage"
 application = "Anwendung"
 
 [command]
+search = "In Ordner suchen"
+close_search = "Suche stoppen oder schließen"
+reveal_search_hit = "Suchergebnis im Ordner anzeigen"
 new_tab = "Neuer Tab"
 close_tab = "Tab schließen"
 next_tab = "Nächster Tab"
@@ -427,6 +431,8 @@ copy.one = "{n} Element kopieren"
 copy.other = "{n} Elemente kopieren"
 
 [search]
+col_folder = "Ordner"
+glob = "* ? Platzhalter"
 placeholder = "In {folder} suchen"
 stop = "Stopp"
 clear = "Leeren"

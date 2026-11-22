@@ -356,6 +356,7 @@ overwrite_if_newer = "Sobrescribir si es más reciente"
 skip_identical = "Omitir archivos idénticos (reanudar)"
 
 [unit]
+s = "s"
 b = "B"
 kb = "KB"
 mb = "MB"
@@ -384,6 +385,9 @@ clipboard = "Portapapeles"
 application = "Aplicación"
 
 [command]
+search = "Buscar en la carpeta"
+close_search = "Detener o cerrar la búsqueda"
+reveal_search_hit = "Mostrar resultado en su carpeta"
 new_tab = "Nueva pestaña"
 close_tab = "Cerrar pestaña"
 next_tab = "Pestaña siguiente"
@@ -427,6 +431,8 @@ copy.one = "Copiar {n} elemento"
 copy.other = "Copiar {n} elementos"
 
 [search]
+col_folder = "Carpeta"
+glob = "* ? comodín"
 placeholder = "Buscar en {folder}"
 stop = "Detener"
 clear = "Borrar"

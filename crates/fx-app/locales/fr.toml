@@ -356,6 +356,7 @@ overwrite_if_newer = "Écraser si plus récent"
 skip_identical = "Ignorer les fichiers identiques (reprise)"
 
 [unit]
+s = "s"
 b = "o"
 kb = "Ko"
 mb = "Mo"
@@ -384,6 +385,9 @@ clipboard = "Presse-papiers"
 application = "Application"
 
 [command]
+search = "Rechercher dans le dossier"
+close_search = "Arrêter ou fermer la recherche"
+reveal_search_hit = "Afficher le résultat dans son dossier"
 new_tab = "Nouvel onglet"
 close_tab = "Fermer l’onglet"
 next_tab = "Onglet suivant"
@@ -427,6 +431,8 @@ copy.one = "Copier {n} élément"
 copy.other = "Copier {n} éléments"
 
 [search]
+col_folder = "Dossier"
+glob = "* ? joker"
 placeholder = "Rechercher dans {folder}"
 stop = "Arrêter"
 clear = "Effacer"

@@ -76,6 +76,23 @@ fn millis_in(lang: Language, d: std::time::Duration) -> String {
     format!("{value} {}", unit(lang, "unit.ms"))
 }
 
+/// Duration of a running or finished operation: milliseconds below 1 s, `"0.9 s"` below a minute, `"1:12"` from there.
+pub fn format_elapsed(d: std::time::Duration) -> String {
+    elapsed_in(current(), d)
+}
+
+fn elapsed_in(lang: Language, d: std::time::Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 1.0 {
+        return millis_in(lang, d);
+    }
+    if secs < 60.0 {
+        return format!("{} {}", decimal(lang, secs), unit(lang, "unit.s"));
+    }
+    let whole = d.as_secs();
+    format!("{}:{:02}", whole / 60, whole % 60)
+}
+
 /// Date in the language's order plus `HH:MM`, or `YYYY-MM-DD HH:MM` when the date format is ISO.
 // ponytail: UTC; local tz when a time crate is added
 pub fn format_time(time: SystemTime) -> String {
@@ -188,6 +205,27 @@ mod tests {
         assert_eq!(format_millis(Duration::from_micros(9_940)), "9.9 ms");
         assert_eq!(format_millis(Duration::from_micros(9_960)), "10 ms");
         assert_eq!(format_millis(Duration::from_millis(123)), "123 ms");
+    }
+
+    #[test]
+    fn elapsed_switches_units() {
+        assert_eq!(
+            elapsed_in(Language::En, Duration::from_millis(400)),
+            "400 ms"
+        );
+        assert_eq!(
+            elapsed_in(Language::En, Duration::from_millis(900)),
+            "900 ms"
+        );
+        assert_eq!(
+            elapsed_in(Language::En, Duration::from_millis(2_100)),
+            "2.1 s"
+        );
+        assert_eq!(elapsed_in(Language::En, Duration::from_secs(72)), "1:12");
+        assert_eq!(
+            elapsed_in(Language::En, Duration::from_secs(3_605)),
+            "60:05"
+        );
     }
 
     #[test]

@@ -357,6 +357,7 @@ overwrite_if_newer = "Overwrite if newer"
 skip_identical = "Skip identical files (resume)"
 
 [unit]
+s = "s"
 b = "B"
 kb = "KB"
 mb = "MB"
@@ -385,6 +386,9 @@ clipboard = "Clipboard"
 application = "Application"
 
 [command]
+search = "Search in folder"
+close_search = "Stop or close search"
+reveal_search_hit = "Reveal search result in folder"
 new_tab = "New tab"
 close_tab = "Close tab"
 next_tab = "Next tab"
@@ -428,6 +432,8 @@ copy.one = "Copy {n} item"
 copy.other = "Copy {n} items"
 
 [search]
+col_folder = "Folder"
+glob = "* ? glob"
 placeholder = "Search in {folder}"
 stop = "Stop"
 clear = "Clear"

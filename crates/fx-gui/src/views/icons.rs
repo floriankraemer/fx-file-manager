@@ -139,6 +139,9 @@ pub enum Glyph {
     Forward,
     Up,
     Refresh,
+    Search,
+    Stop,
+    Clear,
 }
 
 /// Paints `glyph` centered in `rect` (a 16x16 area).
@@ -196,7 +199,13 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
             p.line_segment([at(-3.0, -1.5), at(0.0, 1.5)], s);
             p.line_segment([at(3.0, -1.5), at(0.0, 1.5)], s);
         }
-        Glyph::Back | Glyph::Forward | Glyph::Up | Glyph::Refresh => {
+        Glyph::Back
+        | Glyph::Forward
+        | Glyph::Up
+        | Glyph::Refresh
+        | Glyph::Search
+        | Glyph::Stop
+        | Glyph::Clear => {
             paint_lucide(ui, rect, glyph, color);
         }
     }
@@ -209,6 +218,9 @@ fn lucide_svg(glyph: Glyph) -> &'static str {
         Glyph::Back => include_str!("../../../../third_party/lucide/arrow-left.svg"),
         Glyph::Forward => include_str!("../../../../third_party/lucide/arrow-right.svg"),
         Glyph::Up => include_str!("../../../../third_party/lucide/arrow-up.svg"),
+        Glyph::Search => include_str!("../../../../third_party/lucide/search.svg"),
+        Glyph::Stop => include_str!("../../../../third_party/lucide/square.svg"),
+        Glyph::Clear => include_str!("../../../../third_party/lucide/x.svg"),
         _ => include_str!("../../../../third_party/lucide/refresh-cw.svg"),
     }
 }
@@ -252,7 +264,15 @@ mod tests {
 
     #[test]
     fn lucide_glyphs_rasterise_with_ink() {
-        for glyph in [Glyph::Back, Glyph::Forward, Glyph::Up, Glyph::Refresh] {
+        for glyph in [
+            Glyph::Back,
+            Glyph::Forward,
+            Glyph::Up,
+            Glyph::Refresh,
+            Glyph::Search,
+            Glyph::Stop,
+            Glyph::Clear,
+        ] {
             let svg = lucide_svg(glyph).replace("currentColor", "#fff");
             let icon = icon_theme::rasterise_svg(svg.as_bytes()).unwrap();
             assert!(icon.pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
