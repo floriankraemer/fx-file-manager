@@ -1,14 +1,27 @@
 //! User settings as plain data, persisted as TOML in the platform config directory.
 
+mod choices;
+mod columns;
+mod paths;
+mod search;
+mod sidebar;
+
 use crate::columns::ListColumn;
 use crate::i18n::Language;
 use crate::place_group::PlaceGroup;
-use fx_core::{ConflictPolicy, GlobScope};
+use columns::LegacyColumns;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+
+pub use choices::{
+    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
+};
+pub use paths::start_dir;
+pub(crate) use paths::{config_dir, home_dir, write_atomic};
+pub use search::SearchSettings;
 
 pub const MIN_FONT_SIZE: f32 = 8.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
@@ -108,131 +121,6 @@ impl Default for Settings {
     }
 }
 
-impl Settings {
-    /// The visible sidebar groups in the saved order.
-    pub fn sidebar_groups(&self) -> Vec<PlaceGroup> {
-        let mut out = self.sidebar_order_full();
-        out.retain(|g| self.sidebar_group_shown(*g));
-        out
-    }
-
-    pub fn sidebar_group_shown(&self, group: PlaceGroup) -> bool {
-        !self.hidden_sidebar_groups.contains(&group)
-    }
-
-    pub fn set_sidebar_group_shown(&mut self, group: PlaceGroup, shown: bool) {
-        self.hidden_sidebar_groups.retain(|g| *g != group);
-        if !shown {
-            self.hidden_sidebar_groups.push(group);
-        }
-    }
-
-    /// Moves `group` to the slot `target` occupies, shifting the others. Hidden groups keep their slots.
-    pub fn move_sidebar_group(&mut self, group: PlaceGroup, target: PlaceGroup) {
-        let mut order = self.sidebar_order_full();
-        move_to_slot_of(&mut order, group, target);
-        self.sidebar_order = order;
-    }
-
-    /// The saved order completed: groups missing from a hand-edited file go last, repeats are dropped.
-    fn sidebar_order_full(&self) -> Vec<PlaceGroup> {
-        let mut out: Vec<PlaceGroup> = Vec::new();
-        for g in self.sidebar_order.iter().chain(&PlaceGroup::ALL) {
-            if !out.contains(g) {
-                out.push(*g);
-            }
-        }
-        out
-    }
-}
-
-/// Moves `item` to the slot `target` occupies, shifting the others.
-fn move_to_slot_of<T: PartialEq + Copy>(items: &mut Vec<T>, item: T, target: T) {
-    let at = items.iter().position(|i| *i == target).unwrap_or(0);
-    items.retain(|i| *i != item);
-    items.insert(at.min(items.len()), item);
-}
-
-impl Settings {
-    pub fn column_shown(&self, column: ListColumn) -> bool {
-        self.list_columns.contains(&column)
-    }
-
-    /// Hiding `Name` is ignored. A column shown again goes last.
-    pub fn set_column_shown(&mut self, column: ListColumn, shown: bool) {
-        if shown == self.column_shown(column) || (!shown && !column.hideable()) {
-            return;
-        }
-        if !shown {
-            self.list_columns.retain(|c| *c != column);
-            return;
-        }
-        self.list_columns.push(column);
-    }
-
-    /// Moves `column` to the slot `target` occupies. Both must be shown.
-    pub fn move_column(&mut self, column: ListColumn, target: ListColumn) {
-        if self.column_shown(column) && self.column_shown(target) {
-            move_to_slot_of(&mut self.list_columns, column, target);
-        }
-    }
-
-    /// The saved width of `column`, never below its minimum.
-    pub fn column_width(&self, column: ListColumn) -> f32 {
-        let saved = self.list_column_widths.get(&column).copied();
-        saved
-            .filter(|w| w.is_finite())
-            .unwrap_or(column.default_width())
-            .max(column.min_width())
-    }
-
-    /// Drops repeats and makes sure `Name` is present, as a hand-edited file may break either.
-    fn normalize_columns(&mut self) {
-        let mut seen = Vec::new();
-        for c in &self.list_columns {
-            if !seen.contains(c) {
-                seen.push(*c);
-            }
-        }
-        if !seen.contains(&ListColumn::Name) {
-            seen.insert(0, ListColumn::Name);
-        }
-        self.list_columns = seen;
-    }
-}
-
-/// The two flags that preceded `list_columns`.
-#[derive(Deserialize)]
-struct LegacyColumns {
-    list_columns: Option<serde::de::IgnoredAny>,
-    show_ext_column: Option<bool>,
-    show_age_column: Option<bool>,
-}
-
-impl LegacyColumns {
-    /// The column list the old flags describe; `None` when the file already has `list_columns` or sets no flag.
-    fn migrate(self) -> Option<Vec<ListColumn>> {
-        if self.list_columns.is_some()
-            || (self.show_ext_column, self.show_age_column) == (None, None)
-        {
-            return None;
-        }
-        let mut columns = vec![ListColumn::Name];
-        let optional = [
-            (ListColumn::Ext, self.show_ext_column),
-            (ListColumn::Size, Some(true)),
-            (ListColumn::Modified, Some(true)),
-            (ListColumn::Age, self.show_age_column),
-        ];
-        columns.extend(
-            optional
-                .into_iter()
-                .filter_map(|(c, shown)| shown.unwrap_or(true).then_some(c)),
-        );
-        Some(columns)
-    }
-}
-
 pub const DEFAULT_THEME: &str = "nord-dark";
 
 /// Maps the pre-theming values `dark` and `light` to their Nord themes.
@@ -243,172 +131,6 @@ fn theme_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> 
         "light" => "nord-light".to_owned(),
         _ => id,
     })
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Density {
-    #[default]
-    Compact,
-    Comfortable,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FolderOrder {
-    #[default]
-    Top,
-    Mixed,
-    Bottom,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DateFormat {
-    #[default]
-    Locale,
-    Iso,
-}
-
-/// A modifier key that changes what a drop does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DragModifier {
-    Ctrl,
-    Shift,
-    /// Option on macOS.
-    Alt,
-}
-
-impl DragModifier {
-    pub const ALL: [DragModifier; 3] = [DragModifier::Ctrl, DragModifier::Shift, DragModifier::Alt];
-
-    /// In the current UI language.
-    pub fn label(self) -> &'static str {
-        crate::t(match self {
-            DragModifier::Ctrl => "drag_modifier.ctrl",
-            DragModifier::Shift => "drag_modifier.shift",
-            DragModifier::Alt => "drag_modifier.alt",
-        })
-    }
-}
-
-/// The platform's file manager convention: Option in Finder, Ctrl elsewhere.
-impl Default for DragModifier {
-    fn default() -> Self {
-        if cfg!(target_os = "macos") {
-            DragModifier::Alt
-        } else {
-            DragModifier::Ctrl
-        }
-    }
-}
-
-/// Persisted form of [`ConflictPolicy`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConflictChoice {
-    #[default]
-    Ask,
-    Skip,
-    Overwrite,
-    KeepBoth,
-    OverwriteIfNewer,
-    SkipIdentical,
-}
-
-impl ConflictChoice {
-    pub const ALL: [ConflictChoice; 6] = [
-        ConflictChoice::Ask,
-        ConflictChoice::Skip,
-        ConflictChoice::Overwrite,
-        ConflictChoice::KeepBoth,
-        ConflictChoice::OverwriteIfNewer,
-        ConflictChoice::SkipIdentical,
-    ];
-
-    /// In the current UI language.
-    pub fn label(self) -> &'static str {
-        crate::t(match self {
-            ConflictChoice::Ask => "conflict_policy.ask",
-            ConflictChoice::Skip => "conflict_policy.skip",
-            ConflictChoice::Overwrite => "conflict_policy.overwrite",
-            ConflictChoice::KeepBoth => "conflict_policy.keep_both",
-            ConflictChoice::OverwriteIfNewer => "conflict_policy.overwrite_if_newer",
-            ConflictChoice::SkipIdentical => "conflict_policy.skip_identical",
-        })
-    }
-}
-
-impl From<ConflictChoice> for ConflictPolicy {
-    fn from(c: ConflictChoice) -> Self {
-        match c {
-            ConflictChoice::Ask => ConflictPolicy::Ask,
-            ConflictChoice::Skip => ConflictPolicy::Skip,
-            ConflictChoice::Overwrite => ConflictPolicy::Overwrite,
-            ConflictChoice::KeepBoth => ConflictPolicy::KeepBoth,
-            ConflictChoice::OverwriteIfNewer => ConflictPolicy::OverwriteIfNewer,
-            ConflictChoice::SkipIdentical => ConflictPolicy::SkipIdentical,
-        }
-    }
-}
-
-/// The `[search]` table of `settings.toml`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SearchSettings {
-    /// Most matches a search delivers before it stops; at least `MIN_RESULT_CAP` after loading.
-    pub result_cap: usize,
-    /// What a glob query is matched against.
-    pub glob_scope: GlobScopeChoice,
-    /// Show a notice before searching from a filesystem root.
-    pub warn_root: bool,
-}
-
-impl Default for SearchSettings {
-    fn default() -> Self {
-        Self {
-            result_cap: 100_000,
-            glob_scope: GlobScopeChoice::default(),
-            warn_root: true,
-        }
-    }
-}
-
-impl SearchSettings {
-    fn normalize(&mut self) {
-        self.result_cap = self.result_cap.max(MIN_RESULT_CAP);
-    }
-}
-
-/// Persisted form of [`GlobScope`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GlobScopeChoice {
-    #[default]
-    Name,
-    RelativePath,
-}
-
-impl GlobScopeChoice {
-    pub const ALL: [GlobScopeChoice; 2] = [GlobScopeChoice::Name, GlobScopeChoice::RelativePath];
-
-    /// In the current UI language.
-    pub fn label(self) -> &'static str {
-        crate::t(match self {
-            GlobScopeChoice::Name => "search.scope.name",
-            GlobScopeChoice::RelativePath => "search.scope.relative_path",
-        })
-    }
-}
-
-impl From<GlobScopeChoice> for GlobScope {
-    fn from(c: GlobScopeChoice) -> Self {
-        match c {
-            GlobScopeChoice::Name => GlobScope::Name,
-            GlobScopeChoice::RelativePath => GlobScope::RelativePath,
-        }
-    }
 }
 
 impl Settings {
@@ -430,18 +152,10 @@ impl Settings {
 
     /// Parses `path` as is; any failure yields defaults.
     fn read(path: &Path) -> Self {
-        let text = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Self::default(),
-            Err(err) => {
-                eprintln!("fx: cannot read settings {}: {err}", path.display());
-                return Self::default();
-            }
+        let Some(text) = read_text(path) else {
+            return Self::default();
         };
-        let mut settings: Self = toml::from_str(&text).unwrap_or_else(|err| {
-            eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
-            Self::default()
-        });
+        let mut settings = parse_or_default(&text, path);
         let legacy = toml::from_str::<LegacyColumns>(&text).ok();
         if let Some(columns) = legacy.and_then(LegacyColumns::migrate) {
             settings.list_columns = columns;
@@ -481,17 +195,22 @@ impl Settings {
     }
 }
 
-/// Writes a temporary file next to `path`, syncs it, then renames it over `path`, so readers never see a partial file.
-pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+fn read_text(path: &Path) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => {
+            eprintln!("fx: cannot read settings {}: {err}", path.display());
+            None
+        }
     }
-    let tmp = path.with_extension("toml.tmp");
-    let mut file = File::create(&tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)
+}
+
+fn parse_or_default(text: &str, path: &Path) -> Settings {
+    toml::from_str(text).unwrap_or_else(|err| {
+        eprintln!("fx: ignoring corrupt settings {}: {err}", path.display());
+        Settings::default()
+    })
 }
 
 fn clamp_font_size(size: f32, default: f32) -> f32 {
@@ -500,40 +219,6 @@ fn clamp_font_size(size: f32, default: f32) -> f32 {
     } else {
         size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
-}
-
-/// `$HOME`, else `%USERPROFILE%`.
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-}
-
-#[cfg(windows)]
-pub(crate) fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(PathBuf::from)
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn config_dir() -> Option<PathBuf> {
-    home_dir().map(|home| home.join("Library").join("Application Support"))
-}
-
-/// XDG: `$XDG_CONFIG_HOME` only when absolute, as the spec requires; otherwise `~/.config`.
-#[cfg(all(unix, not(target_os = "macos")))]
-pub(crate) fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| home_dir().map(|home| home.join(".config")))
-}
-
-/// Chooses the folder to open at startup: the CLI argument, then the settings' start folder if it still exists, then home, then `/`.
-pub fn start_dir(cli_arg: Option<PathBuf>, settings: &Settings) -> PathBuf {
-    cli_arg
-        .or_else(|| settings.start_folder.clone().filter(|dir| dir.is_dir()))
-        .or_else(home_dir)
-        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 #[cfg(test)]

@@ -42,23 +42,9 @@ impl Explorer {
         if !enabled {
             return;
         }
-        let tab = &window.tabs[window.active];
-        let LoadState::Loaded(view) = tab.state() else {
+        let Some((parent, folders)) = preload_targets(window) else {
             return;
         };
-        if view.storage == StorageKind::Network {
-            return;
-        }
-        // Symlinks have their own kind, so only real directories are listed.
-        let folders: Vec<PathBuf> = tab
-            .order()
-            .iter()
-            .map(|&i| &view.listing.entries[i as usize])
-            .filter(|entry| entry.kind == EntryKind::Dir)
-            .map(|entry| view.path.join(view.listing.name(entry)))
-            .take(PRELOAD_MAX)
-            .collect();
-        let parent = view.path.clone();
         window.preload_parent = Some(parent);
         let window_id = window.id;
         let generation = window.preload_gen.load(Ordering::Acquire);
@@ -83,6 +69,27 @@ impl Explorer {
             }
         }
     }
+}
+
+/// The active folder and its first subfolders to list, unless the tab is unloaded or on network storage.
+fn preload_targets(window: &Window) -> Option<(PathBuf, Vec<PathBuf>)> {
+    let tab = &window.tabs[window.active];
+    let LoadState::Loaded(view) = tab.state() else {
+        return None;
+    };
+    if view.storage == StorageKind::Network {
+        return None;
+    }
+    // Symlinks have their own kind, so only real directories are listed.
+    let folders = tab
+        .order()
+        .iter()
+        .map(|&i| &view.listing.entries[i as usize])
+        .filter(|entry| entry.kind == EntryKind::Dir)
+        .map(|entry| view.path.join(view.listing.name(entry)))
+        .take(PRELOAD_MAX)
+        .collect();
+    Some((view.path.clone(), folders))
 }
 
 /// Lists `folders` one by one on the calling worker thread, stopping as soon as `current` moves past `generation`.

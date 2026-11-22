@@ -2,8 +2,9 @@
 
 use super::Explorer;
 use crate::ops::{Job, NoticeKind, Outcome, unique_name, validate_name};
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
@@ -94,28 +95,8 @@ impl Explorer {
 
     /// Shows the notice and reloads every listing the operation touched, in all windows.
     pub(super) fn apply_outcome(&mut self, outcome: Outcome) {
-        for window in &mut self.windows {
-            window.cancel_preload();
-            window.preloaded.retain(|cached, _| {
-                !outcome
-                    .touched
-                    .iter()
-                    .any(|t| t.starts_with(cached) || cached.starts_with(t))
-            });
-        }
-        // One load per path is enough: the result fills every window's slot for it.
-        let tree_paths: Vec<&PathBuf> = outcome
-            .touched
-            .iter()
-            .filter(|path| {
-                self.windows
-                    .iter()
-                    .any(|w| w.tree.children.contains_key(*path))
-            })
-            .collect();
-        for path in tree_paths {
-            self.load_tree(path.clone());
-        }
+        self.drop_touched_preloads(&outcome);
+        self.reload_touched_trees(&outcome);
         for w in 0..self.windows.len() {
             for index in 0..self.windows[w].tabs.len() {
                 self.reload_tab_after(w, index, &outcome);
@@ -124,28 +105,65 @@ impl Explorer {
         self.notices.push_back(outcome.notice);
     }
 
+    fn drop_touched_preloads(&mut self, outcome: &Outcome) {
+        for window in &mut self.windows {
+            window.cancel_preload();
+            window
+                .preloaded
+                .retain(|cached, _| !outcome.touched.iter().any(|t| overlaps(t, cached)));
+        }
+    }
+
+    /// One load per path is enough: the result fills every window's slot for it.
+    fn reload_touched_trees(&mut self, outcome: &Outcome) {
+        let loaded: Vec<&PathBuf> = outcome
+            .touched
+            .iter()
+            .filter(|path| {
+                self.windows
+                    .iter()
+                    .any(|w| w.tree.children.contains_key(*path))
+            })
+            .collect();
+        for path in loaded {
+            self.load_tree(path.clone());
+        }
+    }
+
     /// Moves tab `index` of window `w` out of a removed folder, or reloads it if the operation touched its folder.
     fn reload_tab_after(&mut self, w: usize, index: usize, outcome: &Outcome) {
         let tab = &mut self.windows[w].tabs[index];
         let path = tab.path().to_path_buf();
         if outcome.removed.iter().any(|gone| path.starts_with(gone)) {
-            let target = path
-                .ancestors()
-                .find(|a| a.exists())
-                .unwrap_or(&path)
-                .to_path_buf();
-            tab.navigate_to(target);
+            tab.navigate_to(nearest_existing(&path));
             return self.start_load(w, index);
         }
         if !outcome.touched.contains(&path) {
             return;
         }
-        if let Some(created) = &outcome.created
-            && created.parent() == Some(path.as_path())
-            && let Some(name) = created.file_name()
-        {
-            tab.select_after_load(name.to_os_string());
+        if let Some(name) = created_name_in(outcome, &path) {
+            tab.select_after_load(name);
         }
         self.start_load(w, index);
     }
+}
+
+fn overlaps(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+fn nearest_existing(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find(|a| a.exists())
+        .unwrap_or(path)
+        .to_path_buf()
+}
+
+/// The name of the entry the operation created directly inside `dir`.
+fn created_name_in(outcome: &Outcome, dir: &Path) -> Option<OsString> {
+    let created = outcome.created.as_ref()?;
+    if created.parent() != Some(dir) {
+        return None;
+    }
+    created.file_name().map(OsStr::to_os_string)
 }

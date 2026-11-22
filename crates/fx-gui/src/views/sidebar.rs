@@ -4,8 +4,8 @@ use crate::command::{Command, hint};
 use crate::theme;
 use eframe::egui::text::{LayoutJob, TextWrapping};
 use eframe::egui::{
-    Color32, CursorIcon, Label, Rect, Response, RichText, ScrollArea, Sense, Stroke, StrokeKind,
-    Ui, pos2, vec2,
+    Color32, CursorIcon, Label, Painter, Rect, Response, RichText, ScrollArea, Sense, Stroke,
+    StrokeKind, Ui, pos2, vec2,
 };
 use fx_app::{Children, Explorer, Place, PlaceGroup, TreeNode, bookmark_places, t, tr};
 use std::path::{Path, PathBuf};
@@ -77,16 +77,18 @@ fn reveal_active(ui: &Ui, explorer: &mut Explorer, places: &[Place]) -> (PathBuf
     let last: Option<PathBuf> = ui.data(|d| d.get_temp(key));
     let scroll =
         last.as_ref() == Some(&path) && ui.data(|d| d.get_temp(key.with("scroll")) == Some(true));
-    if last.as_ref() != Some(&path) {
-        let roots: Vec<PathBuf> = places.iter().map(|p| p.path.clone()).collect();
-        explorer.tree_reveal(&path, &roots);
-        ui.data_mut(|d| {
-            d.insert_temp(key, path.clone());
-            d.insert_temp(key.with("scroll"), true);
-        });
-    } else if scroll {
-        ui.data_mut(|d| d.insert_temp(key.with("scroll"), false));
+    if last.as_ref() == Some(&path) {
+        if scroll {
+            ui.data_mut(|d| d.insert_temp(key.with("scroll"), false));
+        }
+        return (path, scroll);
     }
+    let roots: Vec<PathBuf> = places.iter().map(|p| p.path.clone()).collect();
+    explorer.tree_reveal(&path, &roots);
+    ui.data_mut(|d| {
+        d.insert_temp(key, path.clone());
+        d.insert_temp(key.with("scroll"), true);
+    });
     (path, scroll)
 }
 
@@ -125,21 +127,26 @@ fn place_groups(ui: &mut Ui, places: &[Place], walk: &mut TreeWalk<'_>) {
         }
         tops.push((group, ui.cursor().top()));
         group_heading(ui, group, &last_tops, walk.action);
-        for (i, place) in places.iter().enumerate().filter(|(_, p)| p.group == group) {
-            let title = place.title(explorer.settings().show_share_names);
-            // Not yet checked counts as available.
-            let bookmark = (group == PlaceGroup::Bookmarks).then(|| BookmarkRow {
-                index: i,
-                available: explorer.bookmark_available(i) != Some(false),
-            });
-            node(ui, walk, &title, &place.path, bookmark, 0);
-        }
+        group_rows(ui, walk, group, places);
     }
     let rows = std::mem::take(&mut walk.bookmark_rows);
     ui.data_mut(|d| {
         d.insert_temp(tops_key, tops);
         d.insert_temp(rows_key, rows);
     });
+}
+
+fn group_rows(ui: &mut Ui, walk: &mut TreeWalk<'_>, group: PlaceGroup, places: &[Place]) {
+    let explorer = walk.explorer;
+    for (i, place) in places.iter().enumerate().filter(|(_, p)| p.group == group) {
+        let title = place.title(explorer.settings().show_share_names);
+        // Not yet checked counts as available.
+        let bookmark = (group == PlaceGroup::Bookmarks).then(|| BookmarkRow {
+            index: i,
+            available: explorer.bookmark_available(i) != Some(false),
+        });
+        node(ui, walk, &title, &place.path, bookmark, 0);
+    }
 }
 
 /// The group heading. Dragging it onto another group's block moves the group there.
@@ -233,6 +240,22 @@ struct RowLook<'a> {
     usable: bool,
 }
 
+/// The row's folder and whether it can be used.
+struct RowTarget<'a> {
+    path: &'a Path,
+    bookmark: Option<BookmarkRow>,
+    usable: bool,
+}
+
+fn shows_chevron(children: Option<&Children>, usable: bool) -> bool {
+    match children {
+        None if !usable => false,
+        None | Some(Children::Loading) => true,
+        Some(Children::Loaded(c)) => !c.is_empty(),
+        Some(Children::Failed(_)) => false,
+    }
+}
+
 fn node(
     ui: &mut Ui,
     walk: &mut TreeWalk<'_>,
@@ -245,14 +268,14 @@ fn node(
     let tree = explorer.tree();
     let expanded = tree.is_expanded(path);
     let usable = bookmark.is_none_or(|b| b.available);
+    let target = RowTarget {
+        path,
+        bookmark,
+        usable,
+    };
     // An unavailable bookmark is never listed: a dead mount would stall the tree.
     let children = if usable { tree.children(path) } else { None };
-    let has_chevron = match children {
-        None if !usable => false,
-        None | Some(Children::Loading) => true,
-        Some(Children::Loaded(c)) => !c.is_empty(),
-        Some(Children::Failed(_)) => false,
-    };
+    let has_chevron = shows_chevron(children, usable);
 
     let row_h = theme::row_height(22.0, explorer.settings().tree_font_size);
     // Only bookmark rows can be dragged (to reorder them).
@@ -281,31 +304,7 @@ fn node(
         usable,
     };
     let chevron = paint_row(ui, rect, row_h, &look);
-
-    let on_chevron = has_chevron
-        && resp
-            .interact_pointer_pos()
-            .is_some_and(|p| p.x < chevron.right() + 1.0);
-    let single = explorer.settings().tree_single_click;
-    if let Some(clicked) = click_action(&resp, path, usable, single, on_chevron) {
-        *walk.action = Some(clicked);
-    }
-
-    if usable && let Some(sources) = dnd::target(&resp, path) {
-        *walk.action = Some(Action::Drop(sources.paths.clone(), path.to_path_buf()));
-    }
-
-    resp.context_menu(|ui| {
-        context_menu(
-            ui,
-            explorer,
-            path,
-            bookmark,
-            usable,
-            walk.action,
-            walk.actions,
-        );
-    });
+    row_input(&resp, walk, &target, has_chevron.then_some(chevron));
 
     if expanded && let Some(Children::Loaded(kids)) = children {
         let step = child_rows(ui, walk, kids, depth);
@@ -368,6 +367,30 @@ fn paint_path_step(ui: &Ui, parent: Rect, depth: usize, step: &PathStep) {
     icons::paint_path_step(ui, origin, scale, stroke);
 }
 
+/// Click, drop and context menu of one row; `chevron` is the hit area of a shown chevron.
+fn row_input(
+    resp: &Response,
+    walk: &mut TreeWalk<'_>,
+    target: &RowTarget<'_>,
+    chevron: Option<Rect>,
+) {
+    let path = target.path;
+    let on_chevron = chevron.is_some_and(|c| {
+        resp.interact_pointer_pos()
+            .is_some_and(|p| p.x < c.right() + 1.0)
+    });
+    let single = walk.explorer.settings().tree_single_click;
+    if let Some(clicked) = click_action(resp, path, target.usable, single, on_chevron) {
+        *walk.action = Some(clicked);
+    }
+    if target.usable
+        && let Some(sources) = dnd::target(resp, path)
+    {
+        *walk.action = Some(Action::Drop(sources.paths.clone(), path.to_path_buf()));
+    }
+    resp.context_menu(|ui| context_menu(ui, walk.explorer, target, walk.action, walk.actions));
+}
+
 /// Reorders bookmarks: dragging a row onto another row's slot moves it there.
 fn bookmark_drag(ui: &Ui, resp: &Response, index: usize, walk: &mut TreeWalk<'_>) {
     walk.bookmark_rows
@@ -420,26 +443,34 @@ fn paint_row(ui: &Ui, rect: Rect, row_h: f32, look: &RowLook) -> Rect {
     let x0 = rect.left() + 4.0 + look.depth as f32 * INDENT;
     let chevron = Rect::from_min_size(pos2(x0, rect.top()), vec2(CHEVRON_W, row_h));
     if look.has_chevron {
-        let g = if look.expanded {
-            Glyph::Chevron
-        } else {
-            Glyph::ChevronRight
-        };
-        icons::glyph(
-            ui,
-            Rect::from_center_size(chevron.center(), vec2(16.0, 16.0)),
-            g,
-            theme::dim(),
-        );
+        paint_chevron(ui, chevron, look.expanded);
     }
     let icon_x = x0 + CHEVRON_W + 2.0;
+    paint_folder_icon(ui, rect, icon_x, look);
+    paint_label(ui, &painter, rect, icon_x + 16.0 + 6.0, look);
+    chevron
+}
+
+fn paint_chevron(ui: &Ui, chevron: Rect, expanded: bool) {
+    let g = if expanded {
+        Glyph::Chevron
+    } else {
+        Glyph::ChevronRight
+    };
+    let area = Rect::from_center_size(chevron.center(), vec2(16.0, 16.0));
+    icons::glyph(ui, area, g, theme::dim());
+}
+
+fn paint_folder_icon(ui: &Ui, rect: Rect, icon_x: f32, look: &RowLook) {
     let icon = Rect::from_center_size(pos2(icon_x + 8.0, rect.center().y), vec2(16.0, 16.0));
     let name = look
         .path
         .file_name()
         .map_or_else(|| "root".to_owned(), |n| n.to_string_lossy().into_owned());
     icons::paint_folder(ui, icon, &name, look.expanded);
-    let text_x = icon_x + 16.0 + 6.0;
+}
+
+fn paint_label(ui: &Ui, painter: &Painter, rect: Rect, text_x: f32, look: &RowLook) {
     let color = match (look.usable, look.ancestor) {
         (false, _) => theme::dim(),
         (true, true) => theme::header_text(),
@@ -457,7 +488,6 @@ fn paint_row(ui: &Ui, rect: Rect, row_h: f32, look: &RowLook) -> Rect {
         galley,
         color,
     );
-    chevron
 }
 
 /// What a click on the row does, if anything.
@@ -471,35 +501,33 @@ fn click_action(
     if !usable {
         return resp.clicked().then(|| Action::NotFound(path.to_path_buf()));
     }
+    let path = path.to_path_buf();
     if resp.double_clicked() {
         // Single-click mode already navigated on the first click, so the second one expands.
         return Some(if single {
-            Action::Toggle(path.to_path_buf())
+            Action::Toggle(path)
         } else {
-            Action::Navigate(path.to_path_buf())
+            Action::Navigate(path)
         });
     }
     if !resp.clicked() {
         return None;
     }
     if on_chevron {
-        Some(Action::Toggle(path.to_path_buf()))
-    } else if single {
-        Some(Action::Navigate(path.to_path_buf()))
-    } else {
-        None
+        return Some(Action::Toggle(path));
     }
+    single.then_some(Action::Navigate(path))
 }
 
 fn context_menu(
     ui: &mut Ui,
     explorer: &Explorer,
-    path: &Path,
-    bookmark: Option<BookmarkRow>,
-    usable: bool,
+    target: &RowTarget<'_>,
     action: &mut Option<Action>,
     actions: &mut Vec<crate::action::Action>,
 ) {
+    let path = target.path;
+    let usable = target.usable;
     if menu::item(ui, t("cmd.open"), "", usable) {
         *action = Some(Action::Navigate(path.to_path_buf()));
     }
@@ -507,21 +535,7 @@ fn context_menu(
         *action = Some(Action::OpenInNewTab(path.to_path_buf()));
     }
     ui.separator();
-    let marked = explorer.bookmarks().iter().position(|b| b.path == path);
-    if let Some(b) = bookmark
-        && menu::item(ui, t("cmd.rename_bookmark"), "", true)
-    {
-        actions.push(crate::action::Action::RenameBookmark(b.index));
-    }
-    match marked {
-        Some(i) if menu::item(ui, t("cmd.remove_bookmark"), "", true) => {
-            *action = Some(Action::RemoveBookmark(i));
-        }
-        None if menu::item(ui, t("cmd.add_bookmark"), "", true) => {
-            *action = Some(Action::AddBookmark(path.to_path_buf()));
-        }
-        _ => {}
-    }
+    bookmark_items(ui, explorer, target, action, actions);
     ui.separator();
     if menu::item(
         ui,
@@ -537,5 +551,32 @@ fn context_menu(
     ui.separator();
     if menu::item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
         *action = Some(Action::Delete(path.to_path_buf()));
+    }
+}
+
+fn bookmark_items(
+    ui: &mut Ui,
+    explorer: &Explorer,
+    target: &RowTarget<'_>,
+    action: &mut Option<Action>,
+    actions: &mut Vec<crate::action::Action>,
+) {
+    let marked = explorer
+        .bookmarks()
+        .iter()
+        .position(|b| b.path == target.path);
+    if let Some(b) = target.bookmark
+        && menu::item(ui, t("cmd.rename_bookmark"), "", true)
+    {
+        actions.push(crate::action::Action::RenameBookmark(b.index));
+    }
+    match marked {
+        Some(i) if menu::item(ui, t("cmd.remove_bookmark"), "", true) => {
+            *action = Some(Action::RemoveBookmark(i));
+        }
+        None if menu::item(ui, t("cmd.add_bookmark"), "", true) => {
+            *action = Some(Action::AddBookmark(target.path.to_path_buf()));
+        }
+        _ => {}
     }
 }

@@ -1,12 +1,13 @@
 //! Picking up external changes: periodic mtime checks of each window's active folder and explicit revalidation.
 
 use super::loading::dir_mtime;
-use super::{Explorer, WindowId};
+use super::{Explorer, Window, WindowId};
 use crate::tab::LoadState;
 use crate::view::needs_relist;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// How often the open folder's mtime is checked for external changes (see [`Explorer::poll`]).
 pub const REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
@@ -44,24 +45,16 @@ impl Explorer {
         if window.stat_in_flight {
             return;
         }
-        let tab = &window.tabs[window.active];
-        let LoadState::Loaded(view) = tab.state() else {
+        let Some(check) = StatCheck::of(window) else {
             return;
         };
-        let (tab_id, generation) = (tab.id(), tab.generation());
-        let (path, mtime, listed_at) = (tab.path().to_path_buf(), view.mtime, view.listed_at);
-        let window_id = window.id;
         window.stat_in_flight = true;
         let tx = self.stat_tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
-            let stale = needs_relist(mtime, listed_at, dir_mtime(&path));
-            let _ = tx.send(StatChecked {
-                window: window_id,
-                tab_id,
-                generation,
-                stale,
-            });
+            let checked = check.run();
+            let stale = checked.stale;
+            let _ = tx.send(checked);
             // Only a stale folder needs a repaint; otherwise the next idle tick clears the in-flight flag.
             if stale {
                 wake();
@@ -75,20 +68,60 @@ impl Explorer {
             if let Some(window) = self.windows.iter_mut().find(|w| w.id == checked.window) {
                 window.stat_in_flight = false;
             }
-            if !checked.stale {
-                continue;
+            if checked.stale {
+                self.relist_if_current(&checked);
             }
-            // A navigation or reload since the check bumped the generation and made it moot.
-            if let Some(tab) = self
-                .windows
-                .iter()
-                .flat_map(|w| &w.tabs)
-                .find(|tab| tab.id() == checked.tab_id)
-                && tab.generation() == checked.generation
-                && !matches!(tab.state(), LoadState::Loading)
-            {
-                self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
-            }
+        }
+    }
+
+    /// A navigation or reload since the check bumped the generation and made it moot.
+    fn relist_if_current(&self, checked: &StatChecked) {
+        let Some(tab) = self
+            .windows
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id() == checked.tab_id)
+        else {
+            return;
+        };
+        if tab.generation() == checked.generation && !matches!(tab.state(), LoadState::Loading) {
+            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf());
+        }
+    }
+}
+
+/// What the worker thread needs to decide whether a window's active folder changed.
+struct StatCheck {
+    window: WindowId,
+    tab_id: u64,
+    generation: u64,
+    path: PathBuf,
+    mtime: Option<SystemTime>,
+    listed_at: SystemTime,
+}
+
+impl StatCheck {
+    fn of(window: &Window) -> Option<Self> {
+        let tab = &window.tabs[window.active];
+        let LoadState::Loaded(view) = tab.state() else {
+            return None;
+        };
+        Some(Self {
+            window: window.id,
+            tab_id: tab.id(),
+            generation: tab.generation(),
+            path: tab.path().to_path_buf(),
+            mtime: view.mtime,
+            listed_at: view.listed_at,
+        })
+    }
+
+    fn run(self) -> StatChecked {
+        StatChecked {
+            window: self.window,
+            tab_id: self.tab_id,
+            generation: self.generation,
+            stale: needs_relist(self.mtime, self.listed_at, dir_mtime(&self.path)),
         }
     }
 }
