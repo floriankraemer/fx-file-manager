@@ -178,10 +178,20 @@ impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
         let mut listing = Listing::default();
         match (self.enumerate)(dir, &self.strategy, false, &mut listing) {
             Ok(()) => self.visit(scope, dir, &listing),
-            Err(_) => {
+            Err(e) => {
+                log_unreadable(dir, &e);
                 self.counters.errors.fetch_add(1, Relaxed);
                 self.progress.unreadable.fetch_add(1, Relaxed);
             }
         }
     }
+}
+
+/// Missing or protected folders are routine during a walk; anything else is worth a warning.
+fn log_unreadable(dir: &Path, err: &io::Error) {
+    let level = match err.kind() {
+        io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound => log::Level::Debug,
+        _ => log::Level::Warn,
+    };
+    log::log!(level, "cannot read {}: {err}", dir.display());
 }
