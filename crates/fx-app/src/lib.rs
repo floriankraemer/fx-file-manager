@@ -20,7 +20,7 @@ mod view;
 mod wsl;
 
 pub use columns::ListColumn;
-pub use explorer::{Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
+pub use explorer::{DetailsState, Explorer, REVALIDATE_INTERVAL, WindowId, open_with_system};
 pub use format::{
     AgeBucket, age, extension, format_elapsed, format_millis, format_number, format_size,
     format_time, set_date_format, stem_chars,

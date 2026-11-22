@@ -3,7 +3,6 @@
 use super::Explorer;
 use super::chooser::open_with_chooser;
 use super::open::OpenTarget;
-use crate::ops::{EntryDetails, details};
 use crate::tab::LoadState;
 use fx_core::EntryKind;
 use std::path::PathBuf;
@@ -69,10 +68,5 @@ impl Explorer {
         };
         let index = *tab.order().get(row)?;
         Some(view.listing.entries[index as usize].kind)
-    }
-
-    /// Properties for a visible row of the active tab. Reads metadata now, on the calling thread; `None` if the row or entry is gone.
-    pub fn entry_details(&self, row: usize) -> Option<EntryDetails> {
-        details(&self.entry_path(row)?)
     }
 }

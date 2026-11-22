@@ -1,7 +1,7 @@
 use super::loading::list_view;
 use super::preload::PRELOAD_MAX;
 use super::*;
-use crate::ops::NoticeKind;
+use crate::ops::{EntryDetails, NoticeKind};
 use crate::search::{SearchStatus, SearchView};
 use crate::settings::SearchSettings;
 use crate::state::{Bookmark, WindowState};
@@ -1017,27 +1017,40 @@ fn selection_survives_resort_and_refresh_by_name() {
     assert_eq!(selected_names(&explorer), ["a.txt", "c.txt"]);
 }
 
+/// Requests the properties of `row` and waits for the background read; `None` when the entry is gone.
+fn details_of(explorer: &mut Explorer, row: usize) -> Option<EntryDetails> {
+    assert!(explorer.request_details(row));
+    assert_eq!(explorer.details(), Some(&DetailsState::Loading));
+    wait_for(explorer, "properties", |e| {
+        e.details() != Some(&DetailsState::Loading)
+    });
+    match explorer.details() {
+        Some(DetailsState::Ready(details)) => Some(details.clone()),
+        _ => None,
+    }
+}
+
 #[test]
 fn entry_details_describe_files_dirs_and_permissions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     fs::write(root.join("file.txt"), b"12345").unwrap();
     fs::create_dir(root.join("folder")).unwrap();
-    let explorer = explorer_in(root);
+    let mut explorer = explorer_in(root);
 
-    let file = explorer
-        .entry_details(row_of(&explorer, "file.txt"))
-        .unwrap();
+    let row = row_of(&explorer, "file.txt");
+    let file = details_of(&mut explorer, row).unwrap();
     assert_eq!(file.name, "file.txt");
     assert_eq!(file.path, root.join("file.txt"));
     assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size, Some(5));
     assert!(file.modified.is_some());
 
-    let folder = explorer.entry_details(row_of(&explorer, "folder")).unwrap();
+    let row = row_of(&explorer, "folder");
+    let folder = details_of(&mut explorer, row).unwrap();
     assert_eq!(folder.kind, EntryKind::Dir);
     assert_eq!(folder.size, None, "directories are not walked");
-    assert!(explorer.entry_details(99).is_none());
+    assert!(!explorer.request_details(99));
 }
 
 #[cfg(unix)]
@@ -1049,12 +1062,23 @@ fn entry_details_show_unix_mode() {
     let file = root.join("locked.txt");
     fs::write(&file, b"").unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
-    let explorer = explorer_in(root);
+    let mut explorer = explorer_in(root);
 
-    let details = explorer
-        .entry_details(row_of(&explorer, "locked.txt"))
-        .unwrap();
+    let row = row_of(&explorer, "locked.txt");
+    let details = details_of(&mut explorer, row).unwrap();
     assert_eq!(details.permissions, "rw-r-----");
+}
+
+#[test]
+fn details_of_a_vanished_entry_end_as_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("file.txt"), b"").unwrap();
+    let mut explorer = explorer_in(dir.path());
+    let row = row_of(&explorer, "file.txt");
+    fs::remove_file(dir.path().join("file.txt")).unwrap();
+
+    assert!(details_of(&mut explorer, row).is_none());
+    assert_eq!(explorer.details(), Some(&DetailsState::Gone));
 }
 
 #[test]

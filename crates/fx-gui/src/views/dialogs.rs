@@ -6,7 +6,8 @@ use eframe::egui::{
     text::{CCursor, CCursorRange},
 };
 use fx_app::{
-    EntryDetails, Explorer, format_size, format_time, stem_chars, t, tn, tr, validate_name,
+    DetailsState, EntryDetails, Explorer, format_size, format_time, stem_chars, t, tn, tr,
+    validate_name,
 };
 use fx_core::{Conflict, EntryKind, Resolution};
 use std::path::PathBuf;
@@ -37,7 +38,8 @@ pub enum Dialog {
         text: String,
         fresh: bool,
     },
-    Properties(EntryDetails),
+    /// Shows [`Explorer::details`], which a background read fills in.
+    Properties,
     /// Searching from a filesystem root; `text` is the query that waits for the answer.
     SearchRoot {
         text: String,
@@ -88,9 +90,9 @@ impl Dialog {
         Self::SearchRoot { text }
     }
 
-    pub fn properties(explorer: &Explorer) -> Option<Self> {
+    pub fn properties(explorer: &mut Explorer) -> Option<Self> {
         let row = explorer.active().selected()?;
-        explorer.entry_details(row).map(Self::Properties)
+        explorer.request_details(row).then_some(Self::Properties)
     }
 
     /// The oldest unanswered conflict of any transfer.
@@ -122,7 +124,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             text,
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
-        Dialog::Properties(details) => properties(ctx, details),
+        Dialog::Properties => properties(ctx, explorer),
         Dialog::SearchRoot { text } => search_root(ctx, explorer, text),
         Dialog::Conflict {
             transfer,
@@ -520,11 +522,21 @@ fn search_root(ctx: &Context, explorer: &mut Explorer, text: &str) -> bool {
     })
 }
 
-fn properties(ctx: &Context, details: &EntryDetails) -> bool {
+fn properties(ctx: &Context, explorer: &Explorer) -> bool {
+    let details = match explorer.details() {
+        Some(DetailsState::Loading) => None,
+        Some(DetailsState::Ready(details)) => Some(details),
+        Some(DetailsState::Gone) | None => return true,
+    };
     modal(ctx, "properties-dialog", |ui| {
         ui.heading(t("cmd.properties"));
         ui.add_space(6.0);
-        property_grid(ui, details);
+        match details {
+            Some(details) => property_grid(ui, details),
+            None => {
+                ui.spinner();
+            }
+        }
         let mut close = false;
         button_row(ui, |ui| {
             let button = ui.button(t("button.close"));

@@ -2,6 +2,7 @@
 
 mod bookmarks;
 mod chooser;
+mod details;
 mod entries;
 mod file_ops;
 mod loading;
@@ -22,6 +23,7 @@ mod windows;
 #[cfg(test)]
 mod tests;
 
+pub use details::DetailsState;
 pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
 
@@ -30,6 +32,7 @@ use crate::settings::Settings;
 use crate::state::State;
 use crate::transfers::Transfers;
 use bookmarks::BookmarkChecked;
+use details::DetailsLoaded;
 use loading::Completed;
 use open::OpenChecked;
 use preload::PreloadDone;
@@ -107,6 +110,11 @@ pub struct Explorer {
     pending_tab_checks: usize,
     tab_check_tx: Sender<TabChecked>,
     tab_check_rx: Receiver<TabChecked>,
+    /// Bumped per properties request; older answers are dropped.
+    details_generation: u64,
+    details: Option<DetailsState>,
+    details_tx: Sender<DetailsLoaded>,
+    details_rx: Receiver<DetailsLoaded>,
 }
 
 impl Explorer {
@@ -176,6 +184,7 @@ impl Explorer {
         let (search_tx, search_rx) = mpsc::channel();
         let (open_tx, open_rx) = mpsc::channel();
         let (tab_check_tx, tab_check_rx) = mpsc::channel();
+        let (details_tx, details_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -219,6 +228,10 @@ impl Explorer {
             pending_tab_checks: 0,
             tab_check_tx,
             tab_check_rx,
+            details_generation: 0,
+            details: None,
+            details_tx,
+            details_rx,
         }
     }
 
@@ -233,6 +246,7 @@ impl Explorer {
         changed |= self.apply_searches();
         changed |= self.apply_open_checks();
         changed |= self.apply_tab_checks();
+        changed |= self.apply_details();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {

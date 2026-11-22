@@ -138,6 +138,14 @@ impl App {
         }
     }
 
+    fn open_properties(&mut self, index: usize) {
+        if self.windows[index].dialog.is_some() {
+            return;
+        }
+        let dialog = Dialog::properties(&mut self.explorer);
+        self.open_dialog(index, dialog);
+    }
+
     /// Asks first when the settings or `permanent` require it, otherwise deletes right away.
     fn delete(&mut self, index: usize, paths: Vec<PathBuf>, permanent: bool) {
         let settings = self.explorer.settings();
@@ -157,7 +165,7 @@ impl App {
             Action::Rename => self.open_dialog(index, Dialog::rename(&self.explorer)),
             Action::Delete { permanent } => self.delete_selection(index, permanent),
             Action::DeletePaths(paths) => self.delete(index, paths, false),
-            Action::Properties => self.open_dialog(index, Dialog::properties(&self.explorer)),
+            Action::Properties => self.open_properties(index),
             Action::OpenSettings => self.open_settings(ctx, index),
             Action::NewWindow => self.new_window(ctx),
             Action::RenameBookmark(i) => {
