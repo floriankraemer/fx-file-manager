@@ -31,7 +31,7 @@ mod render;
 use std::fmt;
 
 pub use pack::{Appearance, IconPack, ICONS_DIR};
-pub use render::{rasterise_svg, IconAssets, IconRenderer, RenderedIcon};
+pub use render::{rasterise_svg, svg_polylines, IconAssets, IconRenderer, RenderedIcon};
 
 /// Why an icon could not be produced.
 ///
