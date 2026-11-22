@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 const INDENT: f32 = 16.0;
 const CHEVRON_W: f32 = 12.0;
 /// Size of the arrow that ends each step of the path trail.
-const STEP_SIZE: f32 = 14.0;
+const STEP_SIZE: f32 = 12.0;
 
 enum Action {
     Navigate(PathBuf),
@@ -346,7 +346,12 @@ fn child_rows(
 /// Draws the trail from an ancestor row down to the row on the path: a vertical line at the
 /// ancestor's chevron column that ends in an arrow pointing at the next folder.
 fn paint_path_step(ui: &Ui, parent: Rect, depth: usize, step: &PathStep) {
-    let x = parent.left() + 4.0 + depth as f32 * INDENT + CHEVRON_W / 2.0;
+    let ppp = ui.pixels_per_point();
+    // A 1 px stroke only stays sharp when its centre sits mid-pixel; the same position feeds the
+    // line and the arrow so both rasterise alike.
+    let snap = |v: f32| (v * ppp).round() / ppp;
+    let half_px = 0.5 / ppp;
+    let x = snap(parent.left() + 4.0 + depth as f32 * INDENT + CHEVRON_W / 2.0) + half_px;
     let color = if step.last {
         theme::accent()
     } else {
@@ -354,9 +359,9 @@ fn paint_path_step(ui: &Ui, parent: Rect, depth: usize, step: &PathStep) {
     };
     // Where Lucide's corner-down-right has its vertical stroke and its horizontal bar.
     let (stem, bar) = (STEP_SIZE * 4.0 / 24.0, STEP_SIZE * 15.0 / 24.0);
-    let corner = pos2(x - stem, step.row.center().y - bar);
+    let corner = pos2(x - stem, snap(step.row.center().y - bar));
     let stroke = Stroke::new(STEP_SIZE * 2.0 / 24.0, color);
-    let from = pos2(x, parent.center().y + 6.0);
+    let from = pos2(x, snap(parent.center().y + 6.0));
     ui.painter()
         .line_segment([from, pos2(x, corner.y + stem)], stroke);
     let glyph = Rect::from_min_size(corner, vec2(STEP_SIZE, STEP_SIZE));
