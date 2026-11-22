@@ -200,6 +200,11 @@ verify_copies = "Kopien überprüfen"
 verify_copies_note = "Liest jede kopierte Datei erneut und vergleicht Prüfsummen. Eine Abweichung wird als Fehler gemeldet. Langsamer."
 drag_copy_modifier = "Zum Kopieren beim Ablegen halten"
 drag_copy_modifier_note = "Ohne diese Taste werden die Elemente verschoben."
+search_result_cap = "Limit für Suchergebnisse"
+search_result_cap_note = "Eine Suche endet nach dieser Anzahl Treffer. Mindestens 100."
+search_glob_scope = "Platzhalter gelten für"
+search_glob_scope_note = "Gilt für Suchen mit * oder ?. Einfacher Text prüft immer den Namen."
+search_warn_root = "Vor Suche im Stammverzeichnis warnen"
 
 [settings.cat]
 general = "Allgemein"
@@ -211,6 +216,7 @@ transfers = "Kopieren und Verschieben"
 keyboard = "Tastatur"
 
 [settings.group]
+search = "Suche"
 interface = "Oberfläche"
 startup = "Start"
 files = "Dateien"
@@ -419,3 +425,33 @@ move.one = "{n} Element verschieben"
 move.other = "{n} Elemente verschieben"
 copy.one = "{n} Element kopieren"
 copy.other = "{n} Elemente kopieren"
+
+[search]
+placeholder = "In {folder} suchen"
+stop = "Stopp"
+clear = "Leeren"
+running = "Suche läuft…"
+complete = "Abgeschlossen"
+stopped = "Angehalten"
+stopped_at_cap = "Am Limit angehalten"
+cap_note = "Die ersten {n} Treffer werden angezeigt. Verfeinere die Suche, um mehr zu sehen."
+failed = "Suche fehlgeschlagen: {error}"
+no_matches = "Keine Dateien oder Ordner passen zu „{query}“"
+reveal = "Im Ordner anzeigen"
+network_slow = "Suche auf einem Netzlaufwerk, das kann dauern"
+matches.one = "{n} Treffer"
+matches.other = "{n} Treffer"
+folders.one = "{n} Ordner durchsucht"
+folders.other = "{n} Ordner durchsucht"
+unreadable.one = "{n} Ordner nicht lesbar"
+unreadable.other = "{n} Ordner nicht lesbar"
+
+[search.scope]
+name = "Nur Dateiname"
+relative_path = "Pfad relativ zum Suchordner"
+
+[search.root_notice]
+title = "Das gesamte Laufwerk durchsuchen?"
+body = "Eine Suche ab {root} durchläuft jeden Ordner dieses Laufwerks und kann lange dauern. Du kannst sie jederzeit anhalten."
+continue = "Suchen"
+dont_show = "Nicht mehr anzeigen"

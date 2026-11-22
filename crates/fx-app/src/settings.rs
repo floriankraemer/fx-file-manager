@@ -3,7 +3,7 @@
 use crate::columns::ListColumn;
 use crate::i18n::Language;
 use crate::place_group::PlaceGroup;
-use fx_core::ConflictPolicy;
+use fx_core::{ConflictPolicy, GlobScope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 pub const MIN_FONT_SIZE: f32 = 8.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
+/// Smallest accepted `search.result_cap`.
+pub const MIN_RESULT_CAP: usize = 100;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -68,6 +70,8 @@ pub struct Settings {
     /// Widths the user dragged list columns to. The last column fills the rest and has none.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub list_column_widths: BTreeMap<ListColumn, f32>,
+    /// Recursive search below the current folder.
+    pub search: SearchSettings,
 }
 
 impl Default for Settings {
@@ -99,6 +103,7 @@ impl Default for Settings {
             drag_copy_modifier: DragModifier::default(),
             keymap: BTreeMap::new(),
             list_column_widths: BTreeMap::new(),
+            search: SearchSettings::default(),
         }
     }
 }
@@ -348,6 +353,64 @@ impl From<ConflictChoice> for ConflictPolicy {
     }
 }
 
+/// The `[search]` table of `settings.toml`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchSettings {
+    /// Most matches a search delivers before it stops; at least `MIN_RESULT_CAP` after loading.
+    pub result_cap: usize,
+    /// What a glob query is matched against.
+    pub glob_scope: GlobScopeChoice,
+    /// Show a notice before searching from a filesystem root.
+    pub warn_root: bool,
+}
+
+impl Default for SearchSettings {
+    fn default() -> Self {
+        Self {
+            result_cap: 100_000,
+            glob_scope: GlobScopeChoice::default(),
+            warn_root: true,
+        }
+    }
+}
+
+impl SearchSettings {
+    fn normalize(&mut self) {
+        self.result_cap = self.result_cap.max(MIN_RESULT_CAP);
+    }
+}
+
+/// Persisted form of [`GlobScope`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobScopeChoice {
+    #[default]
+    Name,
+    RelativePath,
+}
+
+impl GlobScopeChoice {
+    pub const ALL: [GlobScopeChoice; 2] = [GlobScopeChoice::Name, GlobScopeChoice::RelativePath];
+
+    /// In the current UI language.
+    pub fn label(self) -> &'static str {
+        crate::t(match self {
+            GlobScopeChoice::Name => "search.scope.name",
+            GlobScopeChoice::RelativePath => "search.scope.relative_path",
+        })
+    }
+}
+
+impl From<GlobScopeChoice> for GlobScope {
+    fn from(c: GlobScopeChoice) -> Self {
+        match c {
+            GlobScopeChoice::Name => GlobScope::Name,
+            GlobScopeChoice::RelativePath => GlobScope::RelativePath,
+        }
+    }
+}
+
 impl Settings {
     /// Loads from [`Settings::path`]. A missing or unreadable file yields defaults; a corrupt one also logs to stderr.
     pub fn load() -> Self {
@@ -361,6 +424,7 @@ impl Settings {
         let mut settings = Self::read(path);
         settings.clamp_font_sizes();
         settings.normalize_columns();
+        settings.search.normalize();
         settings
     }
 
@@ -533,6 +597,11 @@ mod tests {
             verify_copies: true,
             restore_session: false,
             drag_copy_modifier: DragModifier::Shift,
+            search: SearchSettings {
+                result_cap: 500,
+                glob_scope: GlobScopeChoice::RelativePath,
+                warn_root: false,
+            },
             keymap: BTreeMap::from([
                 (
                     "rename".to_owned(),
@@ -606,6 +675,32 @@ mod tests {
             assert_eq!(Settings::load_from(&path).theme, new);
         }
         assert_eq!(Settings::default().theme, DEFAULT_THEME);
+    }
+
+    #[test]
+    fn search_defaults() {
+        let search = Settings::default().search;
+        assert_eq!(search.result_cap, 100_000);
+        assert_eq!(search.glob_scope, GlobScopeChoice::Name);
+        assert!(search.warn_root);
+    }
+
+    #[test]
+    fn search_table_is_read_with_snake_case_scope_and_partial_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "[search]\nglob_scope = \"relative_path\"\n");
+        let search = Settings::load_from(&path).search;
+        assert_eq!(search.glob_scope, GlobScopeChoice::RelativePath);
+        assert_eq!(search.result_cap, 100_000);
+    }
+
+    #[test]
+    fn search_result_cap_has_a_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "[search]\nresult_cap = 3\n");
+        assert_eq!(Settings::load_from(&path).search.result_cap, MIN_RESULT_CAP);
     }
 
     #[test]

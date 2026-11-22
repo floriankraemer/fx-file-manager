@@ -200,6 +200,11 @@ verify_copies = "Verificar copias"
 verify_copies_note = "Vuelve a leer cada archivo copiado y compara sumas de verificación. Una diferencia se notifica como error. Más lento."
 drag_copy_modifier = "Mantener para copiar al soltar"
 drag_copy_modifier_note = "Al soltar sin ella, los elementos se mueven."
+search_result_cap = "Límite de resultados de búsqueda"
+search_result_cap_note = "Una búsqueda se detiene tras este número de coincidencias. Mínimo 100."
+search_glob_scope = "Los comodines se aplican a"
+search_glob_scope_note = "Vale para búsquedas con * o ?. El texto simple siempre se compara con el nombre."
+search_warn_root = "Avisar antes de buscar desde la raíz del sistema de archivos"
 
 [settings.cat]
 general = "General"
@@ -211,6 +216,7 @@ transfers = "Copiar y mover"
 keyboard = "Teclado"
 
 [settings.group]
+search = "Búsqueda"
 interface = "Interfaz"
 startup = "Inicio"
 files = "Archivos"
@@ -419,3 +425,33 @@ move.one = "Mover {n} elemento"
 move.other = "Mover {n} elementos"
 copy.one = "Copiar {n} elemento"
 copy.other = "Copiar {n} elementos"
+
+[search]
+placeholder = "Buscar en {folder}"
+stop = "Detener"
+clear = "Borrar"
+running = "Buscando…"
+complete = "Completada"
+stopped = "Detenida"
+stopped_at_cap = "Detenida en el límite"
+cap_note = "Se muestran las primeras {n} coincidencias. Afina la consulta para ver más."
+failed = "La búsqueda falló: {error}"
+no_matches = "Ningún archivo o carpeta coincide con «{query}»"
+reveal = "Mostrar en la carpeta"
+network_slow = "Buscando en una unidad de red, puede tardar un poco"
+matches.one = "{n} coincidencia"
+matches.other = "{n} coincidencias"
+folders.one = "{n} carpeta recorrida"
+folders.other = "{n} carpetas recorridas"
+unreadable.one = "{n} carpeta ilegible"
+unreadable.other = "{n} carpetas ilegibles"
+
+[search.scope]
+name = "Solo el nombre del archivo"
+relative_path = "Ruta relativa a la carpeta de búsqueda"
+
+[search.root_notice]
+title = "¿Buscar en toda la unidad?"
+body = "Buscar desde {root} recorre todas las carpetas de esta unidad y puede tardar mucho. Puedes detenerla en cualquier momento."
+continue = "Buscar"
+dont_show = "No volver a mostrar"

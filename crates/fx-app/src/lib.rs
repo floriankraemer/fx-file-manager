@@ -27,8 +27,8 @@ pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use place_group::PlaceGroup;
 pub use places::{Place, bookmark_places, breadcrumbs, places};
 pub use settings::{
-    ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, MAX_FONT_SIZE,
-    MIN_FONT_SIZE, Settings, start_dir,
+    ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
+    MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_RESULT_CAP, SearchSettings, Settings, start_dir,
 };
 pub use state::{Bookmark, State, WindowState};
 pub use tab::{LoadState, Tab};

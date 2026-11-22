@@ -76,6 +76,22 @@ Sizes always use 1024-based steps, and sorting uses raw bytes.
   Drag entries from the file list onto a folder in the list or the folder tree; a drop without the key moves them.
   The label at the pointer shows which one a drop does.
 
+## Search
+
+Recursive search below the current folder lives in the `[search]` table.
+
+- `result_cap` (default `100000`): most matches a search delivers.
+  The search then stops and shows that more matches exist.
+  Values below `100` are raised to `100`.
+- `glob_scope` (default `"name"`): what a wildcard query (`*` or `?`) is matched against.
+  `"name"` matches the file name only; `"relative_path"` matches the path relative to the search folder, with `/` as separator on every OS.
+  Plain text queries always match the name.
+- `warn_root` (default `true`): show a notice before searching from a filesystem root such as `/` or `C:\`.
+  "Don't show again" sets it to `false`; turn it back on here.
+
+Matching ignores ASCII case.
+Hidden entries and anything below a hidden folder follow `show_hidden`; a leading dot marks an entry as hidden, also on Windows.
+
 ## Keyboard
 
 The Keyboard page lists every command with its shortcuts.
@@ -173,4 +189,9 @@ conflict_policy = "ask"
 copy_workers = 0
 verify_copies = false
 drag_copy_modifier = "ctrl"
+
+[search]
+result_cap = 100000
+glob_scope = "name"
+warn_root = true
 ```
