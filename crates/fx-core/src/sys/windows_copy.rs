@@ -194,8 +194,16 @@ pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
 }
 
 /// `FlushFileBuffers` needs write access, which the read-only attribute (copied from the source) denies.
-#[allow(clippy::permissions_set_readonly_false)]
 fn flush(path: &Path) -> io::Result<()> {
+    match OpenOptions::new().write(true).open(path) {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => flush_read_only(path),
+        opened => opened.and_then(|f| f.sync_all()),
+    }
+}
+
+/// The slow path of [`flush`]: lifts the read-only attribute for the duration of the sync.
+#[allow(clippy::permissions_set_readonly_false)]
+fn flush_read_only(path: &Path) -> io::Result<()> {
     let mut perms = fs::metadata(path)?.permissions();
     let read_only = perms.readonly();
     if read_only {
