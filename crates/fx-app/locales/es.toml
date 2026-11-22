@@ -207,6 +207,7 @@ search_glob_scope_note = "Vale para búsquedas con * o ?. El texto simple siempr
 search_warn_root = "Avisar antes de buscar desde la raíz del sistema de archivos"
 
 [settings.cat]
+search = "Búsqueda"
 general = "General"
 appearance = "Apariencia"
 fonts = "Fuentes"

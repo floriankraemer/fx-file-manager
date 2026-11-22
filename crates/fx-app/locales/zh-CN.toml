@@ -199,6 +199,7 @@ search_glob_scope_note = "适用于包含 * 或 ? 的查询。纯文本始终匹
 search_warn_root = "从文件系统根目录搜索前提醒"
 
 [settings.cat]
+search = "搜索"
 general = "常规"
 appearance = "外观"
 fonts = "字体"

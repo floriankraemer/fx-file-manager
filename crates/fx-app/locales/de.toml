@@ -207,6 +207,7 @@ search_glob_scope_note = "Gilt für Suchen mit * oder ?. Einfacher Text prüft i
 search_warn_root = "Vor Suche im Stammverzeichnis warnen"
 
 [settings.cat]
+search = "Suche"
 general = "Allgemein"
 appearance = "Darstellung"
 fonts = "Schriften"

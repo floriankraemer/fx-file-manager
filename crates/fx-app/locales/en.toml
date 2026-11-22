@@ -208,6 +208,7 @@ search_glob_scope_note = "Applies to queries with * or ?. Plain text always matc
 search_warn_root = "Warn before searching from a filesystem root"
 
 [settings.cat]
+search = "Search"
 general = "General"
 appearance = "Appearance"
 fonts = "Fonts"

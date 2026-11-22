@@ -207,6 +207,7 @@ search_glob_scope_note = "S’applique aux requêtes avec * ou ?. Un texte simpl
 search_warn_root = "Avertir avant de chercher depuis la racine du système de fichiers"
 
 [settings.cat]
+search = "Recherche"
 general = "Général"
 appearance = "Apparence"
 fonts = "Polices"

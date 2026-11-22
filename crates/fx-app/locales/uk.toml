@@ -223,6 +223,7 @@ search_glob_scope_note = "Діє для запитів із * або ?. Звич
 search_warn_root = "Попереджати перед пошуком від кореня файлової системи"
 
 [settings.cat]
+search = "Пошук"
 general = "Загальні"
 appearance = "Вигляд"
 fonts = "Шрифти"
