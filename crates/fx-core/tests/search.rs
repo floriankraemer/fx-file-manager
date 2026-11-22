@@ -23,6 +23,18 @@ fn build_tree(root: &Path) {
     fs::create_dir_all(root.join("reports")).unwrap();
 }
 
+/// Windows hides by attribute, not by leading dot; ancestors are covered by the dot-dir rule.
+fn hide_on_windows(path: &Path) {
+    if cfg!(windows) {
+        let status = std::process::Command::new("attrib")
+            .arg("+H")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+}
+
 type Keep = Box<dyn Fn(&str, &str) -> bool>;
 
 fn kind_of(ft: fs::FileType) -> EntryKind {
@@ -142,6 +154,8 @@ fn hidden_flag_covers_dot_entries_and_dot_ancestors() {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, b"x").unwrap();
     }
+    hide_on_windows(&tmp.path().join(".git"));
+    hide_on_windows(&tmp.path().join("src").join(".env"));
     let hits = Mutex::new(Vec::new());
     let progress = WalkProgress::default();
     let query = SearchQuery::new("", GlobScope::Name);
