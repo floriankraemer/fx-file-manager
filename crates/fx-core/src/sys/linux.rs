@@ -180,17 +180,24 @@ fn stat_all(
 }
 
 pub(crate) fn detect_storage(path: &Path) -> StorageKind {
-    let Ok(fs) = statfs(path) else {
-        return StorageKind::Unknown;
+    let fs = match statfs(path) {
+        Ok(fs) => fs,
+        Err(e) => return unknown_storage(path, e),
     };
     // f_type is signed or 32-bit depending on the arch; compare the low 32 bits.
     if let Some(kind) = kind_from_fs_magic(fs.f_type as u64 & 0xFFFF_FFFF) {
         return kind;
     }
-    let Ok(st) = rustix::fs::stat(path) else {
-        return StorageKind::Unknown;
+    let st = match rustix::fs::stat(path) {
+        Ok(st) => st,
+        Err(e) => return unknown_storage(path, e),
     };
     rotational_kind(major(st.st_dev), minor(st.st_dev))
+}
+
+fn unknown_storage(path: &Path, err: rustix::io::Errno) -> StorageKind {
+    log::debug!("storage of {} unknown: {err}", path.display());
+    StorageKind::Unknown
 }
 
 /// Network and FUSE-like filesystems by `statfs` magic; `None` means "ask the block device".
@@ -224,12 +231,20 @@ fn rotational_kind(major: u32, minor: u32) -> StorageKind {
 
 /// One `stat` and one `statfs`; block-device storage adds a few small sysfs reads.
 pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
-    let Ok(st) = rustix::fs::stat(path) else {
-        return VolumeInfo::unknown(None);
+    let st = match rustix::fs::stat(path) {
+        Ok(st) => st,
+        Err(e) => {
+            log::warn!("cannot probe volume of {}: {e}", path.display());
+            return VolumeInfo::unknown(None);
+        }
     };
     let id = st.st_dev;
-    let Ok(fs) = statfs(path) else {
-        return VolumeInfo::unknown(Some(id));
+    let fs = match statfs(path) {
+        Ok(fs) => fs,
+        Err(e) => {
+            log::warn!("cannot probe filesystem of {}: {e}", path.display());
+            return VolumeInfo::unknown(Some(id));
+        }
     };
     let magic = fs.f_type as u64 & 0xFFFF_FFFF;
     let kind = fs_kind_from_magic(magic);
