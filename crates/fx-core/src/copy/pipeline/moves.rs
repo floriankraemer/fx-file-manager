@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 impl Job<'_> {
     /// Renames a top-level item without ever replacing anything; folders onto folders merge.
     pub(super) fn rename_top(&self, top: &Top) -> io::Result<()> {
+        self.rename_merge(top.item, &top.src_path(), &top.dst_path(), true)?;
         Progress::add(&self.sh.progress.files_total, 1);
-        self.rename_merge(top.item, &top.src_path(), &top.dst_path(), true)
+        Ok(())
     }
 
     fn rename_merge(&self, item: usize, src: &Path, dst: &Path, top: bool) -> io::Result<()> {
