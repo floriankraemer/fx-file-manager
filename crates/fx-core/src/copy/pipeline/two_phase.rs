@@ -169,8 +169,8 @@ fn probe(
     if kind != EntryKind::File || order != Order::Extent {
         return (dir.stat_at(name).ok(), None);
     }
-    match os::open_file(dir, name) {
-        Ok(src) => (Some(*src.meta()), os::extent_key(&src)),
+    match os::probe_file(dir, name) {
+        Ok((src, key)) => (Some(*src.meta()), key),
         Err(e) => {
             log::debug!("cannot probe {}: {e}", dir.path().join(name).display());
             (None, None)

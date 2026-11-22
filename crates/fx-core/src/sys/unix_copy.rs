@@ -798,8 +798,15 @@ pub(crate) fn free_space(path: &Path) -> Option<u64> {
     Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64))
 }
 
-/// Physical byte offset of the first extent, for disk-order scheduling. `None` where unknown.
-pub(crate) fn extent_key(src: &Src) -> Option<u64> {
+/// [`open_file`] plus the physical byte offset of the first extent, for disk-order scheduling. `None`
+/// where unknown.
+pub(crate) fn probe_file(dir: &Dir, name: &OsStr) -> io::Result<(Src, Option<u64>)> {
+    let src = open_file(dir, name)?;
+    let key = extent_key(&src);
+    Ok((src, key))
+}
+
+fn extent_key(src: &Src) -> Option<u64> {
     #[cfg(target_os = "linux")]
     return linux::first_extent(src.fd.as_fd());
     #[cfg(not(target_os = "linux"))]

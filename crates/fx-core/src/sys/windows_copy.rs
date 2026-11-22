@@ -538,12 +538,11 @@ pub(crate) fn free_space(path: &Path) -> Option<u64> {
 }
 
 /// Logical cluster of the first extent (`FSCTL_GET_RETRIEVAL_POINTERS`); `None` for MFT-resident files.
-pub(crate) fn extent_key(src: &Src) -> Option<u64> {
-    let f = File::open(&src.path).ok()?;
+fn extent_key(f: &File) -> Option<u64> {
     let input = STARTING_VCN_INPUT_BUFFER { StartingVcn: 0 };
     let mut out = RETRIEVAL_POINTERS_BUFFER::default();
     ioctl(
-        raw(&f),
+        raw(f),
         FSCTL_GET_RETRIEVAL_POINTERS,
         Some(&input),
         Some(&mut out),
@@ -559,15 +558,41 @@ pub(crate) fn extent_key(src: &Src) -> Option<u64> {
 /// hardlink groups. Windows reports them only through a handle, so each file costs one attribute-only
 /// open; the file ID query that guards against ReFS runs only for files with more than one name.
 pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
+    open_identified(dir, name).map(|(src, _)| src)
+}
+
+/// [`open_file`] plus the logical cluster where the data starts, read through the same handle, for
+/// disk-order scheduling. `None` where unknown.
+pub(crate) fn probe_file(dir: &Dir, name: &OsStr) -> io::Result<(Src, Option<u64>)> {
+    let (src, handle) = open_identified(dir, name)?;
+    Ok((src, handle.as_ref().and_then(extent_key)))
+}
+
+/// The source with its identity filled in, and the attribute-only handle that identity came from
+/// (`None` for anything but a regular file, or when the handle cannot be opened).
+fn open_identified(dir: &Dir, name: &OsStr) -> io::Result<(Src, Option<File>)> {
     let mut src = super::std_copy::open_file(dir, name)?;
-    if src.meta.kind == EntryKind::File
-        && let Some((volume, index, links)) = file_identity(&src.path)
+    if src.meta.kind != EntryKind::File {
+        return Ok((src, None));
+    }
+    let handle = open_attributes(&src.path);
+    if let Some((volume, index, links)) = handle.as_ref().and_then(|f| file_identity(f, &src.path))
     {
         src.meta.dev = volume;
         src.meta.ino = index;
         src.meta.nlink = links;
     }
-    Ok(src)
+    Ok((src, handle))
+}
+
+fn open_attributes(path: &Path) -> Option<File> {
+    OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(SHARE_ALL)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .inspect_err(|e| note_identity_failure(path, e))
+        .ok()
 }
 
 fn note_identity_failure(path: &Path, e: &io::Error) {
@@ -582,17 +607,10 @@ fn note_identity_failure(path: &Path, e: &io::Error) {
 
 /// `(volume serial, file index, link count)`. A link count above 1 is only reported together with an ID
 /// that is unique on its volume: ReFS IDs need 128 bits, and two files must never be taken for one.
-fn file_identity(path: &Path) -> Option<(u64, u64, u64)> {
-    let f = OpenOptions::new()
-        .access_mode(FILE_READ_ATTRIBUTES)
-        .share_mode(SHARE_ALL)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
-        .inspect_err(|e| note_identity_failure(path, e))
-        .ok()?;
+fn file_identity(f: &File, path: &Path) -> Option<(u64, u64, u64)> {
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: `info` is a valid out-buffer and the handle is open.
-    if unsafe { GetFileInformationByHandle(raw(&f), &mut info) } == 0 {
+    if unsafe { GetFileInformationByHandle(raw(f), &mut info) } == 0 {
         note_identity_failure(path, &io::Error::last_os_error());
         return None;
     }
@@ -604,7 +622,7 @@ fn file_identity(path: &Path) -> Option<(u64, u64, u64)> {
     // SAFETY: `id` is a valid out-buffer of the size passed and the handle is open.
     let ok = unsafe {
         GetFileInformationByHandleEx(
-            raw(&f),
+            raw(f),
             FileIdInfo,
             ptr::from_mut(&mut id).cast(),
             mem::size_of::<FILE_ID_INFO>() as u32,

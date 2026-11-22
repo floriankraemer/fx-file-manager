@@ -372,6 +372,6 @@ pub(crate) fn free_space(_path: &Path) -> Option<u64> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn extent_key(_src: &Src) -> Option<u64> {
-    None
+pub(crate) fn probe_file(dir: &Dir, name: &OsStr) -> io::Result<(Src, Option<u64>)> {
+    open_file(dir, name).map(|src| (src, None))
 }
