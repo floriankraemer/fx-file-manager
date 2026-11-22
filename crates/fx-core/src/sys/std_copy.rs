@@ -153,6 +153,12 @@ pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
     Ok(Src { path, meta })
 }
 
+/// Flushes the file `name` of `dir` to disk.
+#[cfg(not(windows))]
+pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
+    File::open(dir.path.join(name))?.sync_all()
+}
+
 pub(crate) fn read_all(src: &Src, out: &mut Vec<u8>) -> io::Result<()> {
     out.clear();
     File::open(&src.path)?.read_to_end(out).map(|_| ())

@@ -179,6 +179,13 @@ pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
     Ok(Src { fd, meta })
 }
 
+/// Flushes the file `name` of `dir` to disk.
+pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let fd = openat(&dir.fd, name, flags, Mode::empty())?;
+    Ok(rustix::fs::fsync(fd)?)
+}
+
 pub(crate) fn read_all(src: &Src, out: &mut Vec<u8>) -> io::Result<()> {
     out.clear();
     out.reserve(src.meta.size as usize);

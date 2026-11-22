@@ -975,6 +975,21 @@ fn verified_copies_are_complete_and_report_no_errors() {
     }
 }
 
+#[test]
+fn overwrite_works_for_names_at_the_length_limit() {
+    let t = tempfile::tempdir().unwrap();
+    let name = "n".repeat(250);
+    let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&dst).unwrap();
+    fs::write(src.join(&name), b"new").unwrap();
+    fs::write(dst.join(&name), b"old").unwrap();
+    let s = copy(&src, &dst, ConflictPolicy::Overwrite, Overrides::default());
+    assert_eq!(s.error_count(), 0, "{:?}", s.errors);
+    assert_eq!(fs::read(dst.join(&name)).unwrap(), b"new");
+    assert!(no_part_files(&dst));
+}
+
 /// A cancel while the fresh copy is being verified must leave the old destination file in place.
 #[test]
 fn cancelled_verify_of_an_overwrite_keeps_the_old_file() {

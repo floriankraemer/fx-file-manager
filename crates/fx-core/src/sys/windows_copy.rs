@@ -176,6 +176,11 @@ fn created(ctx: &FileCtx<'_>, dst: &Path, result: io::Result<bool>) -> io::Resul
     result
 }
 
+/// Flushes the file `name` of `dir` to disk.
+pub(crate) fn sync_file(dir: &Dir, name: &OsStr) -> io::Result<()> {
+    flush(&dir.path().join(name))
+}
+
 /// `FlushFileBuffers` needs write access, which the read-only attribute (copied from the source) denies.
 #[allow(clippy::permissions_set_readonly_false)]
 fn flush(path: &Path) -> io::Result<()> {

@@ -207,7 +207,10 @@ fn place_over<T>(
     }
     let tmp = temp_name(dst_name);
     let t = create(&tmp)?;
-    if let Err(e) = dst_dir.rename_at(&tmp, dst_name) {
+    // The old file goes away with the rename, so the new content must already be on disk: a power
+    // loss must not leave an empty file in place of both.
+    let swapped = os::sync_file(dst_dir, &tmp).and_then(|()| dst_dir.rename_at(&tmp, dst_name));
+    if let Err(e) = swapped {
         let _ = dst_dir.remove_at(&tmp);
         return Err(e);
     }
