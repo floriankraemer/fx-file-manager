@@ -609,6 +609,18 @@ fn suggests_a_free_folder_name() {
 }
 
 #[test]
+fn folder_name_suggestion_reads_the_listing_not_the_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("New folder")).unwrap();
+    let explorer = explorer_in(dir.path());
+    fs::remove_dir(dir.path().join("New folder")).unwrap();
+    assert_eq!(explorer.suggest_folder_name(), "New folder (2)");
+
+    fs::create_dir(dir.path().join("New folder (2)")).unwrap();
+    assert_eq!(explorer.suggest_folder_name(), "New folder (2)");
+}
+
+#[test]
 fn create_folder_selects_the_new_folder_after_reload() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

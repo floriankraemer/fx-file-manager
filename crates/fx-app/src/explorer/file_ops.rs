@@ -2,8 +2,9 @@
 
 use super::Explorer;
 use crate::ops::{Job, NoticeKind, Outcome, unique_name, validate_name};
+use crate::tab::LoadState;
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -54,12 +55,26 @@ impl Explorer {
         self.submit(Job::CreateFolder { path });
     }
 
-    /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's directory.
+    /// "New folder", or "New folder (2)" etc. if that name is taken in the active tab's listing.
+    /// Reads the shown listing only, so it never touches the filesystem; a clash with an entry created
+    /// since the last load is reported by the create job.
     pub fn suggest_folder_name(&self) -> String {
-        let dir = self.active().path();
+        let taken = self.listed_names();
         unique_name(crate::t("cmd.new_folder"), |name| {
-            fs::symlink_metadata(dir.join(name)).is_err()
+            !taken.contains(&fold_case(name))
         })
+    }
+
+    fn listed_names(&self) -> HashSet<String> {
+        let LoadState::Loaded(view) = self.active().state() else {
+            return HashSet::new();
+        };
+        let listing = &view.listing;
+        listing
+            .entries
+            .iter()
+            .map(|entry| fold_case(&listing.name(entry).to_string_lossy()))
+            .collect()
     }
 
     /// True while a file operation or transfer is running.
@@ -144,6 +159,15 @@ impl Explorer {
             tab.select_after_load(name);
         }
         self.start_load(w, index);
+    }
+}
+
+/// Windows and macOS volumes are usually case-insensitive, so "new folder" clashes with "New folder" there.
+fn fold_case(name: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        name.to_lowercase()
+    } else {
+        name.to_owned()
     }
 }
 
