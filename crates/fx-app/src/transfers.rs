@@ -147,6 +147,7 @@ impl Transfers {
                 continue;
             }
             let summary = e.running.take().expect("checked above").join();
+            log_finished(e.id, &e.label, &summary);
             outcomes.push(Outcome {
                 notice: notice(&summary, &e.label),
                 touched: e.touched.clone(),
@@ -178,6 +179,7 @@ impl Transfers {
             let e = &mut self.entries[i];
             let req = e.queued.take().expect("checked above");
             let wake = Arc::clone(wake);
+            log::info!("transfer {} started: {}", e.id, e.label);
             e.running = Some(Transfer::start(req, move || wake()));
             changed = true;
         }
@@ -272,6 +274,37 @@ impl Transfers {
     pub(crate) fn dismiss(&mut self, id: u64) {
         self.entries.retain(|e| e.id != id || e.summary.is_none());
     }
+}
+
+const LOGGED_ERRORS: usize = 3;
+
+/// One summary line plus at most `LOGGED_ERRORS` errors, so a copy with 100k failures does not flood the log.
+fn log_finished(id: u64, label: &str, s: &Summary) {
+    let errors = s.error_count();
+    log::info!(
+        "transfer {id} finished: {label}: {} of {} items, {} files, {} bytes, {errors} errors, cancelled: {}, in {:?}",
+        s.items_done,
+        s.items,
+        s.files,
+        s.bytes,
+        s.cancelled,
+        s.elapsed
+    );
+    if errors == 0 {
+        return;
+    }
+    let first: Vec<String> = s
+        .errors
+        .iter()
+        .filter(|e| !e.warning)
+        .take(LOGGED_ERRORS)
+        .map(ToString::to_string)
+        .collect();
+    log::warn!(
+        "transfer {id}: {errors} errors, first {}: {}",
+        first.len(),
+        first.join("; ")
+    );
 }
 
 /// The one-line result: "Copied 3 items", "Moved 2 of 3 items. 4 errors. First: ...", "Cancelled after ...".
