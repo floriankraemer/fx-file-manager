@@ -373,6 +373,9 @@ fn run_on_explorer(ex: &mut Explorer, command: Command, actions: &mut Vec<Action
 
 fn cycle_tab(ex: &mut Explorer, step: isize) {
     let n = ex.tabs().len() as isize;
+    if n == 0 {
+        return;
+    }
     ex.set_active((ex.active_index() as isize + step).rem_euclid(n) as usize);
 }
 
