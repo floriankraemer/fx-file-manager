@@ -23,6 +23,8 @@ fn build_tree(root: &Path) {
     fs::create_dir_all(root.join("reports")).unwrap();
 }
 
+type Keep = Box<dyn Fn(&str, &str) -> bool>;
+
 fn kind_of(ft: fs::FileType) -> EntryKind {
     if ft.is_dir() {
         EntryKind::Dir
@@ -80,7 +82,7 @@ fn search_equals_naive_filter() {
     let tmp = tempfile::tempdir().unwrap();
     build_tree(tmp.path());
     let root = tmp.path();
-    let cases: Vec<(&str, GlobScope, Box<dyn Fn(&str, &str) -> bool>)> = vec![
+    let cases: Vec<(&str, GlobScope, Keep)> = vec![
         (
             "report",
             GlobScope::Name,
