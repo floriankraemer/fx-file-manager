@@ -7,7 +7,7 @@ use crate::storage::{StorageKind, Strategy};
 use crate::sys;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::thread;
 
 #[derive(Clone, Copy, Debug)]
@@ -59,6 +59,7 @@ struct Walk<'a, F> {
     enumerate: Enumerate,
     strategy: Strategy,
     on_dir: &'a F,
+    cancel: &'a AtomicBool,
     counters: Counters,
 }
 
@@ -66,6 +67,20 @@ struct Walk<'a, F> {
 /// (root included), from many threads, in no particular order. Unsorted.
 /// A root that cannot be read is an error; unreadable subdirectories only bump `errors`.
 pub fn walk<F>(root: &Path, opts: &WalkOptions, on_dir: F) -> Result<Walked, ListError>
+where
+    F: Fn(&Path, &Listing) + Sync,
+{
+    walk_cancellable(root, opts, &AtomicBool::new(false), on_dir)
+}
+
+/// Like [`walk`], but stops reading directories once `cancel` is set.
+/// Returns normally; the stats cover what was visited before the stop.
+pub fn walk_cancellable<F>(
+    root: &Path,
+    opts: &WalkOptions,
+    cancel: &AtomicBool,
+    on_dir: F,
+) -> Result<Walked, ListError>
 where
     F: Fn(&Path, &Listing) + Sync,
 {
@@ -87,6 +102,7 @@ where
         enumerate,
         strategy,
         on_dir: &on_dir,
+        cancel,
         counters: Counters::default(),
     };
     let walk = &walk;
@@ -110,6 +126,9 @@ where
 
 impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
     fn visit<'s>(&'s self, scope: &rayon::Scope<'s>, dir: &Path, listing: &Listing) {
+        if self.cancelled() {
+            return;
+        }
         (self.on_dir)(dir, listing);
         let c = &self.counters;
         for e in &listing.entries {
@@ -127,9 +146,16 @@ impl<'a, F: Fn(&Path, &Listing) + Sync> Walk<'a, F> {
         }
     }
 
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Relaxed)
+    }
+
     fn visit_dir<'s>(&'s self, scope: &rayon::Scope<'s>, dir: &Path) {
         // ponytail: path-based; openat(parent_fd, name) on Linux is the upgrade path
         // (skips re-resolving the whole path per directory) if profiling shows path lookup dominates.
+        if self.cancelled() {
+            return;
+        }
         let mut listing = Listing::default();
         match (self.enumerate)(dir, &self.strategy, false, &mut listing) {
             Ok(()) => self.visit(scope, dir, &listing),
