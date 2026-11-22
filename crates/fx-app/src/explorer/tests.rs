@@ -130,8 +130,19 @@ fn with_state_in(
         Some(dir.join("state.toml")),
         || {},
     );
+    wait_tab_checks(&mut explorer);
     settle_started(&mut explorer);
     explorer
+}
+
+/// Waits until the startup checks of the restored tabs have been applied.
+fn wait_tab_checks(explorer: &mut Explorer) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while explorer.pending_tab_checks > 0 {
+        assert!(Instant::now() < deadline, "tab checks did not finish");
+        explorer.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn saved(tabs: &[&Path], active_tab: usize) -> WindowState {
@@ -243,6 +254,43 @@ fn bookmark_availability_is_checked_in_the_background() {
 }
 
 #[test]
+fn startup_restores_every_saved_tab_before_any_folder_is_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = mkdirs(dir.path(), &["a"]);
+    let gone = dir.path().join("gone");
+    let state = State {
+        windows: vec![saved(&[&f[0], &gone], 0)],
+        ..State::default()
+    };
+    let mut explorer = Explorer::with_state(
+        None,
+        dir.path().to_path_buf(),
+        Settings::default(),
+        state,
+        None,
+        || {},
+    );
+    assert_eq!(explorer.tabs().len(), 2, "no is_dir before the UI starts");
+    assert_eq!(explorer.pending_tab_checks, 2);
+
+    wait_tab_checks(&mut explorer);
+    assert_eq!(explorer.tabs().len(), 1);
+    assert_eq!(explorer.active().path(), f[0]);
+}
+
+#[test]
+fn an_only_tab_in_a_gone_folder_goes_to_the_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = State {
+        windows: vec![saved(&[&dir.path().join("gone")], 0)],
+        ..State::default()
+    };
+    let explorer = with_state_in(dir.path(), None, dir.path(), Settings::default(), state);
+    assert_eq!(explorer.active().path(), dir.path());
+    assert!(matches!(explorer.active().state(), LoadState::Loaded(_)));
+}
+
+#[test]
 fn session_restores_surviving_tabs_and_clamps_active() {
     let dir = tempfile::tempdir().unwrap();
     let f = mkdirs(dir.path(), &["a", "b"]);
@@ -328,6 +376,7 @@ fn fallback_when_no_saved_tab_survives() {
     let explorer = with_state_in(dir.path(), None, dir.path(), Settings::default(), state);
     assert_eq!(explorer.window_ids().len(), 1);
     assert_eq!(explorer.active().path(), dir.path());
+    assert_eq!(explorer.tabs().len(), 1);
 }
 
 #[test]

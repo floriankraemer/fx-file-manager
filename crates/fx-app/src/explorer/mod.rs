@@ -9,6 +9,7 @@ mod notices;
 mod open;
 mod opener;
 mod preload;
+mod restore;
 mod revalidate;
 mod search;
 mod session;
@@ -32,6 +33,7 @@ use bookmarks::BookmarkChecked;
 use loading::Completed;
 use open::OpenChecked;
 use preload::PreloadDone;
+use restore::TabChecked;
 use revalidate::StatChecked;
 use search::SearchMsg;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -100,6 +102,11 @@ pub struct Explorer {
     open_generation: u64,
     open_tx: Sender<OpenChecked>,
     open_rx: Receiver<OpenChecked>,
+    /// Where a startup tab whose folder is gone goes when it is its window's only tab.
+    restore_fallback: PathBuf,
+    pending_tab_checks: usize,
+    tab_check_tx: Sender<TabChecked>,
+    tab_check_rx: Receiver<TabChecked>,
 }
 
 impl Explorer {
@@ -120,8 +127,9 @@ impl Explorer {
 
     /// Starts with the saved bookmarks and, unless `start` is given, the saved session.
     /// `start` (a folder from the command line) wins over the session. Otherwise one window per saved
-    /// window that still has a directory among its tabs is opened, loading only each window's active tab.
-    /// Without `settings.restore_session`, or when no saved tab survives, one tab opens at `fallback`.
+    /// window is opened at once, loading only each window's active tab; a background check then drops
+    /// tabs whose folder is gone, or sends a window's only tab to `fallback`.
+    /// Without `settings.restore_session`, or with no saved tab, one tab opens at `fallback`.
     /// `state_path` is where bookmark and session changes are written; `None` disables that.
     pub fn with_state(
         start: Option<PathBuf>,
@@ -131,15 +139,20 @@ impl Explorer {
         state_path: Option<PathBuf>,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        let restore = start.is_none() && settings.restore_session;
+        let unverified_start = start.is_none();
+        let restore = unverified_start && settings.restore_session;
         let saved = if restore {
             state.windows.clone()
         } else {
             Vec::new()
         };
         let mut explorer = Self::build(settings, state, state_path, wake);
+        explorer.restore_fallback = absolute(fallback.clone());
         if explorer.restore_windows(saved) == 0 {
             explorer.new_tab(start.unwrap_or(fallback));
+        }
+        if unverified_start {
+            explorer.check_restored_tabs();
         }
         explorer.session_dirty = false;
         explorer.check_bookmarks();
@@ -162,6 +175,7 @@ impl Explorer {
         let (bookmark_tx, bookmark_rx) = mpsc::channel();
         let (search_tx, search_rx) = mpsc::channel();
         let (open_tx, open_rx) = mpsc::channel();
+        let (tab_check_tx, tab_check_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -201,6 +215,10 @@ impl Explorer {
             open_generation: 0,
             open_tx,
             open_rx,
+            restore_fallback: PathBuf::new(),
+            pending_tab_checks: 0,
+            tab_check_tx,
+            tab_check_rx,
         }
     }
 
@@ -214,6 +232,7 @@ impl Explorer {
         changed |= self.apply_loads();
         changed |= self.apply_searches();
         changed |= self.apply_open_checks();
+        changed |= self.apply_tab_checks();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {
