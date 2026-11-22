@@ -9,6 +9,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+log = "0.4"
 eframe = "0.37.0"
 egui = "0.37.0"
 egui_extras = "0.37.0"

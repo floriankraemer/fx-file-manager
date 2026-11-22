@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result {
     prefer_x11();
+    log_startup(fx_app::logging::init());
     let settings = fx_app::Settings::load();
     let start = std::env::args_os().nth(1).map(PathBuf::from);
     let fallback = fx_app::start_dir(None, &settings);
@@ -34,6 +35,20 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+fn log_startup(log_file: Option<PathBuf>) {
+    log::info!(
+        "fx {} ({}, built {}) on {} {}, log file {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("FX_GIT_HASH"),
+        env!("FX_BUILD_DATE"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        log_file
+            .as_deref()
+            .map_or("unavailable".into(), |p| p.display().to_string()),
+    );
 }
 
 /// Dragging files out of fx to other programs is implemented for X11 only, so Linux sessions that

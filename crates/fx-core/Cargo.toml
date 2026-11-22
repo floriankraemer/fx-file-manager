@@ -10,6 +10,7 @@ rust-version.workspace = true
 uring = ["dep:io-uring"]
 
 [dependencies]
+log = "0.4"
 rayon = "1"
 # Content hash for verified copies: streaming XXH3 only, no further dependencies.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

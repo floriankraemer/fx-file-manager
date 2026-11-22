@@ -4,6 +4,7 @@ mod columns;
 mod explorer;
 mod format;
 pub mod i18n;
+pub mod logging;
 mod ops;
 mod place_group;
 mod places;

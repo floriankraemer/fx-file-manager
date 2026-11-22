@@ -1592,6 +1592,7 @@ name = "fx-app"
 version = "0.7.0"
 dependencies = [
  "fx-core",
+ "log",
  "serde",
  "sys-locale",
  "tempfile",
@@ -1615,6 +1616,7 @@ version = "0.7.0"
 dependencies = [
  "io-uring",
  "libc",
+ "log",
  "rayon",
  "rustix 1.1.6",
  "tempfile",
@@ -1635,6 +1637,7 @@ dependencies = [
  "fx-app",
  "fx-core",
  "icon-theme",
+ "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
