@@ -158,6 +158,10 @@ pub(crate) fn enumerate(
         // Not a directory, or a filesystem without this info class: nothing has been
         // pushed yet, so std can redo (and correctly classify) the whole directory.
         Err(e) if out.entries.len() == first && is_unsupported(&e) => {
+            log::debug!(
+                "bulk listing unsupported for {}: {e}; using std",
+                dir.display()
+            );
             super::std_fs::enumerate(dir, strategy, metadata, out)
         }
         read => read,
@@ -260,6 +264,7 @@ pub(crate) fn detect_storage(path: &Path) -> StorageKind {
         return StorageKind::Network;
     }
     let Some(root) = volume_root(&w) else {
+        log::debug!("storage of {} unknown: no volume root", path.display());
         return StorageKind::Unknown;
     };
     // SAFETY: GetVolumePathNameW NUL-terminates `root`.
@@ -285,12 +290,15 @@ fn open_volume(root: &[u16]) -> Option<Handle> {
         GetVolumeNameForVolumeMountPointW(root.as_ptr(), volume.as_mut_ptr(), volume.len() as u32)
     } == 0
     {
+        log::debug!("no volume name for mount point: {}", last_error());
         return None;
     }
     // `\\?\Volume{guid}\` -> `\\?\Volume{guid}` (a trailing slash would open the root dir).
     let len = volume.iter().position(|&c| c == 0)?;
     volume[len - 1] = 0;
-    open(&volume[..len], 0).ok()
+    open(&volume[..len], 0)
+        .inspect_err(|e| log::debug!("cannot open volume device: {e}"))
+        .ok()
 }
 
 /// `IOCTL_STORAGE_QUERY_PROPERTY` for `id` into `out`; false if the device does not answer.
@@ -314,6 +322,9 @@ fn query_property<T>(handle: &Handle, id: STORAGE_PROPERTY_ID, out: &mut T) -> b
             ptr::null_mut(),
         )
     };
+    if ok == 0 {
+        log::debug!("storage property query failed: {}", last_error());
+    }
     ok != 0
 }
 
@@ -363,8 +374,12 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
         storage,
         ..VolumeInfo::unknown(None)
     };
-    let Ok(handle) = open(&w, 0) else {
-        return unknown;
+    let handle = match open(&w, 0) {
+        Ok(handle) => handle,
+        Err(e) => {
+            log::warn!("cannot probe volume of {}: {e}", path.display());
+            return unknown;
+        }
     };
     let (mut serial, mut flags) = (0u32, 0u32);
     let mut name = [0u16; MAX_PATH + 1];
@@ -382,6 +397,11 @@ pub(crate) fn volume_info(path: &Path) -> VolumeInfo {
         )
     };
     if ok == 0 {
+        log::warn!(
+            "cannot probe filesystem of {}: {}",
+            path.display(),
+            last_error()
+        );
         return unknown;
     }
     let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
