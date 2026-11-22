@@ -1,6 +1,7 @@
 //! Recursive search of the active tab: the worker thread, its cancellation and the root-folder notice.
 
 use super::Explorer;
+use super::open::OpenTarget;
 use crate::search::{SearchEvent, SearchView};
 use fx_core::{ListError, SearchQuery, WalkOptions, WalkProgress, Walked, search};
 use std::path::{Path, PathBuf};
@@ -81,9 +82,11 @@ impl Explorer {
 
     /// Enters the folder or opens the file of result `row`. Entering a folder ends the search.
     pub fn open_search_hit(&mut self, row: usize) {
-        if let Some(path) = self.search_hit_path(row) {
-            self.open_path(path);
-        }
+        let Some(hit) = self.search().and_then(|search| search.hits().get(row)) else {
+            return;
+        };
+        let (path, kind) = (hit.path.clone(), hit.kind);
+        self.open_path(path, kind, OpenTarget::ThisTab);
     }
 
     /// Goes to the folder that holds result `row`, selects the item there and ends the search.

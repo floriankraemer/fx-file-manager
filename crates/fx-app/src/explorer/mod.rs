@@ -6,6 +6,7 @@ mod entries;
 mod file_ops;
 mod loading;
 mod notices;
+mod open;
 mod opener;
 mod preload;
 mod revalidate;
@@ -29,6 +30,7 @@ use crate::state::State;
 use crate::transfers::Transfers;
 use bookmarks::BookmarkChecked;
 use loading::Completed;
+use open::OpenChecked;
 use preload::PreloadDone;
 use revalidate::StatChecked;
 use search::SearchMsg;
@@ -94,6 +96,10 @@ pub struct Explorer {
     bookmark_rx: Receiver<BookmarkChecked>,
     search_tx: Sender<SearchMsg>,
     search_rx: Receiver<SearchMsg>,
+    /// Bumped per background folder check; older answers are dropped.
+    open_generation: u64,
+    open_tx: Sender<OpenChecked>,
+    open_rx: Receiver<OpenChecked>,
 }
 
 impl Explorer {
@@ -155,6 +161,7 @@ impl Explorer {
         let (stat_tx, stat_rx) = mpsc::channel();
         let (bookmark_tx, bookmark_rx) = mpsc::channel();
         let (search_tx, search_rx) = mpsc::channel();
+        let (open_tx, open_rx) = mpsc::channel();
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -191,6 +198,9 @@ impl Explorer {
             bookmark_rx,
             search_tx,
             search_rx,
+            open_generation: 0,
+            open_tx,
+            open_rx,
         }
     }
 
@@ -203,6 +213,7 @@ impl Explorer {
         }
         changed |= self.apply_loads();
         changed |= self.apply_searches();
+        changed |= self.apply_open_checks();
         self.apply_preloads();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {

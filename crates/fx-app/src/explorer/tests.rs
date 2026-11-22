@@ -1765,3 +1765,40 @@ fn relative_folder_is_slash_separated_and_empty_at_the_root() {
     folders.sort();
     assert_eq!(folders, ["", "sub/deep/"]);
 }
+
+#[test]
+fn opening_a_listed_folder_needs_no_filesystem_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("folder")).unwrap();
+    let mut explorer = explorer_in(root);
+    let row = row_of(&explorer, "folder");
+    fs::remove_dir(root.join("folder")).unwrap();
+
+    explorer.open_in_new_tab(row);
+
+    assert_eq!(explorer.tabs().len(), 2, "decided from the listing alone");
+    explorer.set_active(0);
+    explorer.activate(row);
+    assert_eq!(explorer.active().path(), root.join("folder"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_a_folder_is_entered_once_the_background_check_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("target")).unwrap();
+    std::os::unix::fs::symlink(root.join("target"), root.join("link")).unwrap();
+    let mut explorer = explorer_in(root);
+
+    explorer.activate(row_of(&explorer, "link"));
+    assert_eq!(
+        explorer.active().path(),
+        root,
+        "nothing happens synchronously"
+    );
+    wait_for(&mut explorer, "symlink entered", |e| {
+        e.active().path() == root.join("link")
+    });
+}
