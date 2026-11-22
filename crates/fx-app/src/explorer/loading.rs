@@ -48,7 +48,9 @@ impl Explorer {
         let tx = self.tx.clone();
         let wake = Arc::clone(&self.wake);
         thread::spawn(move || {
-            let result = list_view(path);
+            let started = Instant::now();
+            let result = list_view(path.clone());
+            log_listing(&path, &result, started);
             // A send only fails once the Explorer is gone, and then nobody needs the result.
             let _ = tx.send(Completed {
                 tab_id,
@@ -106,6 +108,18 @@ impl Explorer {
         if window.preload_parent.as_deref() != Some(window.tabs[window.active].path()) {
             self.maybe_preload(w);
         }
+    }
+}
+
+fn log_listing(path: &Path, result: &Result<DirView, ListError>, started: Instant) {
+    match result {
+        Ok(view) => log::debug!(
+            "listed {} ({} entries) in {:?}",
+            path.display(),
+            view.listing.entries.len(),
+            started.elapsed()
+        ),
+        Err(err) => log::warn!("cannot list {}: {err}", path.display()),
     }
 }
 
