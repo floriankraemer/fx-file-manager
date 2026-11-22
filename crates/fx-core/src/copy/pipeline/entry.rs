@@ -91,6 +91,13 @@ impl Job<'_> {
         if is_transient(&f.err) && *attempt < RETRY_BACKOFF.len() {
             let pause = RETRY_BACKOFF[*attempt];
             *attempt += 1;
+            log::debug!(
+                "retry {} of {} after {pause:?}: {}: {}",
+                *attempt,
+                RETRY_BACKOFF.len(),
+                path.display(),
+                f.err
+            );
             return self.sh.sleep(pause).is_ok();
         }
         if is_disk_full(&f.err) {
@@ -254,7 +261,15 @@ impl Job<'_> {
                 Some(Done::Copied { cloned: false })
             }
             Ok(Placed::Skipped) => Some(Done::Skipped),
-            Err(_) => None,
+            Err(f) => {
+                log::debug!(
+                    "cannot link {} to {}: {}",
+                    path.display(),
+                    first.display(),
+                    f.err
+                );
+                None
+            }
         }
     }
 
@@ -269,7 +284,15 @@ impl Job<'_> {
             Err(err) => err,
         };
         Progress::sub(&self.sh.progress.bytes_done, size);
-        let _ = e.dst_dir.remove_at(name);
+        if err.kind() == io::ErrorKind::InvalidData {
+            log::warn!("verify mismatch: {}: {err}", src.display());
+        }
+        if let Err(rm) = e.dst_dir.remove_at(name) {
+            log::warn!(
+                "cannot remove the unverified copy {}: {rm}",
+                e.dst_dir.path().join(name).display()
+            );
+        }
         Err(err)
     }
 

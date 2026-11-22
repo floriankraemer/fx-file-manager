@@ -210,7 +210,9 @@ pub(crate) fn copy_file(
     if result.is_err() {
         meter.rollback();
         drop(out);
-        let _ = fs::remove_file(&dst_path);
+        if let Err(e) = fs::remove_file(&dst_path) {
+            log::warn!("cannot remove the partial copy {}: {e}", dst_path.display());
+        }
     }
     result
 }

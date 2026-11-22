@@ -169,7 +169,10 @@ fn probe(
     }
     match os::open_file(dir, name) {
         Ok(src) => (Some(*src.meta()), os::extent_key(&src)),
-        Err(_) => (None, None),
+        Err(e) => {
+            log::debug!("cannot probe {}: {e}", dir.path().join(name).display());
+            (None, None)
+        }
     }
 }
 
@@ -342,11 +345,15 @@ impl Job<'_> {
 
 /// Reads a small file whole, ahead of its copy.
 fn prefetch(dir: &os::Dir, name: &OsStr) -> Option<Prefetched> {
-    let src = os::open_file(dir, name).ok()?;
+    let src = os::open_file(dir, name)
+        .inspect_err(|e| log::debug!("cannot prefetch {}: {e}", dir.path().join(name).display()))
+        .ok()?;
     if src.meta().size > BATCH_FILE_MAX {
         return None;
     }
     let mut data = Vec::new();
-    os::read_all(&src, &mut data).ok()?;
+    os::read_all(&src, &mut data)
+        .inspect_err(|e| log::debug!("cannot prefetch {}: {e}", dir.path().join(name).display()))
+        .ok()?;
     Some((src, data))
 }

@@ -570,6 +570,16 @@ pub(crate) fn open_file(dir: &Dir, name: &OsStr) -> io::Result<Src> {
     Ok(src)
 }
 
+fn note_identity_failure(path: &Path, e: &io::Error) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::debug!(
+            "cannot read the file identity of {} (later failures are not logged): {e}",
+            path.display()
+        );
+    });
+}
+
 /// `(volume serial, file index, link count)`. A link count above 1 is only reported together with an ID
 /// that is unique on its volume: ReFS IDs need 128 bits, and two files must never be taken for one.
 fn file_identity(path: &Path) -> Option<(u64, u64, u64)> {
@@ -578,10 +588,12 @@ fn file_identity(path: &Path) -> Option<(u64, u64, u64)> {
         .share_mode(SHARE_ALL)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
+        .inspect_err(|e| note_identity_failure(path, e))
         .ok()?;
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: `info` is a valid out-buffer and the handle is open.
     if unsafe { GetFileInformationByHandle(raw(&f), &mut info) } == 0 {
+        note_identity_failure(path, &io::Error::last_os_error());
         return None;
     }
     let volume = u64::from(info.dwVolumeSerialNumber);

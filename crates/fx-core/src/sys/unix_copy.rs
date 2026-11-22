@@ -742,7 +742,11 @@ pub(crate) fn finish_dir(path: &Path, m: &Meta, caps: &FsCaps) -> io::Result<()>
 pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     match renameat_with(CWD, from, CWD, to, rustix::fs::RenameFlags::NOREPLACE) {
         Ok(()) => Ok(()),
-        Err(Errno::INVAL | Errno::NOSYS | Errno::NOTSUP) => {
+        Err(e @ (Errno::INVAL | Errno::NOSYS | Errno::NOTSUP)) => {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| {
+                log::debug!("no atomic no-replace rename here ({e}): check, then rename");
+            });
             if lstat(to).is_ok() {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }

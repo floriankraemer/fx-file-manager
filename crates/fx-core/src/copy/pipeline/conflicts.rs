@@ -211,7 +211,12 @@ fn place_over<T>(
     // loss must not leave an empty file in place of both.
     let swapped = os::sync_file(dst_dir, &tmp).and_then(|()| dst_dir.rename_at(&tmp, dst_name));
     if let Err(e) = swapped {
-        let _ = dst_dir.remove_at(&tmp);
+        if let Err(rm) = dst_dir.remove_at(&tmp) {
+            log::warn!(
+                "cannot remove the temp file {}: {rm}",
+                dst_dir.path().join(&tmp).display()
+            );
+        }
         return Err(e);
     }
     Ok(Placed::Done(t, dst_name.to_os_string()))
