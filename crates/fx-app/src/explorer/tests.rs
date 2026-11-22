@@ -1,10 +1,11 @@
 use super::loading::list_view;
 use super::preload::PRELOAD_MAX;
 use super::*;
+use crate::ops::NoticeKind;
 use crate::search::{SearchStatus, SearchView};
 use crate::settings::SearchSettings;
 use crate::state::{Bookmark, WindowState};
-use crate::tab::LoadState;
+use crate::tab::{LoadState, Tab};
 use crate::tree::Children;
 use crate::view::SortColumn;
 use fx_core::{EntryKind, Resolution};
