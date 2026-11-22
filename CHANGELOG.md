@@ -3,6 +3,20 @@
 All notable changes to fx are listed here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-22
+
+### Added
+
+- Open with on Linux and macOS, with a notice when no chooser is available.
+- Drag the sidebar group headings (Places, Bookmarks, Drives, WSL) to reorder them, and drag bookmarks to reorder those.
+- Settings to show or hide each sidebar group.
+- The file list columns can be reordered by dragging their headers, shown or hidden from the header context menu or the settings, and resized.
+  The order, visibility and widths are saved.
+
+### Changed
+
+- `show_ext_column` and `show_age_column` in `settings.toml` are replaced by `list_columns` and migrate automatically.
+
 ## [0.5.1] - 2026-11-21
 
 ### Fixed
