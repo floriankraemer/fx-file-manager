@@ -46,9 +46,17 @@ impl Progress {
     }
 
     pub(crate) fn sub(counter: &AtomicU64, n: u64) {
-        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
-            Some(c.saturating_sub(n))
-        });
+        // A plain CAS loop: `fetch_update` is deprecated on newer toolchains and its replacement
+        // `try_update` is newer than the MSRV.
+        let mut current = counter.load(Ordering::Relaxed);
+        while let Err(seen) = counter.compare_exchange_weak(
+            current,
+            current.saturating_sub(n),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            current = seen;
+        }
     }
 
     /// Records `path` as being copied when it is large enough for anyone to notice.
