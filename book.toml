@@ -1,0 +1,13 @@
+[book]
+title = "fx File Manager"
+description = "A performance optimized cross platform file manager written in Rust."
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/floriankraemer/fx-file-manager"
+edit-url-template = "https://github.com/floriankraemer/fx-file-manager/edit/master/{path}"
