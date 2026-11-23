@@ -3,6 +3,24 @@
 Copy and move run in `fx-core` (`crates/fx-core/src/copy/`), with one OS backend per platform family in `crates/fx-core/src/sys/` (`unix_copy.rs`, `windows_copy.rs`, `std_copy.rs`).
 The GUI paste and `fx cp` / `fx mv` both use it.
 
+## Techniques
+
+| Technique | How fx applies it |
+|-----------|-------------------|
+| Copy-on-write clones | `FICLONE` on btrfs, XFS, bcachefs and ZFS (Linux), `fclonefileat` on APFS (macOS), `FSCTL_DUPLICATE_EXTENTS_TO_FILE` on ReFS and Dev Drive (Windows). Data blocks are shared, not copied. |
+| In-kernel copy | `copy_file_range`, then `sendfile` (Linux), `CopyFile2` (Windows). No bytes pass through user space; NFS 4.2 and SMB can copy server-side. |
+| Fallback chain | Each volume pair gets an ordered method chain that ends in a portable read/write loop. A method that fails as unsupported (`EXDEV`, `EINVAL`, `EOPNOTSUPP`, ...) is disabled for the pair after its first failure. |
+| Parallel workers | Small files overlap their I/O latency: `clamp(2 * cores, 4, 32)` workers on SSD, 16 on network shares, 2 on USB sticks. |
+| Disk-order copy on HDD | One data worker copies files sorted by physical extent (`FIEMAP`, `FSCTL_GET_RETRIEVAL_POINTERS`), and small files are read in batches of up to 64 MiB, so the head seeks less. |
+| Large buffers | The read/write loop uses one reused buffer per worker: 1 MiB on SSD, 4 MiB on removable drives, 8 MiB on HDD. |
+| Large-file tuning | Files of 64 MiB and more are preallocated (`fallocate`) and read with sequential read-ahead (`POSIX_FADV_SEQUENTIAL`). From 1 GiB macOS bypasses the page cache (`F_NOCACHE`); from 256 MiB Windows uses `COPY_FILE_NO_BUFFERING` on local disks. |
+| No per-file fsync | A plain copy does not flush, like `cp`, robocopy and Finder. Only a cross-volume move flushes once per destination device before it deletes the source. |
+| Sparse files | Holes are found with `SEEK_DATA` / `SEEK_HOLE` and kept, so only data regions are copied. |
+| Directory-relative calls | `openat`, `mkdirat` and `linkat` on held directory handles, so paths are not resolved again for every file. |
+| Fused walk and copy | On SSD, network and removable drives, files are copied while the walk is still running, in tasks of 64 files that split after 8 MiB. |
+
+Opt-in experiments (`io_uring`, parallel ranged copy, `O_DIRECT`, a raw Windows small-file path) are listed under [Experiments](#experiments).
+
 ## Plan
 
 `CopyPlan::for_pair(src_volume, dst_volume, op, cores)` is a pure function, tested row by row against the selection matrix.
