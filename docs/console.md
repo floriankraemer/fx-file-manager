@@ -5,7 +5,7 @@ The `fx` binary lists, walks, copies and moves from the command line.
 ```
 fx [PATH]  [--names] [--no-sort] [--backend native|std] [--storage ssd|hdd|network|removable] [--quiet]
 fx walk [PATH] [--print] [--backend native|std] [--storage ssd|hdd|network|removable] [--quiet]
-fx find PATH PATTERN [--relative] [--backend native|std] [--storage ssd|hdd|network|removable] [--quiet]
+fx find PATH PATTERN [--relative] [--case-sensitive] [--backend native|std] [--storage ssd|hdd|network|removable] [--quiet]
 fx cp SRC... DEST [--conflict POLICY] [--storage KIND] [--workers N] [--method METHOD] [--schedule SCHEDULE] [--quiet]
 fx mv SRC... DEST [same options as cp]
 ```
@@ -13,9 +13,11 @@ fx mv SRC... DEST [same options as cp]
 ## Find
 
 `fx find PATH PATTERN` prints the paths below `PATH` whose name matches `PATTERN`, unordered, as the walk produces them.
-Plain text is a case-insensitive substring; a pattern with `*` or `?` is a wildcard match on the name, or on the path relative to `PATH` with `--relative`.
-The summary line reports matches, folders walked (and unreadable ones), the time to the first result and the total time.
-`--quiet` skips the match output, which is what the benchmarks use.
+Plain text is a substring, matched case-insensitively (ASCII letters only) unless `--case-sensitive` is given.
+A pattern with `*` or `?` is a wildcard match on the name, or on the path relative to `PATH` with `--relative`; the same case rule applies.
+Folders that cannot be read are reported on stderr as `unreadable: PATH: ERROR` and the walk goes on.
+The summary line reports matches, folders walked, the number of unreadable folders, the time to the first result and the total time.
+`--quiet` skips the match output and the unreadable-folder lines, which is what the benchmarks use.
 
 ## Copy and move
 

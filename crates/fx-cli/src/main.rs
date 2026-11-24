@@ -1,17 +1,19 @@
 //! `fx`: presentation layer over fx-core.
 
+mod find;
+
 use clap::{Parser, ValueEnum};
 use fx_core::{
-    Backend, ConflictPolicy, Entry, EntryKind, GlobScope, Item, ListOptions, Listing, Method, Op,
-    Order, Overrides, Request, Schedule, SearchEvent, SearchOptions, SearchQuery, StorageKind,
-    Strategy, Summary, TransferHandle, WalkControl, WalkOptions, list_dir, search, walk,
+    Backend, ConflictPolicy, Entry, EntryKind, Item, ListOptions, Listing, Method, Op, Order,
+    Overrides, Request, Schedule, StorageKind, Strategy, Summary, TransferHandle, WalkOptions,
+    list_dir, walk,
 };
 use std::io::IsTerminal;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
@@ -33,7 +35,7 @@ enum Cmd {
     /// Recursively count (and optionally print) everything below a directory.
     Walk(WalkArgs),
     /// Search file names below a directory: substring, or glob when the pattern has `*` or `?`.
-    Find(FindArgs),
+    Find(find::FindArgs),
     /// Copy files and folders (like `cp -a`): `fx cp SRC... DIR` or `fx cp SRC NEW_NAME`.
     Cp(TransferArgs),
     /// Move files and folders: same-volume moves rename, others copy, flush, then delete.
@@ -150,25 +152,6 @@ struct WalkArgs {
 }
 
 #[derive(clap::Args)]
-struct FindArgs {
-    /// Directory to search.
-    path: PathBuf,
-    /// Case-insensitive substring, or a glob when it contains `*` or `?`.
-    pattern: String,
-    /// Match globs against the path relative to the search root instead of the name.
-    #[arg(long)]
-    relative: bool,
-    #[arg(long, value_enum, default_value = "native")]
-    backend: BackendArg,
-    /// Override storage detection.
-    #[arg(long, value_enum)]
-    storage: Option<StorageArg>,
-    /// Suppress match output, only the summary.
-    #[arg(long)]
-    quiet: bool,
-}
-
-#[derive(clap::Args)]
 struct ListArgs {
     /// Directory to list.
     #[arg(default_value = ".")]
@@ -227,7 +210,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.cmd {
         Some(Cmd::Walk(args)) => run_walk(args),
-        Some(Cmd::Find(args)) => run_find(args),
+        Some(Cmd::Find(args)) => find::run(args),
         Some(Cmd::Cp(args)) => run_transfer(args, Op::Copy),
         Some(Cmd::Mv(args)) => run_transfer(args, Op::Move),
         None => run_list(&cli.list),
@@ -268,80 +251,6 @@ fn run_list(args: &ListArgs) -> Result<(), Box<dyn std::error::Error>> {
         plural(listed.listing.len() as u64, "entry", "entries"),
         fmt_duration(elapsed),
         fmt_env(listed.storage, &listed.strategy),
-    );
-    Ok(())
-}
-
-fn run_find(args: &FindArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let opts = WalkOptions {
-        backend: args.backend.into(),
-        storage: args.storage.map(Into::into),
-    };
-    let scope = if args.relative {
-        GlobScope::RelativePath
-    } else {
-        GlobScope::Name
-    };
-    let query = SearchQuery::new(
-        &args.pattern,
-        SearchOptions {
-            scope,
-            ..SearchOptions::default()
-        },
-    );
-    let out = Mutex::new(BufWriter::with_capacity(64 * 1024, io::stdout()));
-    let write_error: Mutex<Option<io::Error>> = Mutex::new(None);
-    let matches = AtomicU64::new(0);
-    let first_hit: OnceLock<Duration> = OnceLock::new();
-
-    let start = Instant::now();
-    let walked = search(
-        &args.path,
-        &query,
-        &opts,
-        &WalkControl::default(),
-        |event| {
-            let SearchEvent::Hits(hits) = event else {
-                return;
-            };
-            first_hit.get_or_init(|| start.elapsed());
-            matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
-            if args.quiet || write_error.lock().unwrap().is_some() {
-                return;
-            }
-            let mut block = Vec::with_capacity(hits.len() * 64);
-            for hit in &hits {
-                block.extend_from_slice(&os_bytes(hit.path.as_os_str()));
-                block.push(b'\n');
-            }
-            if let Err(e) = out.lock().unwrap().write_all(&block) {
-                write_error.lock().unwrap().get_or_insert(e);
-            }
-        },
-    )?;
-    let elapsed = start.elapsed();
-
-    let flushed = out.into_inner().unwrap().flush();
-    if let Some(e) = write_error.into_inner().unwrap() {
-        return Err(e.into());
-    }
-    flushed?;
-    let first = first_hit.get().map_or("no match".to_owned(), |d| {
-        format!("first result {}", fmt_duration(*d))
-    });
-    let errors = walked.stats.errors;
-    eprintln!(
-        "{} · {} walked{} · {} · total {} · {}",
-        plural(matches.load(Ordering::Relaxed), "match", "matches"),
-        plural(walked.stats.dirs + 1, "dir", "dirs"),
-        if errors > 0 {
-            format!(", {errors} unreadable")
-        } else {
-            String::new()
-        },
-        first,
-        fmt_duration(elapsed),
-        fmt_env(walked.storage, &walked.strategy),
     );
     Ok(())
 }
