@@ -3,10 +3,12 @@
 use super::Explorer;
 use super::open::OpenTarget;
 use crate::search::{SearchEvent, SearchView};
-use fx_core::{ListError, SearchQuery, WalkOptions, WalkProgress, Walked, search};
+use fx_core::{
+    ListError, SearchEvent as CoreEvent, SearchOptions, SearchQuery, WalkControl, WalkOptions,
+    Walked, search,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Instant;
 
@@ -38,17 +40,19 @@ impl Explorer {
             return self.clear_search();
         }
         let search = &self.settings.search;
-        let query = SearchQuery::new(text, search.glob_scope.into());
+        let query = SearchQuery::new(
+            text,
+            SearchOptions {
+                scope: search.glob_scope.into(),
+                ..SearchOptions::default()
+            },
+        );
         let cap = search.result_cap;
         let tab = self.active_mut();
         let tab_id = tab.id();
         let (generation, view) = tab.begin_search(text.to_owned(), cap);
-        let (root, cancel, progress) = (
-            view.root().to_path_buf(),
-            view.cancel_flag(),
-            view.progress(),
-        );
-        self.spawn_search(tab_id, generation, root, query, (cancel, progress));
+        let (root, control) = (view.root().to_path_buf(), view.control());
+        self.spawn_search(tab_id, generation, root, query, control);
     }
 
     /// Stops the active tab's walk. The hits found so far stay.
@@ -128,7 +132,7 @@ impl Explorer {
         generation: u64,
         root: PathBuf,
         query: SearchQuery,
-        (cancel, progress): (Arc<AtomicBool>, Arc<WalkProgress>),
+        control: Arc<WalkControl>,
     ) {
         let tx = self.search_tx.clone();
         let wake = Arc::clone(&self.wake);
@@ -144,8 +148,9 @@ impl Explorer {
             };
             let opts = WalkOptions::default();
             let started = Instant::now();
-            let walked = search(&root, &query, &opts, &cancel, &progress, |hits| {
-                send(SearchEvent::Hits(hits))
+            let walked = search(&root, &query, &opts, &control, |event| match event {
+                CoreEvent::Hits(hits) => send(SearchEvent::Hits(hits)),
+                CoreEvent::Unreadable(_) => {}
             });
             log_search_end(&root, &walked, started);
             send(SearchEvent::Done(

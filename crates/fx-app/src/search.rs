@@ -1,9 +1,8 @@
 //! State of one tab's recursive search: streamed hits, progress and how the run ended.
 
-use fx_core::{Hit, WalkProgress, WalkStats};
+use fx_core::{Hit, WalkControl, WalkStats};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,12 +30,9 @@ pub struct SearchView {
     cap: usize,
     hits: Vec<Hit>,
     status: SearchStatus,
-    dirs_walked: u64,
-    unreadable: u64,
     started: Instant,
     elapsed: Option<Duration>,
-    cancel: Arc<AtomicBool>,
-    progress: Arc<WalkProgress>,
+    control: Arc<WalkControl>,
     selected: Option<usize>,
 }
 
@@ -48,22 +44,15 @@ impl SearchView {
             cap,
             hits: Vec::new(),
             status: SearchStatus::Running,
-            dirs_walked: 0,
-            unreadable: 0,
             started: Instant::now(),
             elapsed: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::default(),
+            control: Arc::default(),
             selected: None,
         }
     }
 
-    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cancel)
-    }
-
-    pub(crate) fn progress(&self) -> Arc<WalkProgress> {
-        Arc::clone(&self.progress)
+    pub(crate) fn control(&self) -> Arc<WalkControl> {
+        Arc::clone(&self.control)
     }
 
     pub fn root(&self) -> &Path {
@@ -128,18 +117,12 @@ impl SearchView {
 
     /// Folders walked: live while running, exact once the walk has ended.
     pub fn dirs_walked(&self) -> u64 {
-        match self.is_running() {
-            true => self.progress.dirs_read.load(Ordering::Relaxed),
-            false => self.dirs_walked,
-        }
+        self.control.dirs_read()
     }
 
     /// Folders that could not be read: live while running, exact once the walk has ended.
     pub fn unreadable(&self) -> u64 {
-        match self.is_running() {
-            true => self.progress.unreadable.load(Ordering::Relaxed),
-            false => self.unreadable,
-        }
+        self.control.unreadable()
     }
 
     /// Live while running, frozen when the search ends.
@@ -149,7 +132,7 @@ impl SearchView {
 
     /// Stops the walk and keeps the hits. No-op once the search has ended.
     pub(crate) fn cancel(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        self.control.cancel();
         self.end(SearchStatus::Stopped);
     }
 
@@ -171,7 +154,7 @@ impl SearchView {
                 continue;
             }
             if self.hits.len() >= self.cap {
-                self.cancel.store(true, Ordering::Relaxed);
+                self.control.cancel();
                 self.end(SearchStatus::StoppedAtCap);
                 return true;
             }
@@ -182,11 +165,7 @@ impl SearchView {
 
     fn finish(&mut self, result: Result<WalkStats, String>) -> bool {
         match result {
-            Ok(stats) => {
-                self.dirs_walked = (stats.dirs + 1).saturating_sub(stats.errors);
-                self.unreadable = stats.errors;
-                self.end(SearchStatus::Complete);
-            }
+            Ok(_) => self.end(SearchStatus::Complete),
             Err(message) => self.end(SearchStatus::Failed(message)),
         }
         true
@@ -203,26 +182,6 @@ impl SearchView {
 
 impl Drop for SearchView {
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn progress_is_live_while_running_and_exact_after() {
-        let mut view = SearchView::new(PathBuf::from("/r"), "q".into(), 10);
-        view.progress().dirs_read.store(7, Ordering::Relaxed);
-        view.progress().unreadable.store(2, Ordering::Relaxed);
-        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 2));
-        let stats = WalkStats {
-            dirs: 9,
-            errors: 3,
-            ..WalkStats::default()
-        };
-        view.apply(SearchEvent::Done(Ok(stats)), true);
-        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 3));
+        self.control.cancel();
     }
 }

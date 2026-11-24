@@ -1,10 +1,12 @@
 //! `search` must agree with a naive recursive std::fs filter.
 
-use fx_core::{Backend, EntryKind, GlobScope, SearchQuery, WalkOptions, WalkProgress, search};
+use fx_core::{
+    Backend, EntryKind, GlobScope, SearchEvent, SearchOptions, SearchQuery, WalkControl,
+    WalkOptions, search,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 
 fn build_tree(root: &Path) {
     for name in [
@@ -78,18 +80,13 @@ fn found(root: &Path, query: &SearchQuery, backend: Backend) -> Vec<(PathBuf, En
         backend,
         storage: None,
     };
-    search(
-        root,
-        query,
-        &opts,
-        &AtomicBool::new(false),
-        &WalkProgress::default(),
-        |batch| {
+    search(root, query, &opts, &WalkControl::default(), |event| {
+        if let SearchEvent::Hits(batch) = event {
             hits.lock()
                 .unwrap()
                 .extend(batch.into_iter().map(|h| (h.path, h.kind)));
-        },
-    )
+        }
+    })
     .unwrap();
     let mut hits = hits.into_inner().unwrap();
     hits.sort_by(|a, b| a.0.cmp(&b.0));
@@ -132,7 +129,13 @@ fn search_equals_naive_filter() {
         ("", GlobScope::Name, Box::new(|_, _| true)),
     ];
     for (text, scope, keep) in &cases {
-        let query = SearchQuery::new(text, *scope);
+        let query = SearchQuery::new(
+            text,
+            SearchOptions {
+                scope: *scope,
+                ..SearchOptions::default()
+            },
+        );
         let mut expected = Vec::new();
         naive(root, root, keep.as_ref(), &mut expected);
         expected.sort_by(|a, b| a.0.cmp(&b.0));
@@ -157,15 +160,18 @@ fn hidden_flag_covers_dot_entries_and_dot_ancestors() {
     hide_on_windows(&tmp.path().join(".git"));
     hide_on_windows(&tmp.path().join("src").join(".env"));
     let hits = Mutex::new(Vec::new());
-    let progress = WalkProgress::default();
-    let query = SearchQuery::new("", GlobScope::Name);
+    let control = WalkControl::default();
+    let query = SearchQuery::new("", SearchOptions::default());
     search(
         tmp.path(),
         &query,
         &WalkOptions::default(),
-        &AtomicBool::new(false),
-        &progress,
-        |batch| hits.lock().unwrap().extend(batch),
+        &control,
+        |event| {
+            if let SearchEvent::Hits(batch) = event {
+                hits.lock().unwrap().extend(batch);
+            }
+        },
     )
     .unwrap();
     let mut hidden: Vec<String> = hits
@@ -186,10 +192,5 @@ fn hidden_flag_covers_dot_entries_and_dot_ancestors() {
         hidden,
         [".git", ".git/config", "src/.env"].map(|p| p.replace('/', std::path::MAIN_SEPARATOR_STR))
     );
-    assert_eq!(
-        progress
-            .dirs_read
-            .load(std::sync::atomic::Ordering::Relaxed),
-        3
-    );
+    assert_eq!(control.dirs_read(), 3);
 }

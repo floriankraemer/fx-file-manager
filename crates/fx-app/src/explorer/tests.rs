@@ -1729,9 +1729,9 @@ fn navigating_away_cancels_and_clears_the_search() {
     let dir = search_tree();
     let mut explorer = search_explorer(dir.path(), SearchSettings::default());
     explorer.start_search("alpha");
-    let cancel = explorer.search().unwrap().cancel_flag();
+    let control = explorer.search().unwrap().control();
     explorer.navigate(dir.path().join("sub"));
-    assert!(cancel.load(Ordering::Relaxed));
+    assert!(control.is_cancelled());
     assert!(explorer.search().is_none());
     settle(&mut explorer);
     thread::sleep(Duration::from_millis(50));

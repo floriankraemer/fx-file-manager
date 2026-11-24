@@ -3,8 +3,8 @@
 use clap::{Parser, ValueEnum};
 use fx_core::{
     Backend, ConflictPolicy, Entry, EntryKind, GlobScope, Item, ListOptions, Listing, Method, Op,
-    Order, Overrides, Request, Schedule, SearchQuery, StorageKind, Strategy, Summary,
-    TransferHandle, WalkOptions, WalkProgress, list_dir, search, walk,
+    Order, Overrides, Request, Schedule, SearchEvent, SearchOptions, SearchQuery, StorageKind,
+    Strategy, Summary, TransferHandle, WalkControl, WalkOptions, list_dir, search, walk,
 };
 use std::io::IsTerminal;
 use std::io::{self, BufWriter, Write};
@@ -282,7 +282,13 @@ fn run_find(args: &FindArgs) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         GlobScope::Name
     };
-    let query = SearchQuery::new(&args.pattern, scope);
+    let query = SearchQuery::new(
+        &args.pattern,
+        SearchOptions {
+            scope,
+            ..SearchOptions::default()
+        },
+    );
     let out = Mutex::new(BufWriter::with_capacity(64 * 1024, io::stdout()));
     let write_error: Mutex<Option<io::Error>> = Mutex::new(None);
     let matches = AtomicU64::new(0);
@@ -293,9 +299,11 @@ fn run_find(args: &FindArgs) -> Result<(), Box<dyn std::error::Error>> {
         &args.path,
         &query,
         &opts,
-        &AtomicBool::new(false),
-        &WalkProgress::default(),
-        |hits| {
+        &WalkControl::default(),
+        |event| {
+            let SearchEvent::Hits(hits) = event else {
+                return;
+            };
             first_hit.get_or_init(|| start.elapsed());
             matches.fetch_add(hits.len() as u64, Ordering::Relaxed);
             if args.quiet || write_error.lock().unwrap().is_some() {

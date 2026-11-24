@@ -2,9 +2,8 @@
 //!
 //! `cargo run --release -p fx-core --example search_cancel -- <ROOT> [RUNS]`
 
-use fx_core::{GlobScope, SearchQuery, WalkOptions, WalkProgress, search};
+use fx_core::{SearchOptions, SearchQuery, WalkControl, WalkOptions, search};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{env, thread};
 
@@ -33,23 +32,22 @@ fn main() {
 
 /// Time from setting the flag to `search` returning; `None` if the walk ended first.
 fn one_run(root: &Path) -> Option<Duration> {
-    let cancel = AtomicBool::new(false);
-    let progress = WalkProgress::default();
-    let query = SearchQuery::new("", GlobScope::Name);
+    let control = WalkControl::default();
+    let query = SearchQuery::new("", SearchOptions::default());
     let opts = WalkOptions::default();
     thread::scope(|scope| {
         let walker = scope.spawn(|| {
-            let _ = search(root, &query, &opts, &cancel, &progress, |_| {});
+            let _ = search(root, &query, &opts, &control, |_| {});
             Instant::now()
         });
-        while progress.dirs_read.load(Ordering::Relaxed) < CANCEL_AFTER_DIRS {
+        while control.dirs_read() < CANCEL_AFTER_DIRS {
             if walker.is_finished() {
                 return None;
             }
             thread::yield_now();
         }
         let flagged = Instant::now();
-        cancel.store(true, Ordering::Relaxed);
+        control.cancel();
         let returned = walker.join().expect("search thread panicked");
         Some(returned.saturating_duration_since(flagged))
     })
