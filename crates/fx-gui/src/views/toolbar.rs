@@ -117,7 +117,7 @@ fn filter_field(ui: &mut Ui, tab: &mut Tab) {
     let mut filter = tab.filter().to_owned();
     let edit = egui::TextEdit::singleline(&mut filter)
         .hint_text(t("filter.hint"))
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .desired_width(160.0);
     if ui.add(edit).changed() {
         tab.set_filter(&filter);
@@ -189,7 +189,7 @@ fn edit_path(ui: &mut Ui, edit: &mut PathEdit) -> EditResult {
     }
     let out = TextEdit::singleline(&mut edit.text)
         .id(id)
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .desired_width(ui.available_width())
         .show(ui);
     if edit.fresh {
