@@ -165,6 +165,7 @@ fn field(ui: &mut Ui, explorer: &mut Explorer, state: &mut State, actions: &mut 
     let mut out = TextEdit::singleline(&mut state.text)
         .id(id)
         .hint_text(hint_text)
+        .vertical_align(Align::Center)
         .desired_width(ui.available_width())
         .show(ui);
     if std::mem::take(&mut state.focus) {
