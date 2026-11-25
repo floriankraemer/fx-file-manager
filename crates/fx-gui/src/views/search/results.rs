@@ -3,10 +3,13 @@ use crate::command::{Command, hint};
 use crate::views::icons;
 use crate::views::{menu, table};
 use crate::{action::Action, theme};
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, Ui};
+use eframe::egui::{
+    self, Align, Color32, Layout, RichText, Sense, Stroke, TextFormat, Ui, text::LayoutJob,
+};
 use egui_extras::{Column, TableBuilder, TableRow};
-use fx_app::{Explorer, SearchStatus, SearchView, t, tr};
+use fx_app::{Explorer, SearchStatus, SearchView, format_elapsed, t, tn, tr};
 use fx_core::{EntryKind, Hit};
+use std::ops::Range;
 
 const NAME_WIDTH: f32 = 340.0;
 const FOLDER_WIDTH: f32 = 300.0;
@@ -94,6 +97,13 @@ fn empty(ui: &mut Ui, view: &SearchView) {
         ui.add_space(40.0);
         let text = tr("search.no_matches", &[("query", view.query())]);
         ui.label(RichText::new(text).color(theme::dim()));
+        let detail = [("time", format_elapsed(view.elapsed()))];
+        let detail = tn(
+            "search.no_matches_detail",
+            view.dirs_walked(),
+            &[("time", &detail[0].1)],
+        );
+        ui.label(RichText::new(detail).small().color(theme::dim()));
     });
 }
 
@@ -143,7 +153,8 @@ fn result_row(row: &mut TableRow, view: &SearchView, out: &mut Interaction) {
         .path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    row.col(|ui| name_cell(ui, hit.kind, &name));
+    let matched = view.match_range(&name);
+    row.col(|ui| name_cell(ui, hit.kind, &name, matched));
     row.col(|ui| dim_cell(ui, &view.relative_folder(hit)));
     row.col(|ui| dim_cell(ui, kind_label(hit)));
 
@@ -157,9 +168,49 @@ fn result_row(row: &mut TableRow, view: &SearchView, out: &mut Interaction) {
     resp.context_menu(|ui| row_menu(ui, i, out));
 }
 
-fn name_cell(ui: &mut Ui, kind: EntryKind, name: &str) {
+fn name_cell(ui: &mut Ui, kind: EntryKind, name: &str, matched: Option<Range<usize>>) {
     icons::entry(ui, kind, name);
-    ui.add(egui::Label::new(RichText::new(name).text_style(theme::list_style())).truncate());
+    let job = name_job(ui, name, matched);
+    ui.add(egui::Label::new(job).truncate());
+}
+
+/// The name with its matched part in the accent colour on a tinted background.
+fn name_job(ui: &Ui, name: &str, matched: Option<Range<usize>>) -> LayoutJob {
+    let font = theme::list_style().resolve(ui.style());
+    let plain = TextFormat::simple(font.clone(), ui.visuals().text_color());
+    let accent = theme::accent();
+    let hit = TextFormat {
+        color: accent,
+        background: accent.gamma_multiply(0.2),
+        ..TextFormat::simple(font, accent)
+    };
+    let mut job = LayoutJob::default();
+    for (text, is_match) in split_match(name, matched) {
+        job.append(
+            text,
+            0.0,
+            if is_match { hit.clone() } else { plain.clone() },
+        );
+    }
+    job
+}
+
+/// `name` cut into runs, flagged where the match lies. A range off the char boundaries or past the end is ignored.
+fn split_match(name: &str, matched: Option<Range<usize>>) -> Vec<(&str, bool)> {
+    let parts = matched.and_then(|r| {
+        Some((
+            name.get(..r.start)?,
+            name.get(r.clone())?,
+            name.get(r.end..)?,
+        ))
+    });
+    let Some((before, hit, after)) = parts else {
+        return vec![(name, false)];
+    };
+    [(before, false), (hit, true), (after, false)]
+        .into_iter()
+        .filter(|(text, _)| !text.is_empty())
+        .collect()
 }
 
 fn dim_cell(ui: &mut Ui, text: &str) {
@@ -213,4 +264,32 @@ fn apply(explorer: &mut Explorer, out: Interaction, actions: &mut Vec<Action>) {
             .map(|row| Action::Search(SearchAction::CopyHitPath(row))),
     ];
     actions.extend(raised.into_iter().flatten());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_match_splits_the_name_into_three_runs() {
+        let runs = split_match("my-file.txt", Some(3..7));
+        assert_eq!(runs, [("my-", false), ("file", true), (".txt", false)]);
+    }
+
+    #[test]
+    fn a_match_at_the_edges_leaves_no_empty_runs() {
+        assert_eq!(split_match("abc", Some(0..3)), [("abc", true)]);
+        assert_eq!(split_match("abc", Some(0..1)), [("a", true), ("bc", false)]);
+    }
+
+    #[test]
+    fn no_match_keeps_the_name_whole() {
+        assert_eq!(split_match("abc", None), [("abc", false)]);
+    }
+
+    #[test]
+    fn a_range_inside_a_char_or_past_the_end_is_ignored() {
+        assert_eq!(split_match("äb", Some(1..2)), [("äb", false)]);
+        assert_eq!(split_match("ab", Some(1..9)), [("ab", false)]);
+    }
 }
