@@ -55,6 +55,8 @@ pub struct State {
     open: bool,
     text: String,
     focus: bool,
+    /// Give the field the focus a click on a bar button took, without selecting its text.
+    refocus: bool,
     /// Tab and folder the bar belongs to; showing anything else resets it to that tab's search.
     key: Option<(u64, PathBuf)>,
     scroll_to_selection: bool,
@@ -189,4 +191,49 @@ fn move_selection(ctx: &Context, explorer: &mut Explorer, state: &mut State, del
     explorer.move_search_selection(delta);
     state.scroll_to_selection = true;
     ctx.request_repaint();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn explorer() -> Explorer {
+        Explorer::new(std::env::temp_dir(), || {})
+    }
+
+    #[test]
+    fn escape_closes_the_unreadable_window_before_the_bar() {
+        let (ctx, mut explorer) = (Context::default(), explorer());
+        let mut state = State::default();
+        state.open();
+        state.unreadable_open = true;
+        execute(&ctx, &mut explorer, &mut state, SearchAction::Escape);
+        assert!(state.open && !state.unreadable_open);
+        execute(&ctx, &mut explorer, &mut state, SearchAction::Escape);
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn moving_the_selection_asks_the_results_to_scroll() {
+        let (ctx, mut explorer) = (Context::default(), explorer());
+        let mut state = State::default();
+        execute(
+            &ctx,
+            &mut explorer,
+            &mut state,
+            SearchAction::MoveSelection(1),
+        );
+        assert!(state.scroll_to_selection);
+    }
+
+    #[test]
+    fn result_navigation_commands_only_apply_while_a_search_shows() {
+        let explorer = explorer();
+        assert_eq!(
+            command_action(Command::Search, &explorer),
+            Some(SearchAction::Open)
+        );
+        assert_eq!(command_action(Command::MoveDown, &explorer), None);
+        assert_eq!(command_action(Command::OpenSelected, &explorer), None);
+    }
 }

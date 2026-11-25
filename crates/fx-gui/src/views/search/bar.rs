@@ -54,7 +54,12 @@ fn row(ui: &mut Ui, explorer: &Explorer, state: &mut State, actions: &mut Vec<Ac
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             end_button(ui, view, narrow, actions);
             glob_chip(ui, view);
-            case_toggle(ui, explorer.settings().search.case_sensitive, actions);
+            case_toggle(
+                ui,
+                explorer.settings().search.case_sensitive,
+                state,
+                actions,
+            );
             if view.is_some_and(SearchView::on_network) {
                 chip(
                     ui,
@@ -163,7 +168,7 @@ fn chip(ui: &mut Ui, text: &str, color: Color32, lit: bool, tip: &str) {
 }
 
 /// The `Aa` button: selected while searches match case.
-fn case_toggle(ui: &mut Ui, on: bool, actions: &mut Vec<Action>) {
+fn case_toggle(ui: &mut Ui, on: bool, state: &mut State, actions: &mut Vec<Action>) {
     let label = t("search.case_tip");
     let color = if on { theme::accent() } else { theme::dim() };
     let galley = ui.painter().layout_no_wrap(
@@ -182,7 +187,8 @@ fn case_toggle(ui: &mut Ui, on: bool, actions: &mut Vec<Action>) {
     painter.galley(rect.center() - galley.size() / 2.0, galley, color);
     if resp.on_hover_text(label).clicked() {
         raise(actions, SearchAction::ToggleCase);
-        ui.memory_mut(|m| m.request_focus(field_id()));
+        state.refocus = true;
+        ui.ctx().request_repaint();
     }
 }
 
@@ -196,9 +202,7 @@ fn field(
     explorer: &Explorer,
     actions: &mut Vec<Action>,
 ) {
-    if !narrow {
-        bar_label(ui, label);
-    }
+    let label_id = (!narrow).then(|| bar_label(ui, label).id);
     let id = field_id();
     let hint_text = if narrow { label } else { "" };
     let mut out = TextEdit::singleline(&mut state.text)
@@ -207,6 +211,12 @@ fn field(
         .align(egui::Align2::LEFT_CENTER)
         .desired_width(ui.available_width())
         .show(ui);
+    if std::mem::take(&mut state.refocus) {
+        out.response.request_focus();
+    }
+    if let Some(id) = label_id {
+        out.response.response.clone().labelled_by(id);
+    }
     if std::mem::take(&mut state.focus) {
         out.response.request_focus();
         let end = CCursor::new(state.text.chars().count());
@@ -226,14 +236,14 @@ fn field(
     }
 }
 
-fn bar_label(ui: &mut Ui, label: &str) {
+fn bar_label(ui: &mut Ui, label: &str) -> egui::Response {
     let font = TextStyle::Body.resolve(ui.style());
     let natural = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, theme::dim());
     let width = natural.size().x.min(LABEL_MAX_WIDTH);
     let text = egui::RichText::new(label).color(theme::dim());
-    ui.add_sized([width, BAR_HEIGHT], egui::Label::new(text).truncate());
+    ui.add_sized([width, BAR_HEIGHT], egui::Label::new(text).truncate())
 }
 
 fn arrows(ui: &Ui, actions: &mut Vec<Action>) {
@@ -255,5 +265,84 @@ fn leave_field(ui: &Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
             actions,
             SearchAction::OpenHit(search.selected().unwrap_or(0)),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use std::time::{Duration, Instant};
+
+    type Fixture = (Explorer, State, Vec<Action>);
+
+    fn explorer_with_hit() -> Explorer {
+        let dir = std::env::temp_dir().join(format!("fx-bar-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("alpha.txt"), b"").unwrap();
+        let mut explorer = Explorer::new(dir, || {});
+        explorer.request_search("alpha");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while explorer.search().is_none_or(SearchView::is_running) {
+            assert!(Instant::now() < deadline, "search did not finish");
+            explorer.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        explorer
+    }
+
+    fn harness(explorer: Explorer) -> Harness<'static, Fixture> {
+        let mut state = State::default();
+        state.open();
+        Harness::new_ui_state(
+            |ui, (explorer, state, actions): &mut Fixture| bar(ui, explorer, state, actions),
+            (explorer, state, Vec::new()),
+        )
+    }
+
+    fn raised(harness: &Harness<'_, Fixture>) -> Vec<SearchAction> {
+        harness
+            .state()
+            .2
+            .iter()
+            .filter_map(|a| match a {
+                Action::Search(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn field_focused(harness: &Harness<'_, Fixture>) -> bool {
+        harness.ctx.memory(|m| m.has_focus(field_id()))
+    }
+
+    #[test]
+    fn the_case_toggle_raises_an_action_and_the_field_keeps_focus() {
+        let mut harness = harness(explorer_with_hit());
+        harness.run();
+        assert!(field_focused(&harness));
+        harness.get_by_label(t("search.case_tip")).click();
+        harness.run();
+        assert_eq!(raised(&harness), [SearchAction::ToggleCase]);
+        assert!(field_focused(&harness));
+    }
+
+    #[test]
+    fn enter_in_the_field_opens_the_first_result() {
+        let mut harness = harness(explorer_with_hit());
+        harness.run();
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert!(raised(&harness).contains(&SearchAction::OpenHit(0)));
+    }
+
+    #[test]
+    fn escape_in_the_field_raises_escape() {
+        let mut harness = harness(explorer_with_hit());
+        harness.run();
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert!(raised(&harness).contains(&SearchAction::Escape));
     }
 }
