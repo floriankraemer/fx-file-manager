@@ -9,8 +9,8 @@ use eframe::egui::{
     self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
 };
 use fx_app::{
-    Explorer, Language, Notice, NoticeKind, Place, SearchView, Settings, State, WindowId, i18n,
-    relabel_places,
+    Explorer, Language, Notice, NoticeKind, Place, SearchStart, SearchView, Settings, State,
+    WindowId, i18n, relabel_places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -208,15 +208,10 @@ impl App {
         self.windows[index].reveal_scroll = true;
     }
 
-    /// Starts the search for `text`; the first one from a filesystem root asks for confirmation.
     fn start_search(&mut self, index: usize, text: String) {
-        let ex = &mut self.explorer;
-        let fresh = ex.search().is_none() && !text.trim().is_empty();
-        if fresh && ex.search_needs_root_notice() {
-            self.open_dialog(index, Some(Dialog::search_root(text)));
-            return;
+        if self.explorer.request_search(&text) == SearchStart::NeedsRootNotice {
+            self.open_dialog(index, Some(Dialog::SearchRoot));
         }
-        ex.start_search(&text);
     }
 
     fn close_search(&mut self, index: usize) {
@@ -226,11 +221,8 @@ impl App {
 
     /// Esc: a running search stops and keeps its results; otherwise the search closes.
     fn escape_search(&mut self, index: usize) {
-        match self.explorer.search() {
-            Some(search) if search.is_running() => self.explorer.cancel_search(),
-            Some(_) => self.close_search(index),
-            None if self.windows[index].search.is_open() => self.close_search(index),
-            None => {}
+        if !self.explorer.escape_search() {
+            self.close_search(index);
         }
     }
 

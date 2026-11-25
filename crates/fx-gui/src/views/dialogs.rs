@@ -40,10 +40,8 @@ pub enum Dialog {
     },
     /// Shows [`Explorer::details`], which a background read fills in.
     Properties,
-    /// Searching from a filesystem root; `text` is the query that waits for the answer.
-    SearchRoot {
-        text: String,
-    },
+    /// Searching from a filesystem root; the explorer holds the query that waits for the answer.
+    SearchRoot,
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
     Conflict {
         transfer: u64,
@@ -86,10 +84,6 @@ impl Dialog {
         }
     }
 
-    pub fn search_root(text: String) -> Self {
-        Self::SearchRoot { text }
-    }
-
     pub fn properties(explorer: &mut Explorer) -> Option<Self> {
         let row = explorer.active().selected()?;
         explorer.request_details(row).then_some(Self::Properties)
@@ -125,7 +119,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties => properties(ctx, explorer),
-        Dialog::SearchRoot { text } => search_root(ctx, explorer, text),
+        Dialog::SearchRoot => search_root(ctx, explorer),
         Dialog::Conflict {
             transfer,
             conflict,
@@ -499,7 +493,7 @@ fn name_field(
     submit
 }
 
-fn search_root(ctx: &Context, explorer: &mut Explorer, text: &str) -> bool {
+fn search_root(ctx: &Context, explorer: &mut Explorer) -> bool {
     modal(ctx, "search-root-dialog", |ui| {
         ui.heading(t("search.root_notice.title"));
         ui.add_space(6.0);
@@ -512,11 +506,8 @@ fn search_root(ctx: &Context, explorer: &mut Explorer, text: &str) -> bool {
             default_focus(ui, &proceed);
             go = proceed.clicked();
         });
-        if silence {
-            explorer.disable_search_root_notice();
-        }
         if go || silence {
-            explorer.start_search(text);
+            explorer.acknowledge_root_notice(silence);
         }
         go || silence
     })
