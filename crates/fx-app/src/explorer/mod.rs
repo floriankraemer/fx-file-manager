@@ -105,8 +105,6 @@ pub struct Explorer {
     bookmark_tx: Sender<BookmarkChecked>,
     bookmark_rx: Receiver<BookmarkChecked>,
     searches: SearchRunner,
-    /// A search started from a filesystem root, waiting for the user to acknowledge the root notice.
-    pending_root_search: Option<String>,
     /// The root notice was acknowledged; it is shown once per app session.
     root_notice_seen: bool,
     /// Bumped per background folder check; older answers are dropped.
@@ -234,7 +232,6 @@ impl Explorer {
             bookmark_tx,
             bookmark_rx,
             searches: SearchRunner::new(wake),
-            pending_root_search: None,
             root_notice_seen: false,
             open_generation: 0,
             open_tx,

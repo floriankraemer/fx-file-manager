@@ -26,14 +26,14 @@ impl Explorer {
             return SearchStart::Started;
         }
         if self.search().is_none() && self.root_notice_due() {
-            self.pending_root_search = Some(text.to_owned());
+            self.active_mut().search_slot_mut().hold(text.to_owned());
             return SearchStart::NeedsRootNotice;
         }
         self.start_search(text);
         SearchStart::Started
     }
 
-    /// Closes the root notice and runs the search it held back.
+    /// Closes the root notice and runs the search it held back in the active tab.
     /// With `dont_show_again`, `search.warn_root` is turned off and persisted.
     pub fn acknowledge_root_notice(&mut self, dont_show_again: bool) {
         self.root_notice_seen = true;
@@ -42,7 +42,7 @@ impl Explorer {
             settings.search.warn_root = false;
             self.set_settings(settings);
         }
-        if let Some(text) = self.pending_root_search.take() {
+        if let Some(text) = self.active_mut().search_slot_mut().take_held() {
             self.start_search(&text);
         }
     }

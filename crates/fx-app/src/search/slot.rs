@@ -6,6 +6,8 @@ use std::path::Path;
 pub(crate) struct SearchSlot {
     generation: u64,
     view: Option<SearchView>,
+    /// Query text waiting for the user to acknowledge the root notice.
+    held: Option<String>,
 }
 
 impl SearchSlot {
@@ -21,6 +23,7 @@ impl SearchSlot {
     /// Dropping the old view cancels its walk.
     pub(crate) fn begin(&mut self, view: SearchView) -> u64 {
         self.generation += 1;
+        self.held = None;
         self.view = Some(view);
         self.generation
     }
@@ -34,7 +37,16 @@ impl SearchSlot {
     /// Drops the search and its results, and makes any in-flight event stale.
     pub(crate) fn clear(&mut self) {
         self.generation += 1;
+        self.held = None;
         self.view = None;
+    }
+
+    pub(crate) fn hold(&mut self, text: String) {
+        self.held = Some(text);
+    }
+
+    pub(crate) fn take_held(&mut self) -> Option<String> {
+        self.held.take()
     }
 
     /// A search is rooted where the tab was when it started; once the tab is elsewhere it goes away.

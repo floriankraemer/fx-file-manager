@@ -434,6 +434,16 @@ fn dont_show_again_persists_and_the_notice_is_skipped_below_the_root() {
 }
 
 #[test]
+fn a_held_search_never_runs_in_another_tab() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut explorer = at_filesystem_root(dir.path());
+    explorer.request_search("x");
+    explorer.new_tab(dir.path().to_path_buf());
+    explorer.acknowledge_root_notice(false);
+    assert!(explorer.search().is_none());
+}
+
+#[test]
 fn a_notice_that_was_not_acknowledged_comes_back() {
     let dir = tempfile::tempdir().unwrap();
     let mut explorer = at_filesystem_root(dir.path());
