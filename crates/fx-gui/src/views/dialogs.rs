@@ -1,8 +1,9 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, paste conflicts.
 
+use super::modal::{button_row, default_focus, modal};
 use crate::theme;
 use eframe::egui::{
-    self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
+    self, Button, Context, Key, RichText, TextEdit, Ui,
     text::{CCursor, CCursorRange},
 };
 use fx_app::{
@@ -13,7 +14,6 @@ use fx_core::{Conflict, EntryKind, Resolution};
 use std::path::PathBuf;
 
 const LISTED_NAMES: usize = 5;
-const WIDTH: f32 = 380.0;
 
 pub enum Dialog {
     /// `paths` pin what the user was shown, so a reload behind the dialog cannot redirect the delete.
@@ -251,27 +251,6 @@ fn apply_answer(
             explorer.cancel_transfer(transfer);
             true
         }
-    }
-}
-
-pub(super) fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool {
-    let response = Modal::new(Id::unique(id)).show(ctx, |ui| {
-        ui.set_width(WIDTH);
-        content(ui)
-    });
-    response.inner || response.should_close()
-}
-
-/// Right-aligned button row; the closure adds buttons in right-to-left order (primary first).
-pub(super) fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    ui.add_space(8.0);
-    ui.with_layout(Layout::right_to_left(Align::Center), add);
-}
-
-/// Focuses `response` once, while nothing else holds the focus, so Enter triggers the default button.
-fn default_focus(ui: &Ui, response: &egui::Response) {
-    if ui.memory(|m| m.focused().is_none()) {
-        response.request_focus();
     }
 }
 
