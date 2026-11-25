@@ -221,6 +221,7 @@ search_result_cap_note = "Пошук зупиняється після цієї 
 search_glob_scope = "Шаблони застосовуються до"
 search_glob_scope_note = "Діє для запитів із * або ?. Звичайний текст завжди порівнюється з назвою."
 search_warn_root = "Попереджати перед пошуком від кореня файлової системи"
+search_case_sensitive = "Враховувати регістр під час пошуку"
 
 [settings.cat]
 search = "Пошук"
@@ -485,8 +486,13 @@ copy.other = "Копіювати {n} елемента"
 
 [search]
 col_folder = "Папка"
-glob = "* ? шаблон"
-placeholder = "Шукати в {folder}"
+glob_chip = "* ?"
+glob_tip = "* замінює будь-які символи, ? замінює один"
+case_chip = "Aa"
+case_tip = "Враховувати регістр"
+network = "мережа"
+network_tip = "Пошук на мережевому диску"
+label = "Шукати в {folder}"
 stop = "Зупинити"
 clear = "Очистити"
 running = "Триває пошук…"

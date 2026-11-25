@@ -206,6 +206,7 @@ search_result_cap_note = "A search stops after this many matches. Minimum 100."
 search_glob_scope = "Wildcards match"
 search_glob_scope_note = "Applies to queries with * or ?. Plain text always matches the name."
 search_warn_root = "Warn before searching from a filesystem root"
+search_case_sensitive = "Match case in searches"
 
 [settings.cat]
 search = "Search"
@@ -434,8 +435,13 @@ copy.other = "Copy {n} items"
 
 [search]
 col_folder = "Folder"
-glob = "* ? glob"
-placeholder = "Search in {folder}"
+glob_chip = "* ?"
+glob_tip = "* matches any characters, ? matches one"
+case_chip = "Aa"
+case_tip = "Match case"
+network = "network"
+network_tip = "Searching a network drive"
+label = "Search in {folder}"
 stop = "Stop"
 clear = "Clear"
 running = "Searching…"

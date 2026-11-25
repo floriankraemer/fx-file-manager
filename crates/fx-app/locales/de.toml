@@ -205,6 +205,7 @@ search_result_cap_note = "Eine Suche endet nach dieser Anzahl Treffer. Mindesten
 search_glob_scope = "Platzhalter gelten für"
 search_glob_scope_note = "Gilt für Suchen mit * oder ?. Einfacher Text prüft immer den Namen."
 search_warn_root = "Vor Suche im Stammverzeichnis warnen"
+search_case_sensitive = "Groß-/Kleinschreibung bei der Suche beachten"
 
 [settings.cat]
 search = "Suche"
@@ -433,8 +434,13 @@ copy.other = "{n} Elemente kopieren"
 
 [search]
 col_folder = "Ordner"
-glob = "* ? Platzhalter"
-placeholder = "In {folder} suchen"
+glob_chip = "* ?"
+glob_tip = "* steht für beliebige Zeichen, ? für genau eines"
+case_chip = "Aa"
+case_tip = "Groß-/Kleinschreibung beachten"
+network = "Netzwerk"
+network_tip = "Suche auf einem Netzlaufwerk"
+label = "In {folder} suchen"
 stop = "Stopp"
 clear = "Leeren"
 running = "Suche läuft…"

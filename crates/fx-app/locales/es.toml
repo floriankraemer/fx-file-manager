@@ -205,6 +205,7 @@ search_result_cap_note = "Una búsqueda se detiene tras este número de coincide
 search_glob_scope = "Los comodines se aplican a"
 search_glob_scope_note = "Vale para búsquedas con * o ?. El texto simple siempre se compara con el nombre."
 search_warn_root = "Avisar antes de buscar desde la raíz del sistema de archivos"
+search_case_sensitive = "Distinguir mayúsculas y minúsculas al buscar"
 
 [settings.cat]
 search = "Búsqueda"
@@ -433,8 +434,13 @@ copy.other = "Copiar {n} elementos"
 
 [search]
 col_folder = "Carpeta"
-glob = "* ? comodín"
-placeholder = "Buscar en {folder}"
+glob_chip = "* ?"
+glob_tip = "* equivale a cualquier cantidad de caracteres, ? a uno"
+case_chip = "Aa"
+case_tip = "Distinguir mayúsculas y minúsculas"
+network = "red"
+network_tip = "Buscando en una unidad de red"
+label = "Buscar en {folder}"
 stop = "Detener"
 clear = "Borrar"
 running = "Buscando…"

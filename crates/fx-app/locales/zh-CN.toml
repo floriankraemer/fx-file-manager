@@ -197,6 +197,7 @@ search_result_cap_note = "搜索在达到此数量的匹配项后停止。最小
 search_glob_scope = "通配符匹配范围"
 search_glob_scope_note = "适用于包含 * 或 ? 的查询。纯文本始终匹配名称。"
 search_warn_root = "从文件系统根目录搜索前提醒"
+search_case_sensitive = "搜索时区分大小写"
 
 [settings.cat]
 search = "搜索"
@@ -407,8 +408,13 @@ copy.other = "复制 {n} 个项目"
 
 [search]
 col_folder = "文件夹"
-glob = "* ? 通配符"
-placeholder = "在 {folder} 中搜索"
+glob_chip = "* ?"
+glob_tip = "* 匹配任意字符，? 匹配单个字符"
+case_chip = "Aa"
+case_tip = "区分大小写"
+network = "网络"
+network_tip = "正在搜索网络驱动器"
+label = "在 {folder} 中搜索"
 stop = "停止"
 clear = "清除"
 running = "正在搜索…"

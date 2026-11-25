@@ -32,6 +32,7 @@ pub enum SearchAction {
     /// Esc: close the unreadable-folders window, else stop a running search, else close.
     Escape,
     ShowUnreadable,
+    ToggleCase,
     OpenHit(usize),
     OpenSelected,
     RevealHit(usize),
@@ -128,6 +129,7 @@ pub fn execute(
         SearchAction::Close => close(explorer, state),
         SearchAction::Escape => escape(explorer, state),
         SearchAction::ShowUnreadable => state.unreadable_open = true,
+        SearchAction::ToggleCase => explorer.toggle_search_case(),
         SearchAction::OpenHit(row) => explorer.open_search_hit(row),
         SearchAction::OpenSelected => open_selected(explorer),
         SearchAction::RevealHit(row) => reveal(explorer, state, row),
