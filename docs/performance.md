@@ -19,7 +19,7 @@ Copy internals are in [copy-engine.md](copy-engine.md); measurements are in [ben
   Each hit path is one allocation of its exact size.
 - Hidden filtering and the result cap run on the search worker, before hits reach the UI.
   The UI drains the hit channel for at most about 4 ms per frame and asks for another frame if events are left.
-- Cancelling stops every worker within about a millisecond; measurements are in [development.md](development.md#search-benchmarks).
+- Cancelling makes every worker stop before its next directory; measurements are in [development.md](development.md#search-benchmarks).
 - Release builds use fat LTO, one codegen unit and `panic = "abort"`.
 
 ## File system reading strategies
