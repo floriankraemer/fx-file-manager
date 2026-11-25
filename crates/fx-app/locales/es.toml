@@ -454,6 +454,9 @@ folders.one = "{n} carpeta recorrida"
 folders.other = "{n} carpetas recorridas"
 unreadable.one = "{n} carpeta ilegible"
 unreadable.other = "{n} carpetas ilegibles"
+unreadable_title = "Carpetas ilegibles"
+col_error = "Motivo"
+unreadable_capped = "Se muestran las primeras {n} de {total}."
 
 [search.scope]
 name = "Solo el nombre del archivo"

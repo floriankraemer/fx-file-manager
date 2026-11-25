@@ -455,6 +455,9 @@ folders.one = "{n} folder walked"
 folders.other = "{n} folders walked"
 unreadable.one = "{n} folder unreadable"
 unreadable.other = "{n} folders unreadable"
+unreadable_title = "Unreadable folders"
+col_error = "Reason"
+unreadable_capped = "Showing the first {n} of {total}."
 
 [search.scope]
 name = "File name only"

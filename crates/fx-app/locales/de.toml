@@ -454,6 +454,9 @@ folders.one = "{n} Ordner durchsucht"
 folders.other = "{n} Ordner durchsucht"
 unreadable.one = "{n} Ordner nicht lesbar"
 unreadable.other = "{n} Ordner nicht lesbar"
+unreadable_title = "Nicht lesbare Ordner"
+col_error = "Grund"
+unreadable_capped = "Die ersten {n} von {total} werden angezeigt."
 
 [search.scope]
 name = "Nur Dateiname"

@@ -514,6 +514,9 @@ unreadable.one = "{n} тека недоступна"
 unreadable.few = "{n} теки недоступні"
 unreadable.many = "{n} тек недоступні"
 unreadable.other = "{n} теки недоступні"
+unreadable_title = "Недоступні теки"
+col_error = "Причина"
+unreadable_capped = "Показано перші {n} із {total}."
 
 [search.scope]
 name = "Лише назва файлу"

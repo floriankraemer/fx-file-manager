@@ -6,6 +6,7 @@ mod bar;
 mod results;
 mod root_notice;
 mod status;
+mod unreadable;
 
 pub use bar::bar;
 pub use results::results;
@@ -28,8 +29,9 @@ pub enum SearchAction {
     Stop,
     /// Drop the results and hide the bar.
     Close,
-    /// Esc: stop a running search, otherwise close it.
+    /// Esc: close the unreadable-folders window, else stop a running search, else close.
     Escape,
+    ShowUnreadable,
     OpenHit(usize),
     OpenSelected,
     RevealHit(usize),
@@ -57,11 +59,13 @@ pub struct State {
     scroll_to_selection: bool,
     /// A reveal asked for its item to be scrolled into view once the folder has loaded.
     reveal_scroll: bool,
+    unreadable_open: bool,
 }
 
 impl State {
     /// Follows the active tab: another tab or folder shows that tab's own search, or no bar.
     fn sync(&mut self, explorer: &Explorer) {
+        self.unreadable_open &= explorer.search().is_some();
         let tab = explorer.active();
         let key = (tab.id(), tab.path().to_path_buf());
         if self.key.as_ref() == Some(&key) {
@@ -84,6 +88,7 @@ impl State {
     fn close(&mut self) {
         self.open = false;
         self.text.clear();
+        self.unreadable_open = false;
     }
 
     /// True once, when a reveal's folder has loaded and its item is selected.
@@ -122,6 +127,7 @@ pub fn execute(
         SearchAction::Stop => explorer.cancel_search(),
         SearchAction::Close => close(explorer, state),
         SearchAction::Escape => escape(explorer, state),
+        SearchAction::ShowUnreadable => state.unreadable_open = true,
         SearchAction::OpenHit(row) => explorer.open_search_hit(row),
         SearchAction::OpenSelected => open_selected(explorer),
         SearchAction::RevealHit(row) => reveal(explorer, state, row),
@@ -145,6 +151,9 @@ fn close(explorer: &mut Explorer, state: &mut State) {
 }
 
 fn escape(explorer: &mut Explorer, state: &mut State) {
+    if std::mem::take(&mut state.unreadable_open) {
+        return;
+    }
     if !explorer.escape_search() {
         state.close();
     }

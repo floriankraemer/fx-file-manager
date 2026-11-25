@@ -1,4 +1,4 @@
-use super::{SearchAction, State};
+use super::{SearchAction, State, unreadable};
 use crate::command::{Command, hint};
 use crate::views::icons;
 use crate::views::{menu, table};
@@ -32,6 +32,7 @@ pub fn results(ui: &mut Ui, explorer: &mut Explorer, state: &mut State, actions:
         let Some(view) = explorer.search() else {
             return;
         };
+        unreadable::window(ui.ctx(), view, &mut state.unreadable_open);
         banners(ui, view);
         if view.matches() == 0 && !view.is_running() {
             empty(ui, view);
@@ -71,9 +72,6 @@ fn banners(ui: &mut Ui, view: &SearchView) {
                 theme::error(),
                 &tr("search.failed", &[("error", error)]),
             );
-        }
-        SearchStatus::Running if view.on_network() => {
-            banner(ui, theme::dim(), t("search.network_slow"));
         }
         _ => {}
     }

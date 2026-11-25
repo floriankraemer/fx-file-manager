@@ -424,6 +424,9 @@ network_slow = "正在搜索网络驱动器，可能需要较长时间"
 matches.other = "{n} 个匹配项"
 folders.other = "已遍历 {n} 个文件夹"
 unreadable.other = "{n} 个文件夹无法读取"
+unreadable_title = "无法读取的文件夹"
+col_error = "原因"
+unreadable_capped = "显示前 {n} 个，共 {total} 个。"
 
 [search.scope]
 name = "仅文件名"
