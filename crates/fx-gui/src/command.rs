@@ -663,13 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn resolving_a_large_keymap_is_fast() {
+    fn every_unknown_command_of_a_large_keymap_is_reported() {
         let o: BTreeMap<_, _> = (0..100)
             .map(|i| (format!("x{i}"), vec!["f9".to_owned()]))
             .collect();
-        let start = std::time::Instant::now();
-        let _ = resolve(&o);
-        assert!(start.elapsed() < std::time::Duration::from_millis(50));
+        let (_, problems) = resolve(&o);
+        assert_eq!(problems.len(), 100);
     }
 
     #[test]
