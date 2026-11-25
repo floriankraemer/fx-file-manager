@@ -290,4 +290,52 @@ mod tests {
         assert_eq!(split_match("äb", Some(1..2)), [("äb", false)]);
         assert_eq!(split_match("ab", Some(1..9)), [("ab", false)]);
     }
+
+    /// Frame time of the result list at the default result cap.
+    /// Run with `cargo test --release -p fx-gui -- --ignored search_results_frame_time --nocapture`.
+    #[test]
+    #[ignore = "builds 100k files; run on demand"]
+    fn search_results_frame_time() {
+        use egui_kittest::Harness;
+        use std::time::{Duration, Instant};
+
+        const FRAMES: usize = 101;
+        let dir = std::env::temp_dir().join(format!("fx-frame-bench-{}", std::process::id()));
+        for d in 0..1_000 {
+            let sub = dir.join(format!("d{d}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            for f in 0..100 {
+                std::fs::write(sub.join(format!("file{f}.txt")), b"").unwrap();
+            }
+        }
+        let mut explorer = Explorer::new(dir.clone(), || {});
+        explorer.request_search("file");
+        while explorer.search().is_none_or(SearchView::is_running) {
+            explorer.poll();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let hits = explorer.search().map_or(0, SearchView::matches);
+        let mut harness = Harness::new_ui_state(
+            |ui, (explorer, state, actions): &mut (Explorer, State, Vec<Action>)| {
+                if !ui.style().text_styles.contains_key(&theme::list_style()) {
+                    theme::apply(ui.ctx(), &fx_app::Settings::default());
+                    let style = ui.ctx().global_style();
+                    ui.set_style(style);
+                }
+                results(ui, explorer, state, actions);
+            },
+            (explorer, State::default(), Vec::new()),
+        );
+        harness.run();
+        let mut frames: Vec<Duration> = (0..FRAMES)
+            .map(|_| {
+                let start = Instant::now();
+                harness.step();
+                start.elapsed()
+            })
+            .collect();
+        frames.sort();
+        println!("{hits} hits, median frame {:?}", frames[FRAMES / 2]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
