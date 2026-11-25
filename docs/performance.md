@@ -13,8 +13,13 @@ Copy internals are in [copy-engine.md](copy-engine.md); measurements are in [ben
 - Background loads carry a generation counter, so stale results are dropped.
 - The UI is fully decoupled from every other process, so it stays responsive.
   Listing, copying and moving run on background threads, and the UI only samples their state.
-- Recursive search reuses the parallel walk (names and kinds only, no stat), matches bytes without allocating per entry, builds one path per match and streams one batch per folder.
-  Cancelling stops every worker within about a millisecond; measurements are in [development.md](development.md#search-benchmarks).
+- Recursive search reuses the parallel walk (names and kinds only, no stat).
+  Matching works on the name bytes and allocates nothing per entry.
+  A folder's hit list is reserved once, on its first hit.
+  Each hit path is one allocation of its exact size.
+- Hidden filtering and the result cap run on the search worker, before hits reach the UI.
+  The UI drains the hit channel for at most about 4 ms per frame and asks for another frame if events are left.
+- Cancelling stops every worker within about a millisecond; measurements are in [development.md](development.md#search-benchmarks).
 - Release builds use fat LTO, one codegen unit and `panic = "abort"`.
 
 ## File system reading strategies
