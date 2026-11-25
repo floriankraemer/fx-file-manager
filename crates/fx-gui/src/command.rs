@@ -671,4 +671,13 @@ mod tests {
         let _ = resolve(&o);
         assert!(start.elapsed() < std::time::Duration::from_millis(50));
     }
+
+    #[test]
+    fn folder_listing_commands_are_disabled_while_a_search_shows() {
+        let explorer = crate::test_support::searching_explorer();
+        for command in [Command::Delete, Command::Copy, Command::Rename] {
+            assert!(needs_folder_listing(command));
+            assert!(!enabled(command, &explorer), "{command:?}");
+        }
+    }
 }

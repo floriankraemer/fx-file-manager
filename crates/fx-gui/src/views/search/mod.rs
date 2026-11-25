@@ -236,4 +236,17 @@ mod tests {
         assert_eq!(command_action(Command::MoveDown, &explorer), None);
         assert_eq!(command_action(Command::OpenSelected, &explorer), None);
     }
+
+    #[test]
+    fn navigation_commands_act_on_the_results_while_a_search_shows() {
+        let explorer = crate::test_support::searching_explorer();
+        for (command, action) in [
+            (Command::MoveDown, SearchAction::MoveSelection(1)),
+            (Command::MoveUp, SearchAction::MoveSelection(-1)),
+            (Command::OpenSelected, SearchAction::OpenSelected),
+            (Command::RevealSearchHit, SearchAction::RevealSelected),
+        ] {
+            assert_eq!(command_action(command, &explorer), Some(action));
+        }
+    }
 }

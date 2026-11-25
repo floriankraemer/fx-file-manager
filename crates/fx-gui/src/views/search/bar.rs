@@ -273,24 +273,8 @@ mod tests {
     use super::*;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
-    use std::time::{Duration, Instant};
 
     type Fixture = (Explorer, State, Vec<Action>);
-
-    fn explorer_with_hit() -> Explorer {
-        let dir = std::env::temp_dir().join(format!("fx-bar-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("alpha.txt"), b"").unwrap();
-        let mut explorer = Explorer::new(dir, || {});
-        explorer.request_search("alpha");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while explorer.search().is_none_or(SearchView::is_running) {
-            assert!(Instant::now() < deadline, "search did not finish");
-            explorer.poll();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        explorer
-    }
 
     fn harness(explorer: Explorer) -> Harness<'static, Fixture> {
         let mut state = State::default();
@@ -319,7 +303,7 @@ mod tests {
 
     #[test]
     fn the_case_toggle_raises_an_action_and_the_field_keeps_focus() {
-        let mut harness = harness(explorer_with_hit());
+        let mut harness = harness(crate::test_support::searching_explorer());
         harness.run();
         assert!(field_focused(&harness));
         harness.get_by_label(t("search.case_tip")).click();
@@ -330,7 +314,7 @@ mod tests {
 
     #[test]
     fn enter_in_the_field_opens_the_first_result() {
-        let mut harness = harness(explorer_with_hit());
+        let mut harness = harness(crate::test_support::searching_explorer());
         harness.run();
         harness.key_press(Key::Enter);
         harness.run();
@@ -339,10 +323,21 @@ mod tests {
 
     #[test]
     fn escape_in_the_field_raises_escape() {
-        let mut harness = harness(explorer_with_hit());
+        let mut harness = harness(crate::test_support::searching_explorer());
         harness.run();
         harness.key_press(Key::Escape);
         harness.run();
-        assert!(raised(&harness).contains(&SearchAction::Escape));
+        assert_eq!(raised(&harness), [SearchAction::Escape]);
+    }
+
+    #[test]
+    fn arrow_keys_in_the_field_move_the_selection() {
+        for (key, delta) in [(Key::ArrowDown, 1), (Key::ArrowUp, -1)] {
+            let mut harness = harness(crate::test_support::searching_explorer());
+            harness.run();
+            harness.key_press(key);
+            harness.run();
+            assert_eq!(raised(&harness), [SearchAction::MoveSelection(delta)]);
+        }
     }
 }
