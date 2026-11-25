@@ -208,7 +208,8 @@ fn names_found(root: &Path, query: &SearchQuery) -> Vec<String> {
 #[test]
 fn case_sensitive_option_applies_to_substrings_and_globs() {
     let tmp = tempfile::tempdir().unwrap();
-    for name in ["Report.TXT", "report.txt"] {
+    // The names differ beyond case, because macOS and Windows file systems ignore it.
+    for name in ["Report-a.TXT", "report-b.txt"] {
         fs::write(tmp.path().join(name), b"x").unwrap();
     }
     let exact = SearchOptions {
@@ -216,9 +217,9 @@ fn case_sensitive_option_applies_to_substrings_and_globs() {
         ..SearchOptions::default()
     };
     let query = |text| SearchQuery::new(text, exact);
-    assert_eq!(names_found(tmp.path(), &query("Report")), ["Report.TXT"]);
-    assert_eq!(names_found(tmp.path(), &query("*.txt")), ["report.txt"]);
-    assert_eq!(names_found(tmp.path(), &query("report")), ["report.txt"]);
+    assert_eq!(names_found(tmp.path(), &query("Report")), ["Report-a.TXT"]);
+    assert_eq!(names_found(tmp.path(), &query("*.txt")), ["report-b.txt"]);
+    assert_eq!(names_found(tmp.path(), &query("report")), ["report-b.txt"]);
     let folded = SearchQuery::new("report", SearchOptions::default());
     assert_eq!(names_found(tmp.path(), &folded).len(), 2);
 }
