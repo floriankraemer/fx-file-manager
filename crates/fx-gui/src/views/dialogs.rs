@@ -1,6 +1,7 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, paste conflicts.
 
 use super::modal::{button_row, default_focus, modal};
+use super::search;
 use crate::theme;
 use eframe::egui::{
     self, Button, Context, Key, RichText, TextEdit, Ui,
@@ -119,7 +120,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties => properties(ctx, explorer),
-        Dialog::SearchRoot => search_root(ctx, explorer),
+        Dialog::SearchRoot => search::root_notice(ctx, explorer),
         Dialog::Conflict {
             transfer,
             conflict,
@@ -470,26 +471,6 @@ fn name_field(
         out.response.request_focus();
     }
     submit
-}
-
-fn search_root(ctx: &Context, explorer: &mut Explorer) -> bool {
-    modal(ctx, "search-root-dialog", |ui| {
-        ui.heading(t("search.root_notice.title"));
-        ui.add_space(6.0);
-        let root = explorer.active().path().display().to_string();
-        ui.label(tr("search.root_notice.body", &[("root", &root)]));
-        let (mut go, mut silence) = (false, false);
-        button_row(ui, |ui| {
-            let proceed = ui.button(t("search.root_notice.continue"));
-            silence = ui.button(t("search.root_notice.dont_show")).clicked();
-            default_focus(ui, &proceed);
-            go = proceed.clicked();
-        });
-        if go || silence {
-            explorer.acknowledge_root_notice(silence);
-        }
-        go || silence
-    })
 }
 
 fn properties(ctx: &Context, explorer: &Explorer) -> bool {
