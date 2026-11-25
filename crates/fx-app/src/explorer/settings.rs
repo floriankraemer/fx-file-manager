@@ -14,6 +14,7 @@ impl Explorer {
     /// A save failure becomes an error notice; the new settings stay in effect for this session.
     pub fn set_settings(&mut self, settings: Settings) {
         let hidden_changed = settings.show_hidden != self.settings.show_hidden;
+        let search_changed = self.search_rules_changed(&settings);
         for tab in self.windows.iter_mut().flat_map(|w| &mut w.tabs) {
             if tab.show_hidden() != settings.show_hidden {
                 tab.set_show_hidden(settings.show_hidden);
@@ -35,6 +36,9 @@ impl Explorer {
         }
         if hidden_changed {
             self.reload_tree();
+        }
+        if search_changed {
+            self.restart_searches();
         }
         let saved = match &self.settings_path {
             Some(path) => self.settings.save_to(path),

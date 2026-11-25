@@ -23,10 +23,10 @@ impl Explorer {
         self.session_dirty = true;
         let window = &mut self.windows[w];
         let tab = &mut window.tabs[index];
-        tab.clear_search_if_moved();
+        let path = tab.path().to_path_buf();
+        tab.search_slot_mut().clear_if_moved(&path);
         let generation = tab.begin_load();
         let tab_id = tab.id();
-        let path = tab.path().to_path_buf();
         // Navigating cancels a running preload; the next completed load starts a new one.
         window.cancel_preload();
         if self.settings.preload_subfolders

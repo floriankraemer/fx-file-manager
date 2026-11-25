@@ -9,6 +9,8 @@ pub struct SearchSettings {
     pub result_cap: usize,
     /// What a glob query is matched against.
     pub glob_scope: GlobScopeChoice,
+    /// Match case: `a` no longer finds `A`.
+    pub case_sensitive: bool,
     /// Show a notice before searching from a filesystem root.
     pub warn_root: bool,
 }
@@ -18,6 +20,7 @@ impl Default for SearchSettings {
         Self {
             result_cap: 100_000,
             glob_scope: GlobScopeChoice::default(),
+            case_sensitive: false,
             warn_root: true,
         }
     }

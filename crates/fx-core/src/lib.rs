@@ -18,11 +18,13 @@ pub use copy::{
 };
 pub use list::{Backend, ListError, ListOptions, Listed, list_dir};
 pub use listing::{Entry, EntryKind, Listing};
-pub use search::{GlobScope, Hit, SearchQuery, search};
+pub use search::{
+    GlobScope, Hit, SearchEvent, SearchOptions, SearchQuery, UnreadableFolder, search,
+};
 pub use sort::natural_cmp;
 pub use storage::{StorageKind, Strategy};
 #[cfg(windows)]
 pub use sys::network_share;
 pub use sys::volume_info;
 pub use volume::{FAT32_MAX_FILE_SIZE, FsCaps, FsKind, VolumeId, VolumeInfo};
-pub use walk::{WalkOptions, WalkProgress, WalkStats, Walked, walk, walk_cancellable};
+pub use walk::{WalkControl, WalkOptions, WalkStats, WalkVisitor, Walked, walk, walk_cancellable};

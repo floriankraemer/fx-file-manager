@@ -1,6 +1,7 @@
 //! Top menu bar: File and View.
 
 use super::menu::{self, bar_style};
+use super::search::SearchAction;
 use crate::action::Action;
 use crate::command::{Command, hint};
 use eframe::egui::{self, Ui};
@@ -14,7 +15,7 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
                 ui.close();
             }
             if menu::item(ui, t("command.search"), &hint(Command::Search), true) {
-                actions.push(Action::OpenSearch);
+                actions.push(Action::Search(SearchAction::Open));
                 ui.close();
             }
             if menu::item(

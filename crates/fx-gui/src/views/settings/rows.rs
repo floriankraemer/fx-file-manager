@@ -360,6 +360,15 @@ pub(super) const ROWS: &[Row] = &[
     Row {
         category: Category::Search,
         group: "settings.group.search",
+        label: "settings.search_case_sensitive",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.search.case_sensitive, l);
+        },
+    },
+    Row {
+        category: Category::Search,
+        group: "settings.group.search",
         label: "settings.search_warn_root",
         kind: Kind::Check,
         show: |ui, f, l| {

@@ -22,14 +22,18 @@ mod tree;
 mod windows;
 
 #[cfg(test)]
+mod search_tests;
+#[cfg(test)]
 mod tests;
 
 pub use details::DetailsState;
 pub use opener::open_with_system;
 pub use revalidate::REVALIDATE_INTERVAL;
+pub use search::SearchStart;
 
 use crate::ops::{Notice, Outcome};
 use crate::places::Place;
+use crate::search::SearchRunner;
 use crate::settings::Settings;
 use crate::state::State;
 use crate::transfers::Transfers;
@@ -40,7 +44,6 @@ use open::OpenChecked;
 use preload::PreloadDone;
 use restore::TabChecked;
 use revalidate::StatChecked;
-use search::SearchMsg;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -101,8 +104,9 @@ pub struct Explorer {
     bookmark_checking: HashSet<PathBuf>,
     bookmark_tx: Sender<BookmarkChecked>,
     bookmark_rx: Receiver<BookmarkChecked>,
-    search_tx: Sender<SearchMsg>,
-    search_rx: Receiver<SearchMsg>,
+    searches: SearchRunner,
+    /// The root notice was acknowledged; it is shown once per app session.
+    root_notice_seen: bool,
     /// Bumped per background folder check; older answers are dropped.
     open_generation: u64,
     open_tx: Sender<OpenChecked>,
@@ -188,11 +192,11 @@ impl Explorer {
         let (preload_tx, preload_rx) = mpsc::channel();
         let (stat_tx, stat_rx) = mpsc::channel();
         let (bookmark_tx, bookmark_rx) = mpsc::channel();
-        let (search_tx, search_rx) = mpsc::channel();
         let (open_tx, open_rx) = mpsc::channel();
         let (tab_check_tx, tab_check_rx) = mpsc::channel();
         let (details_tx, details_rx) = mpsc::channel();
         let (places_tx, places_rx) = mpsc::channel();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         Self {
             windows: vec![Window::new(0)],
             current: 0,
@@ -209,7 +213,7 @@ impl Explorer {
             tree_tx,
             tree_rx,
             tree_generation: 0,
-            wake: Arc::new(wake),
+            wake: Arc::clone(&wake),
             settings,
             settings_path: Settings::path(),
             notices: VecDeque::new(),
@@ -227,8 +231,8 @@ impl Explorer {
             bookmark_checking: HashSet::new(),
             bookmark_tx,
             bookmark_rx,
-            search_tx,
-            search_rx,
+            searches: SearchRunner::new(wake),
+            root_notice_seen: false,
             open_generation: 0,
             open_tx,
             open_rx,
