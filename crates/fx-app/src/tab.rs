@@ -3,7 +3,6 @@
 use crate::search::{SearchSlot, SearchView};
 use crate::settings::FolderOrder;
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
-use fx_core::StorageKind;
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::mem;
@@ -289,11 +288,6 @@ impl Tab {
 
     pub(crate) fn search_slot_mut(&mut self) -> &mut SearchSlot {
         &mut self.search
-    }
-
-    /// The loaded folder is on a network share.
-    pub(crate) fn on_network(&self) -> bool {
-        matches!(&self.state, LoadState::Loaded(view) if view.storage == StorageKind::Network)
     }
 
     /// Marks the tab as loading and returns the generation the new result must carry.

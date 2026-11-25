@@ -74,7 +74,7 @@ mod tests {
 
     fn view(root: &str) -> SearchView {
         let query = SearchQuery::new("x", SearchOptions::default());
-        SearchView::new(PathBuf::from(root), "x".to_owned(), query, false)
+        SearchView::new(PathBuf::from(root), "x".to_owned(), query)
     }
 
     #[test]

@@ -71,12 +71,7 @@ impl Explorer {
         let (cap, show_hidden) = (search.result_cap, self.settings.show_hidden);
         let tab = &mut self.windows[w].tabs[index];
         let (root, tab_id) = (tab.path().to_path_buf(), tab.id());
-        let view = SearchView::new(
-            root.clone(),
-            text.to_owned(),
-            query.clone(),
-            tab.on_network(),
-        );
+        let view = SearchView::new(root.clone(), text.to_owned(), query.clone());
         let control = view.control();
         let generation = tab.search_slot_mut().begin(view);
         self.searches.spawn(SearchRequest {

@@ -242,3 +242,22 @@ fn cancelled_walk_stops_early_with_valid_stats() {
     assert_eq!(seen.load(Relaxed), 1, "only the root is visited");
     assert!(walked.stats.dirs <= 200);
 }
+
+#[test]
+fn walk_control_publishes_the_storage_kind() {
+    use fx_core::{WalkControl, WalkVisitor};
+    struct Ignore;
+    impl WalkVisitor for Ignore {
+        fn directory(&self, _: &Path, _: &Listing) {}
+        fn unreadable(&self, _: &Path, _: &std::io::Error) {}
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let control = WalkControl::default();
+    assert_eq!(control.storage(), None);
+    let opts = WalkOptions {
+        backend: Backend::Std,
+        storage: Some(StorageKind::Network),
+    };
+    fx_core::walk_cancellable(tmp.path(), &opts, &control, &Ignore).unwrap();
+    assert_eq!(control.storage(), Some(StorageKind::Network));
+}

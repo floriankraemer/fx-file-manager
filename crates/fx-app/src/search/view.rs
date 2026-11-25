@@ -1,6 +1,6 @@
 //! State of one tab's recursive search: streamed hits, progress and how the run ended.
 
-use fx_core::{Hit, SearchQuery, UnreadableFolder, WalkControl};
+use fx_core::{Hit, SearchQuery, StorageKind, UnreadableFolder, WalkControl};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,7 +34,6 @@ pub struct SearchView {
     root: PathBuf,
     text: String,
     query: SearchQuery,
-    on_network: bool,
     hits: Vec<Hit>,
     unreadable: Vec<UnreadableFolder>,
     status: SearchStatus,
@@ -45,12 +44,11 @@ pub struct SearchView {
 }
 
 impl SearchView {
-    pub(crate) fn new(root: PathBuf, text: String, query: SearchQuery, on_network: bool) -> Self {
+    pub(crate) fn new(root: PathBuf, text: String, query: SearchQuery) -> Self {
         Self {
             root,
             text,
             query,
-            on_network,
             hits: Vec::new(),
             unreadable: Vec::new(),
             status: SearchStatus::Running,
@@ -83,9 +81,9 @@ impl SearchView {
         self.query.match_range(name)
     }
 
-    /// The searched folder was on a network share when the search started.
+    /// The walk found the searched folder on a network share; false until it has detected the storage.
     pub fn on_network(&self) -> bool {
-        self.on_network
+        self.control.storage() == Some(StorageKind::Network)
     }
 
     /// Matches in arrival order, unsorted.

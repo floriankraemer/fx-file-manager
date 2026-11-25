@@ -7,6 +7,7 @@ use crate::storage::{StorageKind, Strategy};
 use crate::sys;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::thread;
 
@@ -66,6 +67,7 @@ pub struct WalkControl {
     cancel: AtomicBool,
     dirs_read: AtomicU64,
     unreadable: AtomicU64,
+    storage: OnceLock<StorageKind>,
 }
 
 impl WalkControl {
@@ -81,6 +83,11 @@ impl WalkControl {
     /// Directories read so far, the root included. Exact for cancelled walks, unlike [`WalkStats::dirs`].
     pub fn dirs_read(&self) -> u64 {
         self.dirs_read.load(Relaxed)
+    }
+
+    /// The storage kind the walk detected (or was told) for its root; `None` until it has.
+    pub fn storage(&self) -> Option<StorageKind> {
+        self.storage.get().copied()
     }
 
     /// Subdirectories that could not be read so far.
@@ -156,6 +163,7 @@ pub fn walk_cancellable<V: WalkVisitor>(
     let storage = opts
         .storage
         .unwrap_or_else(|| sys::native::detect_storage(root));
+    let _ = control.storage.set(storage);
     let cores = thread::available_parallelism().map_or(1, |n| n.get());
     let strategy = Strategy::for_kind(storage, cores);
     let enumerate: Enumerate = match opts.backend {
