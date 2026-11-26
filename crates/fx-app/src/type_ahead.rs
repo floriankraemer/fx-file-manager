@@ -14,7 +14,10 @@ pub(crate) struct TypeAhead {
 impl TypeAhead {
     /// Appends `text` to the buffer, which restarts after a pause. Control characters and leading whitespace are dropped.
     pub(crate) fn push(&mut self, text: &str, now: Instant) -> &str {
-        if self.last.is_none_or(|last| now.duration_since(last) >= TIMEOUT) {
+        if self
+            .last
+            .is_none_or(|last| now.duration_since(last) >= TIMEOUT)
+        {
             self.buffer.clear();
         }
         self.last = Some(now);

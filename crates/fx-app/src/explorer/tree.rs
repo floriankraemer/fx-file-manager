@@ -2,8 +2,8 @@
 
 use super::Explorer;
 use crate::tree::{Children, FolderTree, TreeNode, list_children};
-use std::path::{Path, PathBuf};
 use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;

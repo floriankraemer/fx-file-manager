@@ -69,6 +69,25 @@ pub fn show(
     }
 }
 
+/// The top-level tree nodes in the order the sidebar shows them.
+pub fn roots(explorer: &Explorer, places: &[Place]) -> Vec<TreeNode> {
+    let bookmarks = bookmark_places(explorer.bookmarks());
+    let show_share = explorer.settings().show_share_names;
+    let mut roots = Vec::new();
+    for group in explorer.settings().sidebar_groups() {
+        let pool = if group == PlaceGroup::Bookmarks {
+            &bookmarks[..]
+        } else {
+            places
+        };
+        roots.extend(pool.iter().filter(|p| p.group == group).map(|p| TreeNode {
+            name: p.title(show_share),
+            path: p.path.clone(),
+        }));
+    }
+    roots
+}
+
 /// Reveals the active path whenever it changes and scrolls to it on the following frame.
 /// Returns the active path and whether to scroll to it this frame.
 fn reveal_active(ui: &Ui, explorer: &mut Explorer, places: &[Place]) -> (PathBuf, bool) {

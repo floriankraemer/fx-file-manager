@@ -2,7 +2,17 @@
 
 use fx_app::{Density, SortSpec};
 
+/// The pane that receives typed characters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pane {
+    #[default]
+    Listing,
+    Tree,
+}
+
 pub enum Action {
+    /// The user clicked in this pane.
+    FocusPane(Pane),
     NewFolder,
     Rename,
     Delete {
