@@ -30,6 +30,15 @@ Storage kind is detected per path and picks the concurrency strategy.
 - HDD: one stat thread, stats sorted by inode to cut seeks, two walk threads.
 - Network (SMB, NFS, 9p, FUSE, UNC, mapped drives): 8 requests in flight with 256 KiB buffers, since latency dominates.
 
+## Picking up external changes
+
+- Every tab's folder and every expanded tree folder is watched non-recursively with the OS change notifications: inotify on Linux, ReadDirectoryChangesW on Windows, FSEvents on macOS (one stream rebuild per watch-set change).
+- Access events are filtered out in the kernel where the OS allows it, so fx reading a folder never triggers a re-list of it.
+- Watches are added and removed on a worker thread, so a folder on a hung mount cannot stall the UI.
+- A change re-lists the folder in the background without clearing the view; a burst of changes, such as a copy of thousands of files, costs at most one listing in flight plus one after it, and wakes the UI once per frame.
+- On Windows, removable drives are not watched, since an open directory handle blocks ejecting them.
+- File systems that deliver no notifications (many network mounts, Windows drives seen from WSL) fall back to a 2 s mtime check of the active folder and a re-list on window focus.
+
 ## Copy and move strategies
 
 A pure planner picks workers, schedule and an ordered method chain for each pair of source and destination volume.

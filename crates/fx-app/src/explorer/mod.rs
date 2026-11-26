@@ -19,6 +19,7 @@ mod settings;
 mod tabs;
 mod transfers;
 mod tree;
+mod watch;
 mod windows;
 
 #[cfg(test)]
@@ -50,6 +51,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 use tree::TreeLoaded;
+use watch::Watches;
 use windows::Window;
 pub use windows::WindowId;
 
@@ -126,6 +128,7 @@ pub struct Explorer {
     fresh_places: Option<Vec<Place>>,
     places_tx: Sender<Vec<Place>>,
     places_rx: Receiver<Vec<Place>>,
+    watches: Watches,
 }
 
 impl Explorer {
@@ -231,7 +234,7 @@ impl Explorer {
             bookmark_checking: HashSet::new(),
             bookmark_tx,
             bookmark_rx,
-            searches: SearchRunner::new(wake),
+            searches: SearchRunner::new(Arc::clone(&wake)),
             root_notice_seen: false,
             open_generation: 0,
             open_tx,
@@ -248,6 +251,7 @@ impl Explorer {
             fresh_places: None,
             places_tx,
             places_rx,
+            watches: Watches::new(wake),
         }
     }
 
@@ -265,6 +269,8 @@ impl Explorer {
         changed |= self.apply_details();
         changed |= self.apply_places();
         self.apply_preloads();
+        self.sync_watches();
+        self.apply_dir_changes();
         self.apply_stat_checks();
         for w in 0..self.windows.len() {
             self.tick_revalidate(w);

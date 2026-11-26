@@ -67,7 +67,11 @@ impl Explorer {
     pub(super) fn apply_loads(&mut self) -> bool {
         let mut changed = false;
         let mut loaded = Vec::new();
+        let mut again = Vec::new();
         while let Ok(done) = self.rx.try_recv() {
+            if self.tab_load_finished(done.tab_id) {
+                again.push(done.tab_id);
+            }
             let Some(applied) = self.apply_completed(done) else {
                 continue;
             };
@@ -76,6 +80,9 @@ impl Explorer {
         }
         for w in loaded {
             self.preload_unless_current(w);
+        }
+        for tab_id in again {
+            self.relist_tab(tab_id);
         }
         changed
     }
