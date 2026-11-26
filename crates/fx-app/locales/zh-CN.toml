@@ -10,6 +10,7 @@ help = "帮助"
 about = "关于 fx"
 
 [cmd]
+view = "查看"
 open = "打开"
 open_new_tab = "在新标签页中打开"
 open_with = "打开方式…"
@@ -33,6 +34,7 @@ exit = "退出"
 sort = "排序"
 
 [tip]
+view = "更改项目的显示方式"
 back = "后退"
 forward = "前进"
 up = "上一级"
@@ -137,6 +139,10 @@ translations = "翻译由机器生成。欢迎通过 Pull Request 提交更正�
 icons = "图标：Material Icon Theme (MIT)、Lucide (ISC)。"
 
 [settings]
+default_view = "默认视图"
+icon_size = "图标大小"
+thumbnails = "显示图片和文档的预览"
+thumbnails_on_network = "在网络驱动器上也显示预览"
 title = "设置"
 search = "搜索设置"
 none = "没有匹配的设置"
@@ -210,6 +216,7 @@ transfers = "复制和移动"
 keyboard = "键盘"
 
 [settings.group]
+icon_view = "图标视图"
 search = "搜索"
 interface = "界面"
 startup = "启动"
@@ -355,6 +362,7 @@ directory_not_empty = "文件夹不为空"
 no_space = "设备上没有剩余空间"
 
 [command_group]
+view = "查看"
 tabs = "标签页"
 navigation = "导航"
 selection = "选择"
@@ -363,6 +371,10 @@ clipboard = "剪贴板"
 application = "应用程序"
 
 [command]
+move_left = "向左移动选择"
+move_right = "向右移动选择"
+view_details = "以详细信息显示"
+view_icons = "以图标显示"
 search = "在文件夹中搜索"
 close_search = "停止或关闭搜索"
 reveal_search_hit = "在所在文件夹中显示搜索结果"
@@ -443,3 +455,7 @@ title = "搜索整个驱动器？"
 body = "从 {root} 开始搜索会遍历此驱动器上的每个文件夹，可能耗时很长。你可以随时停止。"
 continue = "搜索"
 dont_show = "不再显示"
+
+[view]
+details = "详细信息"
+icons = "图标"

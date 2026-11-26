@@ -11,6 +11,7 @@ help = "Help"
 about = "About fx"
 
 [cmd]
+view = "View"
 open = "Open"
 open_new_tab = "Open in new tab"
 open_with = "Open with…"
@@ -34,6 +35,7 @@ exit = "Exit"
 sort = "Sort"
 
 [tip]
+view = "Change how items are shown"
 back = "Back"
 forward = "Forward"
 up = "Up"
@@ -146,6 +148,10 @@ translations = "Translations are machine generated. Corrections are welcome as p
 icons = "Icons: Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
+default_view = "Default view"
+icon_size = "Icon size"
+thumbnails = "Show previews of images and documents"
+thumbnails_on_network = "Also show previews on network drives"
 title = "Settings"
 search = "Search settings"
 none = "No matching settings"
@@ -219,6 +225,7 @@ transfers = "Copy and move"
 keyboard = "Keyboard"
 
 [settings.group]
+icon_view = "Icons view"
 search = "Search"
 interface = "Interface"
 startup = "Startup"
@@ -380,6 +387,7 @@ directory_not_empty = "Directory not empty"
 no_space = "No space left on device"
 
 [command_group]
+view = "View"
 tabs = "Tabs"
 navigation = "Navigation"
 selection = "Selection"
@@ -388,6 +396,10 @@ clipboard = "Clipboard"
 application = "Application"
 
 [command]
+move_left = "Move selection left"
+move_right = "Move selection right"
+view_details = "Show as details"
+view_icons = "Show as icons"
 search = "Search in folder"
 close_search = "Stop or close search"
 reveal_search_hit = "Reveal search result in folder"
@@ -474,3 +486,7 @@ title = "Search the whole drive?"
 body = "Searching from {root} walks every folder on this drive and can take a long time. You can stop it at any time."
 continue = "Search"
 dont_show = "Don't show again"
+
+[view]
+details = "Details"
+icons = "Icons"

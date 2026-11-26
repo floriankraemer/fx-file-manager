@@ -10,6 +10,7 @@ help = "Aide"
 about = "À propos de fx"
 
 [cmd]
+view = "Affichage"
 open = "Ouvrir"
 open_new_tab = "Ouvrir dans un nouvel onglet"
 open_with = "Ouvrir avec…"
@@ -33,6 +34,7 @@ exit = "Quitter"
 sort = "Trier"
 
 [tip]
+view = "Changer l’affichage des éléments"
 back = "Précédent"
 forward = "Suivant"
 up = "Dossier parent"
@@ -145,6 +147,10 @@ translations = "Les traductions sont générées automatiquement. Les correction
 icons = "Icônes : Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
+default_view = "Affichage par défaut"
+icon_size = "Taille des icônes"
+thumbnails = "Afficher les aperçus des images et documents"
+thumbnails_on_network = "Afficher aussi les aperçus sur les lecteurs réseau"
 title = "Paramètres"
 search = "Rechercher dans les paramètres"
 none = "Aucun paramètre correspondant"
@@ -218,6 +224,7 @@ transfers = "Copier et déplacer"
 keyboard = "Clavier"
 
 [settings.group]
+icon_view = "Affichage en icônes"
 search = "Recherche"
 interface = "Interface"
 startup = "Démarrage"
@@ -379,6 +386,7 @@ directory_not_empty = "Le dossier n'est pas vide"
 no_space = "Plus d'espace disponible sur le périphérique"
 
 [command_group]
+view = "Affichage"
 tabs = "Onglets"
 navigation = "Navigation"
 selection = "Sélection"
@@ -387,6 +395,10 @@ clipboard = "Presse-papiers"
 application = "Application"
 
 [command]
+move_left = "Déplacer la sélection à gauche"
+move_right = "Déplacer la sélection à droite"
+view_details = "Afficher en détails"
+view_icons = "Afficher en icônes"
 search = "Rechercher dans le dossier"
 close_search = "Arrêter ou fermer la recherche"
 reveal_search_hit = "Afficher le résultat dans son dossier"
@@ -473,3 +485,7 @@ title = "Rechercher sur tout le lecteur ?"
 body = "Une recherche depuis {root} parcourt chaque dossier de ce lecteur et peut être très longue. Vous pouvez l’arrêter à tout moment."
 continue = "Rechercher"
 dont_show = "Ne plus afficher"
+
+[view]
+details = "Détails"
+icons = "Icônes"

@@ -10,6 +10,7 @@ help = "Hilfe"
 about = "Über fx"
 
 [cmd]
+view = "Ansicht"
 open = "Öffnen"
 open_new_tab = "In neuem Tab öffnen"
 open_with = "Öffnen mit…"
@@ -33,6 +34,7 @@ exit = "Beenden"
 sort = "Sortieren"
 
 [tip]
+view = "Darstellung der Elemente ändern"
 back = "Zurück"
 forward = "Vorwärts"
 up = "Nach oben"
@@ -145,6 +147,10 @@ translations = "Die Übersetzungen sind maschinell erzeugt. Korrekturen sind als
 icons = "Symbole: Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
+default_view = "Standardansicht"
+icon_size = "Symbolgröße"
+thumbnails = "Vorschauen von Bildern und Dokumenten anzeigen"
+thumbnails_on_network = "Vorschauen auch auf Netzlaufwerken anzeigen"
 title = "Einstellungen"
 search = "Einstellungen durchsuchen"
 none = "Keine passenden Einstellungen"
@@ -218,6 +224,7 @@ transfers = "Kopieren und Verschieben"
 keyboard = "Tastatur"
 
 [settings.group]
+icon_view = "Symbolansicht"
 search = "Suche"
 interface = "Oberfläche"
 startup = "Start"
@@ -379,6 +386,7 @@ directory_not_empty = "Ordner ist nicht leer"
 no_space = "Kein Speicherplatz mehr verfügbar"
 
 [command_group]
+view = "Ansicht"
 tabs = "Tabs"
 navigation = "Navigation"
 selection = "Auswahl"
@@ -387,6 +395,10 @@ clipboard = "Zwischenablage"
 application = "Anwendung"
 
 [command]
+move_left = "Auswahl nach links bewegen"
+move_right = "Auswahl nach rechts bewegen"
+view_details = "Als Details anzeigen"
+view_icons = "Als Symbole anzeigen"
 search = "In Ordner suchen"
 close_search = "Suche stoppen oder schließen"
 reveal_search_hit = "Suchergebnis im Ordner anzeigen"
@@ -473,3 +485,7 @@ title = "Das gesamte Laufwerk durchsuchen?"
 body = "Eine Suche ab {root} durchläuft jeden Ordner dieses Laufwerks und kann lange dauern. Du kannst sie jederzeit anhalten."
 continue = "Suchen"
 dont_show = "Nicht mehr anzeigen"
+
+[view]
+details = "Details"
+icons = "Symbole"

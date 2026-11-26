@@ -5,8 +5,8 @@ use crate::theme;
 use eframe::egui::{self, RichText, Sense, TextEdit, Ui};
 use fx_app::{
     ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice, Language,
-    ListColumn, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_RESULT_CAP, PlaceGroup, Settings,
-    open_with_system, t,
+    ListColumn, MAX_FONT_SIZE, MAX_ICON_SIZE, MIN_FONT_SIZE, MIN_ICON_SIZE, MIN_RESULT_CAP,
+    PlaceGroup, Settings, ViewMode, open_with_system, t,
 };
 
 /// The worker override goes up to robocopy's `/MT` maximum.
@@ -235,6 +235,54 @@ pub(super) const ROWS: &[Row] = &[
                 &mut f.draft.date_format,
                 &[DateFormat::Locale, DateFormat::Iso],
                 date_format_text,
+            );
+        },
+    },
+    Row {
+        category: Category::Listing,
+        group: "settings.group.icon_view",
+        label: "settings.default_view",
+        kind: Kind::Field,
+        show: |ui, f, _| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
+                ui.radio_value(
+                    &mut f.draft.default_view,
+                    ViewMode::Details,
+                    t("view.details"),
+                );
+                ui.radio_value(&mut f.draft.default_view, ViewMode::Icons, t("view.icons"));
+            });
+        },
+    },
+    Row {
+        category: Category::Listing,
+        group: "settings.group.icon_view",
+        label: "settings.icon_size",
+        kind: Kind::Field,
+        show: |ui, f, _| {
+            let range = MIN_ICON_SIZE..=MAX_ICON_SIZE;
+            ui.add(egui::Slider::new(&mut f.draft.icon_size, range).step_by(16.0));
+        },
+    },
+    Row {
+        category: Category::Listing,
+        group: "settings.group.icon_view",
+        label: "settings.thumbnails",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.checkbox(&mut f.draft.thumbnails, l);
+        },
+    },
+    Row {
+        category: Category::Listing,
+        group: "settings.group.icon_view",
+        label: "settings.thumbnails_on_network",
+        kind: Kind::Check,
+        show: |ui, f, l| {
+            ui.add_enabled(
+                f.draft.thumbnails,
+                egui::Checkbox::new(&mut f.draft.thumbnails_on_network, l),
             );
         },
     },

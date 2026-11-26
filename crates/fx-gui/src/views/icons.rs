@@ -75,9 +75,9 @@ fn appearance() -> Appearance {
     }
 }
 
-/// Paints the icon chosen by `pick` into `rect`.
-fn paint_themed(ui: &Ui, rect: Rect, pick: impl FnOnce(&IconPack, Appearance) -> String) {
-    let px = (ICON_PT * ui.pixels_per_point()).round() as u32;
+/// Paints the icon chosen by `pick`, `pt` points wide, centered in `rect`.
+fn paint_themed(ui: &Ui, rect: Rect, pt: f32, pick: impl FnOnce(&IconPack, Appearance) -> String) {
+    let px = (pt * ui.pixels_per_point()).round() as u32;
     let shared = shared(ui.ctx());
     let mut t = shared.lock().unwrap_or_else(|e| e.into_inner());
     let t = &mut *t;
@@ -102,18 +102,44 @@ fn paint_themed(ui: &Ui, rect: Rect, pick: impl FnOnce(&IconPack, Appearance) ->
         );
         t.textures.insert(key.clone(), tex);
     }
-    let r = Rect::from_center_size(rect.center(), vec2(ICON_PT, ICON_PT));
+    let r = Rect::from_center_size(rect.center(), vec2(pt, pt));
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     ui.painter()
         .image(t.textures[&key].id(), r, uv, Color32::WHITE);
 }
 
 pub fn paint_file(ui: &Ui, rect: Rect, name: &str) {
-    paint_themed(ui, rect, |p, a| p.file_icon(name, None, a).to_owned());
+    paint_themed(ui, rect, ICON_PT, |p, a| {
+        p.file_icon(name, None, a).to_owned()
+    });
 }
 
 pub fn paint_folder(ui: &Ui, rect: Rect, name: &str, expanded: bool) {
-    paint_themed(ui, rect, |p, a| p.folder_icon(name, expanded, a).to_owned());
+    paint_themed(ui, rect, ICON_PT, |p, a| {
+        p.folder_icon(name, expanded, a).to_owned()
+    });
+}
+
+/// The entry's icon `pt` points wide, centered in `rect`, as the Icons view shows it without a preview.
+pub fn paint_entry_sized(ui: &Ui, rect: Rect, kind: EntryKind, name: &str, pt: f32) {
+    match kind {
+        EntryKind::Dir => {
+            paint_themed(ui, rect, pt, |p, a| {
+                p.folder_icon(name, false, a).to_owned()
+            });
+        }
+        _ => paint_themed(ui, rect, pt, |p, a| p.file_icon(name, None, a).to_owned()),
+    }
+    if kind == EntryKind::Symlink {
+        let corner = Rect::from_center_size(rect.center(), vec2(pt, pt));
+        arrow(
+            ui,
+            Rect::from_min_size(
+                corner.left_bottom() - vec2(0.0, ICON_PT),
+                vec2(ICON_PT, ICON_PT),
+            ),
+        );
+    }
 }
 
 pub fn entry(ui: &mut Ui, kind: EntryKind, name: &str) {
@@ -156,6 +182,8 @@ pub enum Glyph {
     Search,
     Stop,
     Clear,
+    Grid,
+    List,
 }
 
 /// Paints `glyph` centered in `rect` (a 16x16 area).
@@ -219,7 +247,9 @@ pub fn glyph(ui: &Ui, rect: Rect, glyph: Glyph, color: Color32) {
         | Glyph::Refresh
         | Glyph::Search
         | Glyph::Stop
-        | Glyph::Clear => {
+        | Glyph::Clear
+        | Glyph::Grid
+        | Glyph::List => {
             paint_lucide(ui, rect, glyph, color);
         }
     }
@@ -235,6 +265,8 @@ fn lucide_svg(glyph: Glyph) -> &'static str {
         Glyph::Search => include_str!("../../../../third_party/lucide/search.svg"),
         Glyph::Stop => include_str!("../../../../third_party/lucide/square.svg"),
         Glyph::Clear => include_str!("../../../../third_party/lucide/x.svg"),
+        Glyph::Grid => include_str!("../../../../third_party/lucide/layout-grid.svg"),
+        Glyph::List => include_str!("../../../../third_party/lucide/list.svg"),
         _ => include_str!("../../../../third_party/lucide/refresh-cw.svg"),
     }
 }
@@ -322,6 +354,8 @@ mod tests {
             Glyph::Search,
             Glyph::Stop,
             Glyph::Clear,
+            Glyph::Grid,
+            Glyph::List,
         ] {
             let svg = lucide_svg(glyph).replace("currentColor", "#fff");
             let icon = icon_theme::rasterise_svg(svg.as_bytes()).unwrap();

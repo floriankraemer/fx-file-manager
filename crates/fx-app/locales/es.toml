@@ -10,6 +10,7 @@ help = "Ayuda"
 about = "Acerca de fx"
 
 [cmd]
+view = "Vista"
 open = "Abrir"
 open_new_tab = "Abrir en una pestaña nueva"
 open_with = "Abrir con…"
@@ -33,6 +34,7 @@ exit = "Salir"
 sort = "Ordenar"
 
 [tip]
+view = "Cambiar cómo se muestran los elementos"
 back = "Atrás"
 forward = "Adelante"
 up = "Subir"
@@ -145,6 +147,10 @@ translations = "Las traducciones son automáticas. Las correcciones son bienveni
 icons = "Iconos: Material Icon Theme (MIT), Lucide (ISC)."
 
 [settings]
+default_view = "Vista predeterminada"
+icon_size = "Tamaño de icono"
+thumbnails = "Mostrar vistas previas de imágenes y documentos"
+thumbnails_on_network = "Mostrar vistas previas también en unidades de red"
 title = "Ajustes"
 search = "Buscar ajustes"
 none = "No hay ajustes que coincidan"
@@ -218,6 +224,7 @@ transfers = "Copiar y mover"
 keyboard = "Teclado"
 
 [settings.group]
+icon_view = "Vista de iconos"
 search = "Búsqueda"
 interface = "Interfaz"
 startup = "Inicio"
@@ -379,6 +386,7 @@ directory_not_empty = "La carpeta no está vacía"
 no_space = "No queda espacio en el dispositivo"
 
 [command_group]
+view = "Vista"
 tabs = "Pestañas"
 navigation = "Navegación"
 selection = "Selección"
@@ -387,6 +395,10 @@ clipboard = "Portapapeles"
 application = "Aplicación"
 
 [command]
+move_left = "Mover la selección a la izquierda"
+move_right = "Mover la selección a la derecha"
+view_details = "Mostrar como detalles"
+view_icons = "Mostrar como iconos"
 search = "Buscar en la carpeta"
 close_search = "Detener o cerrar la búsqueda"
 reveal_search_hit = "Mostrar resultado en su carpeta"
@@ -473,3 +485,7 @@ title = "¿Buscar en toda la unidad?"
 body = "Buscar desde {root} recorre todas las carpetas de esta unidad y puede tardar mucho. Puedes detenerla en cualquier momento."
 continue = "Buscar"
 dont_show = "No volver a mostrar"
+
+[view]
+details = "Detalles"
+icons = "Iconos"

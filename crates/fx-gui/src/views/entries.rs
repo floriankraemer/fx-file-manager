@@ -112,7 +112,7 @@ pub(super) fn background(
 }
 
 /// The part of the scroll area below the last entry.
-pub(super) fn below_content(scroll: &ScrollAreaOutput<()>) -> egui::Rect {
+pub(super) fn below_content<R>(scroll: &ScrollAreaOutput<R>) -> egui::Rect {
     let bottom =
         scroll.inner_rect.top() + scroll.content_size.y - scroll.state.unclamped_offset().y;
     egui::Rect::from_min_max(

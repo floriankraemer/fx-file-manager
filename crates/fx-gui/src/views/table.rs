@@ -162,7 +162,7 @@ pub fn show(
 }
 
 /// The loaded listing; while loading or after a failure it draws that state and returns `None`.
-fn loaded_view(ui: &mut Ui, tab: &fx_app::Tab) -> Option<std::sync::Arc<DirView>> {
+pub(super) fn loaded_view(ui: &mut Ui, tab: &fx_app::Tab) -> Option<std::sync::Arc<DirView>> {
     match tab.state() {
         LoadState::Loading => {
             ui.centered_and_justified(|ui| {
