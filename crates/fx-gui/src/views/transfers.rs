@@ -16,6 +16,19 @@ pub struct State {
     expanded: HashSet<u64>,
 }
 
+/// Share of the transfer that is done: by bytes once their total is final, else by files.
+fn fraction(bytes: (u64, u64), files: (u64, u64), bytes_complete: bool) -> f32 {
+    let (done, total) = if bytes_complete && bytes.1 > 0 {
+        bytes
+    } else {
+        files
+    };
+    if total == 0 {
+        return 0.0;
+    }
+    (done as f32 / total as f32).clamp(0.0, 1.0)
+}
+
 /// `1:05` or `1:02:03`.
 pub fn format_eta(d: Duration) -> String {
     let s = d.as_secs();
@@ -31,10 +44,15 @@ pub fn progress_text(info: &TransferInfo) -> String {
     let Some(s) = &info.snapshot else {
         return String::new();
     };
-    let (files, bytes) = if s.walk_complete {
-        ("transfer.files", "transfer.bytes")
+    let files = if s.walk_complete {
+        "transfer.files"
     } else {
-        ("transfer.files_at_least", "transfer.bytes_at_least")
+        "transfer.files_at_least"
+    };
+    let bytes = if s.bytes_complete {
+        "transfer.bytes"
+    } else {
+        "transfer.bytes_at_least"
     };
     let (done, total) = (s.files_done.to_string(), s.files_total.to_string());
     let mut parts = vec![
@@ -84,14 +102,12 @@ fn row(ui: &mut Ui, explorer: &mut Explorer, st: &mut State, info: &TransferInfo
         });
     });
     if let Some(s) = &info.snapshot {
-        let fraction = if s.bytes_total > 0 {
-            s.bytes_done as f32 / s.bytes_total as f32
-        } else if s.files_total > 0 {
-            s.files_done as f32 / s.files_total as f32
-        } else {
-            0.0
-        };
-        ui.add(ProgressBar::new(fraction.clamp(0.0, 1.0)).desired_height(6.0));
+        let done = fraction(
+            (s.bytes_done, s.bytes_total),
+            (s.files_done, s.files_total),
+            s.bytes_complete,
+        );
+        ui.add(ProgressBar::new(done).desired_height(6.0));
         ui.horizontal(|ui| {
             ui.colored_label(theme::dim(), progress_text(info));
             if let Some(current) = &s.current {
@@ -206,6 +222,14 @@ fn report(ui: &mut Ui, info: &TransferInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fraction_ignores_a_partial_byte_total() {
+        assert_eq!(fraction((100, 100), (25, 100), false), 0.25);
+        assert_eq!(fraction((50, 100), (0, 3), true), 0.5);
+        assert_eq!(fraction((0, 0), (1, 4), true), 0.25);
+        assert_eq!(fraction((0, 0), (0, 0), false), 0.0);
+    }
 
     #[test]
     fn eta_formats_minutes_and_hours() {

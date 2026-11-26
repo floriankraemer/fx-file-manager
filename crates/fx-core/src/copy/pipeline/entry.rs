@@ -47,8 +47,24 @@ impl Job<'_> {
         &self,
         e: Entry<'_>,
         item: &ItemState,
-        mut prefetched: Option<Prefetched>,
+        prefetched: Option<Prefetched>,
         mut counted: bool,
+    ) -> u64 {
+        let was_unsized = !counted;
+        let bytes = self.attempt_entry(e, item, prefetched, &mut counted);
+        // Never opened (symlink, special file, failure): it adds no bytes, so nothing is pending.
+        if was_unsized && !counted {
+            Progress::sub(&self.sh.progress.files_unsized, 1);
+        }
+        bytes
+    }
+
+    fn attempt_entry(
+        &self,
+        e: Entry<'_>,
+        item: &ItemState,
+        mut prefetched: Option<Prefetched>,
+        counted: &mut bool,
     ) -> u64 {
         let path = e.src_dir.path().join(e.name);
         let mut attempt = 0;
@@ -56,7 +72,7 @@ impl Job<'_> {
             if self.sh.checkpoint().is_err() {
                 return 0;
             }
-            let failure = match self.try_entry(&e, &path, prefetched.take(), &mut counted) {
+            let failure = match self.try_entry(&e, &path, prefetched.take(), counted) {
                 Ok((done, size)) => return self.count_done(done, size, item),
                 Err(f) => f,
             };
@@ -227,6 +243,7 @@ impl Job<'_> {
         let progress = &self.sh.progress;
         if !*counted {
             Progress::add(&progress.bytes_total, meta.size);
+            Progress::sub(&progress.files_unsized, 1);
             *counted = true;
         }
         if meta.size > self.caps.max_file_size {

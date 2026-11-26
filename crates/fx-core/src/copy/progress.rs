@@ -33,6 +33,8 @@ pub(crate) struct Progress {
     pub(crate) files_done: Counter,
     pub(crate) bytes_total: Counter,
     pub(crate) files_total: Counter,
+    /// Counted files whose size is not in `bytes_total` yet: Streaming learns it on open.
+    pub(crate) files_unsized: Counter,
     pub(crate) errors: Counter,
     pub(crate) skipped: Counter,
     pub(crate) cloned: Counter,
@@ -89,6 +91,8 @@ pub struct Snapshot {
     pub skipped: u64,
     pub cloned: u64,
     pub walk_complete: bool,
+    /// `bytes_total` is final. Until then it can trail `files_total` by far.
+    pub bytes_complete: bool,
     pub state: RunState,
     /// The job is paused because the destination is full; `resume` retries, `skip_disk_full` gives up on those files.
     pub disk_full: bool,
@@ -415,6 +419,7 @@ impl Shared {
         let p = &self.progress;
         let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let waits = lock(&self.waits);
+        let walk_complete = p.walk_complete.load(Ordering::Acquire);
         Snapshot {
             bytes_done: load(&p.bytes_done),
             files_done: load(&p.files_done),
@@ -423,7 +428,8 @@ impl Shared {
             errors: load(&p.errors),
             skipped: load(&p.skipped),
             cloned: load(&p.cloned),
-            walk_complete: p.walk_complete.load(Ordering::Acquire),
+            walk_complete,
+            bytes_complete: walk_complete && load(&p.files_unsized) == 0,
             state: self.state(),
             disk_full: waits.disk_full,
             pending_conflicts: waits.conflicts.len(),

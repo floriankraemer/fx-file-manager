@@ -95,7 +95,7 @@ impl Job<'_> {
             });
             return;
         }
-        Progress::add(&self.sh.progress.files_total, 1);
+        self.count_unsized(1);
         s.spawn(move |_| {
             let e = Entry {
                 src_dir: &fds.src,
@@ -108,6 +108,12 @@ impl Job<'_> {
             };
             self.copy_entry(e, &item, None, false);
         });
+    }
+
+    /// Adds files to the totals before their sizes are known.
+    fn count_unsized(&self, files: u64) {
+        Progress::add(&self.sh.progress.files_unsized, files);
+        Progress::add(&self.sh.progress.files_total, files);
     }
 
     /// Creates one folder, spawns a visit per subfolder and copy tasks for its files.
@@ -147,7 +153,7 @@ impl Job<'_> {
         let pair = Pair::of(&fds);
         drop(fds);
         let files = self.spawn_subdirs(s, &pair, &node, entries);
-        Progress::add(&self.sh.progress.files_total, files.len() as u64);
+        self.count_unsized(files.len() as u64);
         self.spawn_batches(s, &pair, &node, files);
         self.dir_listed();
         self.node_done(node);
