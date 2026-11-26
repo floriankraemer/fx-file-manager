@@ -2,12 +2,14 @@
 
 use crate::search::{SearchEvent, SearchView};
 use crate::settings::FolderOrder;
+use crate::type_ahead::TypeAhead;
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub enum LoadState {
@@ -42,6 +44,7 @@ pub struct Tab {
     /// Bumped per search and per clear; worker results carrying an older value are stale and dropped.
     search_generation: u64,
     search: Option<SearchView>,
+    type_ahead: TypeAhead,
 }
 
 impl Tab {
@@ -69,6 +72,7 @@ impl Tab {
             forward: Vec::new(),
             search_generation: 0,
             search: None,
+            type_ahead: TypeAhead::default(),
         }
     }
 
@@ -168,6 +172,19 @@ impl Tab {
             });
         let row = (current + delta).clamp(0, last as isize) as usize;
         self.select(Some(row));
+    }
+
+    /// Selects the visible row whose name best matches the typed `text`. Returns true if the selection moved to a match.
+    pub fn type_ahead(&mut self, text: &str, now: Instant) -> bool {
+        let mut buffer = mem::take(&mut self.type_ahead);
+        let names = |row| Some(self.name_at(row)?.to_string_lossy());
+        let found = buffer.find(text, now, self.focus, self.order.len(), names);
+        self.type_ahead = buffer;
+        let Some(row) = found else {
+            return false;
+        };
+        self.select(Some(row));
+        true
     }
 
     /// Selects the entry called `name` once the next load of this tab completes.

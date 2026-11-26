@@ -15,6 +15,7 @@ mod state;
 mod tab;
 mod transfers;
 mod tree;
+mod type_ahead;
 mod view;
 #[cfg(windows)]
 mod wsl;
