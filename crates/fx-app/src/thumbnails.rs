@@ -206,9 +206,8 @@ mod tests {
     fn wanted_keys_are_produced_and_failures_are_not_retried() {
         let dir = tempfile::tempdir().unwrap();
         let good = key(&png(dir.path(), "a.png"));
-        let bad_path = dir.path().join("b.txt");
-        std::fs::write(&bad_path, "text").unwrap();
-        let bad = key(&bad_path);
+        // Missing, so no backend can thumbnail it; QuickLook would preview a text file.
+        let bad = key(&dir.path().join("gone.png"));
         let mut thumbs = Thumbnails::new(Arc::new(|| {}));
         thumbs.want(vec![good.clone(), bad.clone()], 2);
         assert_eq!(settle(&mut thumbs, 2), vec![good]);
