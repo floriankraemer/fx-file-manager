@@ -14,7 +14,7 @@ DOCKER_MOUNTS = -v "$(CURDIR)":/workspace -w /workspace \
 # mount, and a root container would leave `target/` owned by root on the host.
 # HOME is redirected because the image's /root is not writable by this uid.
 DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
-COUPLING_CRATES := fx-core fx-app fx-gui fx-cli icon-theme
+COUPLING_CRATES := fx-core fx-thumbs fx-app fx-gui fx-cli icon-theme
 
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 

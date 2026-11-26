@@ -1,0 +1,20 @@
+[package]
+name = "fx-thumbs"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log = "0.4"
+# Pure Rust decoders only, so the Windows cross-build through MXE needs nothing native.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# Scaled IDCT: decodes a photo at up to 1/8 of its size, the main cost saving for camera JPEGs.
+jpeg-decoder = { version = "0.3", default-features = false }
+fast_image_resize = { version = "6", features = ["image"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
