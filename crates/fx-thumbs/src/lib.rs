@@ -7,6 +7,8 @@ use std::{fmt, io};
 mod decode;
 #[cfg(target_os = "linux")]
 mod freedesktop;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -111,7 +113,12 @@ impl Thumbnailer {
         self.shell.thumbnail(request, px)
     }
 
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    fn native(&self, request: &Request, px: u32) -> Result<Thumb, ThumbError> {
+        macos::thumbnail(request, px)
+    }
+
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     fn native(&self, _request: &Request, _px: u32) -> Result<Thumb, ThumbError> {
         Err(ThumbError::Unsupported)
     }

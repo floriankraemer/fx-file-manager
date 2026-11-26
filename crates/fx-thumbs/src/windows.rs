@@ -122,12 +122,7 @@ fn to_straight_rgba(mut bgra: Vec<u8>) -> Vec<u8> {
             p[3] = 255;
             continue;
         }
-        let a = u16::from(p[3]);
-        if a != 0 && a != 255 {
-            for c in &mut p[..3] {
-                *c = (u16::from(*c) * 255 / a).min(255) as u8;
-            }
-        }
+        decode::unpremultiply(p);
     }
     bgra
 }

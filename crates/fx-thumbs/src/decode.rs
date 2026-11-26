@@ -154,6 +154,18 @@ pub(crate) fn fit(image: DynamicImage, px: u32) -> Result<Thumb, ThumbError> {
     })
 }
 
+/// Turns one premultiplied RGBA pixel into straight alpha.
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn unpremultiply(p: &mut [u8; 4]) {
+    let a = u16::from(p[3]);
+    if a == 0 || a == 255 {
+        return;
+    }
+    for c in &mut p[..3] {
+        *c = (u16::from(*c) * 255 / a).min(255) as u8;
+    }
+}
+
 fn into_thumb(rgba: RgbaImage) -> Thumb {
     Thumb {
         width: rgba.width(),
