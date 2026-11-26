@@ -107,3 +107,10 @@ To override locally: `FX_GIT_HASH=abc123 FX_BUILD_DATE=2026-01-01 cargo build -p
 
 Bump `version` in the workspace `Cargo.toml`, commit, then tag `vX.Y.Z`.
 `.github/workflows/release.yml` refuses a tag that does not match the version and publishes Linux (tar.gz, .deb, AppImage), Windows (zip) and macOS (dmg, unsigned) assets.
+
+## Documentation screenshots
+
+`make screenshots` retakes the pictures of [Features](features.md) into `docs/images/features/`.
+It builds the release GUI in Docker and drives it with `xdotool` under Xvfb, in a container whose home folder and drives are made up, so nothing from your machine appears.
+`scripts/screenshots/capture.sh` clicks at fixed coordinates, so check the pictures after a layout change.
+

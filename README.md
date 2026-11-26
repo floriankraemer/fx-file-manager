@@ -9,6 +9,7 @@ It searches file names recursively with results that stream in while the walk ru
 
 ## Documentation
 
+- [Features, with screenshots](docs/features.md)
 - [Layout](docs/layout.md)
 - [Settings](docs/settings.md)
 - [Themes](docs/themes.md)

@@ -4,6 +4,7 @@
 
 # User guide
 
+- [Features](features.md)
 - [Layout](layout.md)
 - [Settings](settings.md)
 - [Themes](themes.md)

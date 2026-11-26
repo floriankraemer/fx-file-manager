@@ -19,7 +19,7 @@ COUPLING_CRATES := fx-core fx-app fx-gui fx-cli icon-theme
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
 .PHONY: help all debug build build-linux build-windows build-osx release gui cli test lint coupling fmt check coverage \
-	linux-image test-container e2e clean
+	linux-image test-container e2e screenshots clean
 
 .DEFAULT_GOAL := help
 
@@ -98,6 +98,11 @@ linux-image:
 ## Launch the release GUI under Xvfb; screenshot to dist/e2e/
 e2e: linux-image
 	$(RUN_LINUX) sh -c 'cargo build --release -p fx-gui && scripts/e2e-smoke.sh target/release/fx-gui /usr dist/e2e/screenshot.png'
+
+## Retake the documentation pictures in docs/images/features/
+screenshots:
+	rm -rf docs/images/features
+	$(DOCKER) buildx build --target screenshots -f $(DOCKERFILE) --output type=local,dest=docs/images/features .
 
 ##@ Release builds
 
