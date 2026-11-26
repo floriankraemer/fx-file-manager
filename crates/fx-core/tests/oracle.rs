@@ -219,24 +219,45 @@ fn walk_root_errors_are_errors() {
 
 #[test]
 fn cancelled_walk_stops_early_with_valid_stats() {
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+    use fx_core::{WalkControl, WalkVisitor};
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    struct CancelOnFirst<'a>(&'a WalkControl, AtomicU64);
+    impl WalkVisitor for CancelOnFirst<'_> {
+        fn directory(&self, _: &Path, _: &fx_core::Listing) {
+            self.1.fetch_add(1, Relaxed);
+            self.0.cancel();
+        }
+        fn unreadable(&self, _: &Path, _: &std::io::Error) {}
+    }
     let tmp = tempfile::tempdir().unwrap();
     for i in 0..200 {
         fs::create_dir_all(tmp.path().join(format!("d{i}/sub"))).unwrap();
     }
-    let cancel = AtomicBool::new(false);
-    let seen = AtomicU64::new(0);
-    let walked = fx_core::walk_cancellable(
-        tmp.path(),
-        &WalkOptions::default(),
-        &cancel,
-        &fx_core::WalkProgress::default(),
-        |_, _| {
-            seen.fetch_add(1, Relaxed);
-            cancel.store(true, Relaxed);
-        },
-    )
-    .unwrap();
+    let control = WalkControl::default();
+    let visitor = CancelOnFirst(&control, AtomicU64::new(0));
+    let walked =
+        fx_core::walk_cancellable(tmp.path(), &WalkOptions::default(), &control, &visitor).unwrap();
+    let seen = &visitor.1;
+    assert_eq!(control.dirs_read(), 1);
     assert_eq!(seen.load(Relaxed), 1, "only the root is visited");
     assert!(walked.stats.dirs <= 200);
+}
+
+#[test]
+fn walk_control_publishes_the_storage_kind() {
+    use fx_core::{WalkControl, WalkVisitor};
+    struct Ignore;
+    impl WalkVisitor for Ignore {
+        fn directory(&self, _: &Path, _: &Listing) {}
+        fn unreadable(&self, _: &Path, _: &std::io::Error) {}
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let control = WalkControl::default();
+    assert_eq!(control.storage(), None);
+    let opts = WalkOptions {
+        backend: Backend::Std,
+        storage: Some(StorageKind::Network),
+    };
+    fx_core::walk_cancellable(tmp.path(), &opts, &control, &Ignore).unwrap();
+    assert_eq!(control.storage(), Some(StorageKind::Network));
 }

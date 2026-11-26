@@ -1,8 +1,10 @@
 //! Modal dialogs: delete confirmation, rename, new folder, properties, paste conflicts.
 
+use super::modal::{button_row, default_focus, modal};
+use super::search;
 use crate::theme;
 use eframe::egui::{
-    self, Align, Button, Context, Id, Key, Layout, Modal, RichText, TextEdit, Ui,
+    self, Button, Context, Key, RichText, TextEdit, Ui,
     text::{CCursor, CCursorRange},
 };
 use fx_app::{
@@ -13,7 +15,6 @@ use fx_core::{Conflict, EntryKind, Resolution};
 use std::path::PathBuf;
 
 const LISTED_NAMES: usize = 5;
-const WIDTH: f32 = 380.0;
 
 pub enum Dialog {
     /// `paths` pin what the user was shown, so a reload behind the dialog cannot redirect the delete.
@@ -40,10 +41,8 @@ pub enum Dialog {
     },
     /// Shows [`Explorer::details`], which a background read fills in.
     Properties,
-    /// Searching from a filesystem root; `text` is the query that waits for the answer.
-    SearchRoot {
-        text: String,
-    },
+    /// Searching from a filesystem root; the explorer holds the query that waits for the answer.
+    SearchRoot,
     /// A paste found an existing item; only that item waits, the rest of the transfer goes on.
     Conflict {
         transfer: u64,
@@ -86,10 +85,6 @@ impl Dialog {
         }
     }
 
-    pub fn search_root(text: String) -> Self {
-        Self::SearchRoot { text }
-    }
-
     pub fn properties(explorer: &mut Explorer) -> Option<Self> {
         let row = explorer.active().selected()?;
         explorer.request_details(row).then_some(Self::Properties)
@@ -125,7 +120,7 @@ pub fn show(ctx: &Context, dialog: &mut Dialog, explorer: &mut Explorer) -> bool
             fresh,
         } => rename_bookmark(ctx, explorer, *index, path, text, fresh),
         Dialog::Properties => properties(ctx, explorer),
-        Dialog::SearchRoot { text } => search_root(ctx, explorer, text),
+        Dialog::SearchRoot => search::root_notice(ctx, explorer),
         Dialog::Conflict {
             transfer,
             conflict,
@@ -257,27 +252,6 @@ fn apply_answer(
             explorer.cancel_transfer(transfer);
             true
         }
-    }
-}
-
-pub(super) fn modal(ctx: &Context, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> bool {
-    let response = Modal::new(Id::unique(id)).show(ctx, |ui| {
-        ui.set_width(WIDTH);
-        content(ui)
-    });
-    response.inner || response.should_close()
-}
-
-/// Right-aligned button row; the closure adds buttons in right-to-left order (primary first).
-pub(super) fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    ui.add_space(8.0);
-    ui.with_layout(Layout::right_to_left(Align::Center), add);
-}
-
-/// Focuses `response` once, while nothing else holds the focus, so Enter triggers the default button.
-fn default_focus(ui: &Ui, response: &egui::Response) {
-    if ui.memory(|m| m.focused().is_none()) {
-        response.request_focus();
     }
 }
 
@@ -497,29 +471,6 @@ fn name_field(
         out.response.request_focus();
     }
     submit
-}
-
-fn search_root(ctx: &Context, explorer: &mut Explorer, text: &str) -> bool {
-    modal(ctx, "search-root-dialog", |ui| {
-        ui.heading(t("search.root_notice.title"));
-        ui.add_space(6.0);
-        let root = explorer.active().path().display().to_string();
-        ui.label(tr("search.root_notice.body", &[("root", &root)]));
-        let (mut go, mut silence) = (false, false);
-        button_row(ui, |ui| {
-            let proceed = ui.button(t("search.root_notice.continue"));
-            silence = ui.button(t("search.root_notice.dont_show")).clicked();
-            default_focus(ui, &proceed);
-            go = proceed.clicked();
-        });
-        if silence {
-            explorer.disable_search_root_notice();
-        }
-        if go || silence {
-            explorer.start_search(text);
-        }
-        go || silence
-    })
 }
 
 fn properties(ctx: &Context, explorer: &Explorer) -> bool {

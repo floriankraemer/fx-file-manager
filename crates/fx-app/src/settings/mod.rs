@@ -305,6 +305,7 @@ mod tests {
             search: SearchSettings {
                 result_cap: 500,
                 glob_scope: GlobScopeChoice::RelativePath,
+                case_sensitive: true,
                 warn_root: false,
             },
             keymap: BTreeMap::from([
@@ -387,6 +388,7 @@ mod tests {
         let search = Settings::default().search;
         assert_eq!(search.result_cap, 100_000);
         assert_eq!(search.glob_scope, GlobScopeChoice::Name);
+        assert!(!search.case_sensitive);
         assert!(search.warn_root);
     }
 

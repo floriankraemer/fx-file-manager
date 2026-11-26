@@ -86,10 +86,12 @@ Recursive search below the current folder lives in the `[search]` table.
 - `glob_scope` (default `"name"`): what a wildcard query (`*` or `?`) is matched against.
   `"name"` matches the file name only; `"relative_path"` matches the path relative to the search folder, with `/` as separator on every OS.
   Plain text queries always match the name.
-- `warn_root` (default `true`): show a notice before searching from a filesystem root such as `/` or `C:\`.
+- `case_sensitive` (default `false`): match case, so `a` no longer finds `A`.
+  The `Aa` button in the search bar sets the same value.
+- `warn_root` (default `true`): show a notice once per session before the first search from a filesystem root such as `/` or `C:\`.
   "Don't show again" sets it to `false`; turn it back on here.
 
-Matching ignores ASCII case.
+Without `case_sensitive`, matching ignores ASCII case.
 Hidden matches follow `show_hidden`: a match counts as hidden when the entry itself is hidden (dot name, or the OS hidden attribute) or when a folder between the search folder and the match starts with a dot.
 The OS hidden attribute of such parent folders is not consulted.
 Hidden entries and anything below a hidden folder follow `show_hidden`; a leading dot marks an entry as hidden, also on Windows.
@@ -195,5 +197,6 @@ drag_copy_modifier = "ctrl"
 [search]
 result_cap = 100000
 glob_scope = "name"
+case_sensitive = false
 warn_root = true
 ```

@@ -1,7 +1,7 @@
 //! About window: version, build identity, author and license.
 
-use super::dialogs::button_row;
 use super::menu::ENTRY_PADDING;
+use super::modal::button_row;
 use crate::theme;
 use eframe::egui::{
     CentralPanel, Context, Frame, Grid, Key, Margin, Modifiers, RichText, Ui, ViewportBuilder,

@@ -1,9 +1,9 @@
 //! State of one tab's recursive search: streamed hits, progress and how the run ended.
 
-use fx_core::{Hit, WalkProgress, WalkStats};
+use fx_core::{Hit, SearchQuery, StorageKind, UnreadableFolder, WalkControl};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,52 +18,49 @@ pub enum SearchStatus {
     Failed(String),
 }
 
-/// What a search worker reports back, tagged with the generation of the search that produced it.
+/// What a search worker reports back.
 pub(crate) enum SearchEvent {
     Hits(Vec<Hit>),
-    Done(Result<WalkStats, String>),
+    Unreadable(UnreadableFolder),
+    /// Always the last event of a search.
+    Done(SearchStatus),
 }
+
+/// Unreadable folders kept for listing; the count itself stays exact.
+const MAX_LISTED_UNREADABLE: usize = 1_000;
 
 #[derive(Debug)]
 pub struct SearchView {
     root: PathBuf,
-    query: String,
-    cap: usize,
+    text: String,
+    query: SearchQuery,
     hits: Vec<Hit>,
+    unreadable: Vec<UnreadableFolder>,
     status: SearchStatus,
-    dirs_walked: u64,
-    unreadable: u64,
     started: Instant,
     elapsed: Option<Duration>,
-    cancel: Arc<AtomicBool>,
-    progress: Arc<WalkProgress>,
+    control: Arc<WalkControl>,
     selected: Option<usize>,
 }
 
 impl SearchView {
-    pub(crate) fn new(root: PathBuf, query: String, cap: usize) -> Self {
+    pub(crate) fn new(root: PathBuf, text: String, query: SearchQuery) -> Self {
         Self {
             root,
+            text,
             query,
-            cap,
             hits: Vec::new(),
+            unreadable: Vec::new(),
             status: SearchStatus::Running,
-            dirs_walked: 0,
-            unreadable: 0,
             started: Instant::now(),
             elapsed: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::default(),
+            control: Arc::default(),
             selected: None,
         }
     }
 
-    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cancel)
-    }
-
-    pub(crate) fn progress(&self) -> Arc<WalkProgress> {
-        Arc::clone(&self.progress)
+    pub(crate) fn control(&self) -> Arc<WalkControl> {
+        Arc::clone(&self.control)
     }
 
     pub fn root(&self) -> &Path {
@@ -71,10 +68,25 @@ impl SearchView {
     }
 
     pub fn query(&self) -> &str {
-        &self.query
+        &self.text
     }
 
-    /// Matches in arrival order, unsorted. Never longer than the cap.
+    /// The query contains `*` or `?` and is matched as a glob.
+    pub fn is_glob(&self) -> bool {
+        self.query.is_glob()
+    }
+
+    /// Byte range of the matched substring in `name`, for highlighting. `None` for globs.
+    pub fn match_range(&self, name: &str) -> Option<Range<usize>> {
+        self.query.match_range(name)
+    }
+
+    /// The walk found the searched folder on a network share; false until it has detected the storage.
+    pub fn on_network(&self) -> bool {
+        self.control.storage() == Some(StorageKind::Network)
+    }
+
+    /// Matches in arrival order, unsorted.
     pub fn hits(&self) -> &[Hit] {
         &self.hits
     }
@@ -126,20 +138,19 @@ impl SearchView {
         self.status == SearchStatus::Running
     }
 
-    /// Folders walked: live while running, exact once the walk has ended.
+    /// Folders walked: live while running, exact once the walk has ended, also when it was stopped.
     pub fn dirs_walked(&self) -> u64 {
-        match self.is_running() {
-            true => self.progress.dirs_read.load(Ordering::Relaxed),
-            false => self.dirs_walked,
-        }
+        self.control.dirs_read()
     }
 
-    /// Folders that could not be read: live while running, exact once the walk has ended.
+    /// Number of folders that could not be read.
     pub fn unreadable(&self) -> u64 {
-        match self.is_running() {
-            true => self.progress.unreadable.load(Ordering::Relaxed),
-            false => self.unreadable,
-        }
+        self.control.unreadable()
+    }
+
+    /// The first unreadable folders, at most 1,000; `unreadable()` counts them all.
+    pub fn unreadable_folders(&self) -> &[UnreadableFolder] {
+        &self.unreadable
     }
 
     /// Live while running, frozen when the search ends.
@@ -149,80 +160,48 @@ impl SearchView {
 
     /// Stops the walk and keeps the hits. No-op once the search has ended.
     pub(crate) fn cancel(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        self.control.cancel();
         self.end(SearchStatus::Stopped);
     }
 
     /// Returns true if the view changed.
-    pub(crate) fn apply(&mut self, event: SearchEvent, show_hidden: bool) -> bool {
+    pub(crate) fn apply(&mut self, event: SearchEvent) -> bool {
         match event {
-            SearchEvent::Hits(hits) => self.append(hits, show_hidden),
-            SearchEvent::Done(result) => self.finish(result),
+            SearchEvent::Hits(hits) => self.append(hits),
+            SearchEvent::Unreadable(folder) => self.add_unreadable(folder),
+            SearchEvent::Done(status) => self.end(status),
         }
     }
 
-    fn append(&mut self, hits: Vec<Hit>, show_hidden: bool) -> bool {
-        if !self.is_running() {
+    fn append(&mut self, hits: Vec<Hit>) -> bool {
+        if !self.is_running() || hits.is_empty() {
             return false;
         }
-        let before = self.hits.len();
-        for hit in hits {
-            if !show_hidden && hit.hidden {
-                continue;
-            }
-            if self.hits.len() >= self.cap {
-                self.cancel.store(true, Ordering::Relaxed);
-                self.end(SearchStatus::StoppedAtCap);
-                return true;
-            }
-            self.hits.push(hit);
-        }
-        self.hits.len() != before
-    }
-
-    fn finish(&mut self, result: Result<WalkStats, String>) -> bool {
-        match result {
-            Ok(stats) => {
-                self.dirs_walked = (stats.dirs + 1).saturating_sub(stats.errors);
-                self.unreadable = stats.errors;
-                self.end(SearchStatus::Complete);
-            }
-            Err(message) => self.end(SearchStatus::Failed(message)),
-        }
+        self.hits.extend(hits);
         true
     }
 
-    fn end(&mut self, status: SearchStatus) {
+    fn add_unreadable(&mut self, folder: UnreadableFolder) -> bool {
+        if !self.is_running() || self.unreadable.len() >= MAX_LISTED_UNREADABLE {
+            return false;
+        }
+        self.unreadable.push(folder);
+        true
+    }
+
+    /// The first ending wins: a stopped search keeps `Stopped` when the worker's `Done` arrives later.
+    fn end(&mut self, status: SearchStatus) -> bool {
         if !self.is_running() {
-            return;
+            return false;
         }
         self.status = status;
         self.elapsed = Some(self.started.elapsed());
+        true
     }
 }
 
 impl Drop for SearchView {
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn progress_is_live_while_running_and_exact_after() {
-        let mut view = SearchView::new(PathBuf::from("/r"), "q".into(), 10);
-        view.progress().dirs_read.store(7, Ordering::Relaxed);
-        view.progress().unreadable.store(2, Ordering::Relaxed);
-        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 2));
-        let stats = WalkStats {
-            dirs: 9,
-            errors: 3,
-            ..WalkStats::default()
-        };
-        view.apply(SearchEvent::Done(Ok(stats)), true);
-        assert_eq!((view.dirs_walked(), view.unreadable()), (7, 3));
+        self.control.cancel();
     }
 }

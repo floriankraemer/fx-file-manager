@@ -3,14 +3,14 @@
 use crate::action::{Action, Pane};
 use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
+use crate::views::search::{self, Follow};
 use crate::views::toast::{self, Toast};
 use crate::{theme, views};
 use eframe::egui::{
     self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
 };
 use fx_app::{
-    Explorer, Language, Notice, NoticeKind, Place, SearchView, Settings, State, WindowId, i18n,
-    relabel_places,
+    Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, relabel_places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,8 +30,6 @@ struct WindowUi {
     title: String,
     path_edit: Option<views::toolbar::PathEdit>,
     search: views::search::State,
-    /// A reveal asked for its item to be scrolled into view once the folder has loaded.
-    reveal_scroll: bool,
     /// The pane the user clicked last; it receives typed characters.
     pane: Pane,
 }
@@ -48,7 +46,6 @@ impl WindowUi {
             title: String::new(),
             path_edit: None,
             search: views::search::State::default(),
-            reveal_scroll: false,
             pane: Pane::default(),
         }
     }
@@ -178,12 +175,12 @@ impl App {
             Action::OpenAbout => self.open_about(ctx),
             Action::Exit => self.exit(ctx),
             Action::FocusPane(pane) => self.windows[index].pane = pane,
-            Action::OpenSearch => self.windows[index].search.open(),
-            Action::StartSearch(text) => self.start_search(index, text),
-            Action::StopSearch => self.explorer.cancel_search(),
-            Action::CloseSearch => self.close_search(index),
-            Action::EscapeSearch => self.escape_search(index),
-            Action::RevealSearchHit(row) => self.reveal_search_hit(index, row),
+            Action::Search(action) => {
+                let state = &mut self.windows[index].search;
+                if search::execute(ctx, &mut self.explorer, state, action) == Follow::RootNotice {
+                    self.open_dialog(index, Some(Dialog::SearchRoot));
+                }
+            }
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
             action => dispatch_explorer(ctx, &mut self.explorer, action),
@@ -205,37 +202,6 @@ impl App {
     fn exit(&mut self, ctx: &Context) {
         self.quitting = true;
         ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
-    }
-
-    fn reveal_search_hit(&mut self, index: usize, row: usize) {
-        self.explorer.reveal_search_hit(row);
-        self.windows[index].reveal_scroll = true;
-    }
-
-    /// Starts the search for `text`; the first one from a filesystem root asks for confirmation.
-    fn start_search(&mut self, index: usize, text: String) {
-        let ex = &mut self.explorer;
-        let fresh = ex.search().is_none() && !text.trim().is_empty();
-        if fresh && ex.search_needs_root_notice() {
-            self.open_dialog(index, Some(Dialog::search_root(text)));
-            return;
-        }
-        ex.start_search(&text);
-    }
-
-    fn close_search(&mut self, index: usize) {
-        self.explorer.clear_search();
-        self.windows[index].search.close();
-    }
-
-    /// Esc: a running search stops and keeps its results; otherwise the search closes.
-    fn escape_search(&mut self, index: usize) {
-        match self.explorer.search() {
-            Some(search) if search.is_running() => self.explorer.cancel_search(),
-            Some(_) => self.close_search(index),
-            None if self.windows[index].search.is_open() => self.close_search(index),
-            None => {}
-        }
     }
 
     /// Opens the command palette in window `index` unless a dialog or the settings are showing.
@@ -307,11 +273,15 @@ impl App {
         if ex.search().is_some() && command::needs_folder_listing(command) {
             return false;
         }
+        if let Some(action) = search::command_action(command, ex) {
+            actions.push(Action::Search(action));
+            return false;
+        }
         if let Some(action) = command_action(command) {
             actions.push(action);
             return false;
         }
-        run_on_explorer(ex, command, actions)
+        run_on_explorer(ex, command)
     }
 
     /// Consumes the bound shortcuts and runs their commands. Returns true if the selection moved.
@@ -372,8 +342,6 @@ fn may_fire(binding: &command::Binding, typing: bool) -> bool {
 /// The action a command raises, for commands that act through the view-model of the window.
 fn command_action(command: Command) -> Option<Action> {
     Some(match command {
-        Command::Search => Action::OpenSearch,
-        Command::CloseSearch => Action::EscapeSearch,
         Command::Rename => Action::Rename,
         Command::Delete => Action::Delete { permanent: false },
         Command::DeletePermanent => Action::Delete { permanent: true },
@@ -393,7 +361,7 @@ fn command_action(command: Command) -> Option<Action> {
 }
 
 /// Runs the commands that act on the explorer directly. Returns true if the selection moved.
-fn run_on_explorer(ex: &mut Explorer, command: Command, actions: &mut Vec<Action>) -> bool {
+fn run_on_explorer(ex: &mut Explorer, command: Command) -> bool {
     match command {
         Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
         Command::CloseTab => ex.close_tab(ex.active_index()),
@@ -406,11 +374,7 @@ fn run_on_explorer(ex: &mut Explorer, command: Command, actions: &mut Vec<Action
         Command::ToggleBookmark => ex.toggle_bookmark_active(),
         Command::MoveDown => return move_selection(ex, 1),
         Command::MoveUp => return move_selection(ex, -1),
-        Command::OpenSelected => open_selected(ex, actions),
-        Command::RevealSearchHit => {
-            let row = ex.search().and_then(SearchView::selected);
-            actions.extend(row.map(Action::RevealSearchHit));
-        }
+        Command::OpenSelected => open_selected(ex),
         _ => {}
     }
     false
@@ -441,8 +405,6 @@ fn dispatch_explorer(ctx: &Context, ex: &mut Explorer, action: Action) {
             let folder = ex.entry_path(row);
             ex.paste(folder);
         }
-        Action::OpenSearchHit(row) => ex.open_search_hit(row),
-        Action::CopySearchHitPath(row) => copy_search_hit_path(ctx, ex, row),
         Action::SetSort(sort) => ex.active_mut().set_sort(sort),
         _ => {}
     }
@@ -462,27 +424,14 @@ fn selected_paths(ex: &Explorer) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Moves the selection of the search results when a search shows, else of the folder listing. Returns true.
 fn move_selection(ex: &mut Explorer, delta: isize) -> bool {
-    match ex.search() {
-        Some(_) => ex.move_search_selection(delta),
-        None => ex.active_mut().move_selection(delta),
-    }
+    ex.active_mut().move_selection(delta);
     true
 }
 
-fn open_selected(ex: &mut Explorer, actions: &mut Vec<Action>) {
-    if let Some(search) = ex.search() {
-        actions.extend(search.selected().map(Action::OpenSearchHit));
-    } else if let Some(row) = ex.active().selected() {
+fn open_selected(ex: &mut Explorer) {
+    if let Some(row) = ex.active().selected() {
         ex.activate(row);
-    }
-}
-
-fn copy_search_hit_path(ctx: &Context, ex: &Explorer, row: usize) {
-    let hit = ex.search().and_then(|s| s.hits().get(row));
-    if let Some(hit) = hit {
-        ctx.copy_text(hit.path.display().to_string());
     }
 }
 
@@ -584,7 +533,8 @@ impl App {
         let keys_moved = self.is_idle(index) && self.handle_keys(ctx, index, &mut actions);
         self.windows[index].scroll_to_selection = palette_moved || keys_moved;
         self.dispatch_all(ctx, index, actions);
-        self.windows[index].scroll_to_selection |= self.take_reveal_scroll(index);
+        let state = &mut self.windows[index].search;
+        self.windows[index].scroll_to_selection |= state.take_reveal_scroll(&self.explorer);
     }
 
     /// No dialog, settings or palette takes the keyboard from window `index`.
@@ -598,16 +548,6 @@ impl App {
         self.drop_os_files(ctx, index);
         self.hand_drag_to_os(ctx, index);
         self.finish_drag(ctx, index);
-    }
-
-    /// True once, when a reveal's folder has loaded and its item is selected.
-    fn take_reveal_scroll(&mut self, index: usize) -> bool {
-        let ready =
-            self.windows[index].reveal_scroll && self.explorer.active().selected().is_some();
-        if ready {
-            self.windows[index].reveal_scroll = false;
-        }
-        ready
     }
 
     /// The viewport window `index` is shown in; the first window lives in the root viewport.
@@ -769,18 +709,12 @@ impl App {
         egui::Panel::top("toolbar").show(ui, |ui| {
             views::toolbar::show(ui, &mut self.explorer, &mut self.windows[index].path_edit);
         });
-        self.windows[index].search.sync(&self.explorer);
-        if self.windows[index].search.is_open() {
-            egui::Panel::top("search").show(ui, |ui| {
-                let state = &mut self.windows[index].search;
-                views::search::bar(ui, &mut self.explorer, state, actions);
-            });
-        }
+        views::search::bar(ui, &self.explorer, &mut self.windows[index].search, actions);
         egui::Panel::top("commands").show(ui, |ui| {
             views::commandbar::show(ui, &self.explorer, actions);
         });
         egui::Panel::bottom("status").show(ui, |ui| {
-            views::status::show(ui, &self.explorer);
+            views::status::show(ui, &self.explorer, actions);
         });
         if self.explorer.has_transfers() {
             egui::Panel::bottom("transfers").show(ui, |ui| {
@@ -799,13 +733,7 @@ impl App {
             .show(ui, |ui| {
                 if self.explorer.search().is_some() {
                     let state = &mut self.windows[index].search;
-                    views::search::results(
-                        ui,
-                        &mut self.explorer,
-                        state,
-                        scroll_to_selection,
-                        actions,
-                    );
+                    views::search::results(ui, &mut self.explorer, state, actions);
                 } else {
                     views::table::show(ui, &mut self.explorer, scroll_to_selection, actions);
                 }

@@ -44,20 +44,7 @@ pub enum Action {
     PasteInto(usize),
     /// Bookmarks the folder at this row, or removes its bookmark.
     ToggleBookmark(usize),
-    /// Show the search bar and focus it.
-    OpenSearch,
-    /// The bar's text changed: (re)start the search, or clear it when blank.
-    StartSearch(String),
-    /// Stop walking and keep the results.
-    StopSearch,
-    /// Drop the results and hide the bar.
-    CloseSearch,
-    /// Esc: stop a running search, otherwise close it.
-    EscapeSearch,
-    /// Result row of the active tab's search.
-    OpenSearchHit(usize),
-    RevealSearchHit(usize),
-    CopySearchHitPath(usize),
+    Search(crate::views::search::SearchAction),
     SetSort(SortSpec),
     SetShowHidden(bool),
     SetDensity(Density),

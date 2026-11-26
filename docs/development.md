@@ -73,7 +73,13 @@ Status against the targets:
 - Full walk within 15%: met when few entries match (+4%), missed when many do (+45% at 14.5% of entries matching, +82% at 50%).
   A match costs one `PathBuf` allocation and a batch vector, and `walk` allocates paths for folders only.
   Realistic queries match a small share of entries, but the target is not met for match-heavy queries.
-- Not measured: the Linux kernel checkout, cold cache, HDD, network, and UI frame times while results stream in.
+- Not measured: the Linux kernel checkout, cold cache, HDD and network.
+
+The timings above were taken before hit paths became a single allocation, so they need to be measured again on an idle machine.
+
+Laying out the result list takes a median of 0.32 ms per frame with 100,000 hits (release build, headless, without painting on a GPU); the goal is under 16 ms.
+`cargo test --release -p fx-gui -- --ignored search_results_frame_time --nocapture` prints it.
+Frame times of a real window while results stream in were not measured.
 
 ## Builds and releases
 

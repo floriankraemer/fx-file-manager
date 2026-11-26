@@ -7,6 +7,7 @@ pub mod dnd;
 pub mod icons;
 pub mod menu;
 pub mod menubar;
+pub mod modal;
 #[cfg(any(windows, target_os = "macos"))]
 pub mod native_drag;
 pub mod palette;
