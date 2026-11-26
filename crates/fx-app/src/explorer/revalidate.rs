@@ -1,4 +1,5 @@
-//! Picking up external changes: periodic mtime checks of each window's active folder and explicit revalidation.
+//! Fallback for external changes that no notification reports: periodic mtime checks of each window's
+//! active folder and explicit revalidation.
 
 use super::loading::dir_mtime;
 use super::{Explorer, Window, WindowId};
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-/// How often the open folder's mtime is checked for external changes (see [`Explorer::poll`]).
+/// How often the open folder's mtime is checked for changes that no notification reported (see [`Explorer::poll`]).
 pub const REVALIDATE_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Outcome of the background mtime check of a tab's folder.
@@ -23,15 +24,14 @@ pub(super) struct StatChecked {
 impl Explorer {
     /// Re-lists the active tab's folder without clearing the view, so there is no loading flash and the selection stays.
     /// The result arrives through [`Explorer::poll`]; navigating meanwhile discards it. Does nothing while the tab is loading.
-    /// Poll-based detection only sees directory mtime changes (files added/removed/renamed); call this on window focus
-    /// to also pick up size/content changes of existing files.
-    // ponytail: mtime polling, not a watcher; a `notify` hint calling this method is the upgrade path
+    /// Change notifications (see `watch`) pick up external changes as they happen; call this on window focus
+    /// to also cover file systems that do not deliver them.
     pub fn revalidate(&mut self) {
         let tab = self.active();
         if matches!(tab.state(), LoadState::Loading) {
             return;
         }
-        self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
+        self.relist_tab(tab.id());
     }
 
     /// Every `REVALIDATE_INTERVAL`, stats window `w`'s active folder on a worker thread and re-lists it if it changed.
@@ -81,17 +81,14 @@ impl Explorer {
     }
 
     /// A navigation or reload since the check bumped the generation and made it moot.
-    fn relist_if_current(&self, checked: &StatChecked) {
-        let Some(tab) = self
+    fn relist_if_current(&mut self, checked: &StatChecked) {
+        let current = self
             .windows
             .iter()
             .flat_map(|w| &w.tabs)
-            .find(|tab| tab.id() == checked.tab_id)
-        else {
-            return;
-        };
-        if tab.generation() == checked.generation && !matches!(tab.state(), LoadState::Loading) {
-            self.spawn_load(tab.id(), tab.generation(), tab.path().to_path_buf(), true);
+            .any(|tab| tab.id() == checked.tab_id && tab.generation() == checked.generation);
+        if current {
+            self.relist_tab(checked.tab_id);
         }
     }
 }

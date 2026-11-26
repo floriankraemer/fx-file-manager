@@ -36,17 +36,19 @@ impl Explorer {
     }
 
     /// Expands `path`, loading its subfolders unless they are cached. A failed load is retried.
+    /// Cached subfolders show at once and are re-listed, since a collapsed folder is not watched.
     pub fn tree_expand(&mut self, path: PathBuf) {
         let tree = &mut self.win_mut().tree;
-        let needs_load = !matches!(
-            tree.children.get(&path),
-            Some(Children::Loading | Children::Loaded(_))
-        );
-        if needs_load {
-            tree.children.insert(path.clone(), Children::Loading);
-        }
-        tree.expanded.insert(path.clone());
-        if needs_load {
+        let cached = matches!(tree.children.get(&path), Some(Children::Loaded(_)));
+        let loading = matches!(tree.children.get(&path), Some(Children::Loading));
+        let newly_expanded = tree.expanded.insert(path.clone());
+        if cached && newly_expanded {
+            self.relist_tree(path);
+        } else if !cached && !loading {
+            self.win_mut()
+                .tree
+                .children
+                .insert(path.clone(), Children::Loading);
             self.load_tree(path);
         }
     }
@@ -127,11 +129,18 @@ impl Explorer {
     /// Fills every window's tree slot for finished loads; stale generations are dropped. Returns true if any slot changed.
     pub(super) fn apply_tree_loads(&mut self) -> bool {
         let mut changed = false;
+        let mut again = Vec::new();
         while let Ok(done) = self.tree_rx.try_recv() {
+            if self.tree_load_finished(&done.path) {
+                again.push(done.path.clone());
+            }
             if done.generation != self.tree_generation {
                 continue;
             }
             changed |= self.fill_tree_slots(&done);
+        }
+        for path in again {
+            self.relist_tree(path);
         }
         changed
     }

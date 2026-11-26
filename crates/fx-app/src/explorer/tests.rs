@@ -1663,3 +1663,97 @@ fn tree_type_ahead_navigates_to_visible_nodes_only() {
     assert!(explorer.tree_type_ahead("b", &roots, later + Duration::from_secs(2)));
     assert_eq!(explorer.active().path(), root.join("beta"));
 }
+
+/// Keeps creating entries with `create` until `seen` shows one, without the mtime fallback:
+/// watches start asynchronously, so an entry made before the watch is in place is never reported.
+fn wait_for_notified(
+    explorer: &mut Explorer,
+    what: &str,
+    create: impl Fn(u32),
+    seen: impl Fn(&Explorer) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    for attempt in 0.. {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        for window in &mut explorer.windows {
+            window.next_tick = Instant::now() + Duration::from_secs(3600);
+        }
+        create(attempt);
+        let until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < until {
+            explorer.poll();
+            if seen(explorer) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+#[test]
+fn notified_changes_show_up_in_the_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut explorer = explorer_in(root);
+    wait_for_notified(
+        &mut explorer,
+        "created file",
+        |n| fs::write(root.join(format!("new{n}.txt")), b"x").unwrap(),
+        |e| names(e).iter().any(|name| name.starts_with("new")),
+    );
+    fs::create_dir(root.join("folder")).unwrap();
+    wait_for(&mut explorer, "created folder", |e| {
+        names(e).contains(&"folder".to_owned())
+    });
+}
+
+#[test]
+fn notified_changes_show_up_in_background_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir(root.join("other")).unwrap();
+    let mut explorer = explorer_in(root);
+    explorer.new_tab(root.join("other"));
+    settle(&mut explorer);
+    wait_for_notified(
+        &mut explorer,
+        "file in the background tab",
+        |n| fs::write(root.join(format!("new{n}.txt")), b"x").unwrap(),
+        |e| {
+            let tab = &e.windows[0].tabs[0];
+            matches!(tab.state(), LoadState::Loaded(view) if view.listing.entries.len() > 1)
+        },
+    );
+}
+
+#[test]
+fn notified_subfolders_show_up_in_the_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir(root.join("sub")).unwrap();
+    let mut explorer = explorer_in(&root.join("sub"));
+    explorer.tree_expand(root.clone());
+    settle(&mut explorer);
+    assert_eq!(child_names(&explorer, &root), ["sub"]);
+    wait_for_notified(
+        &mut explorer,
+        "created tree folder",
+        |n| fs::create_dir(root.join(format!("new{n}"))).unwrap(),
+        |e| child_names(e, &root).len() > 1,
+    );
+}
+
+#[test]
+fn reexpanding_a_cached_tree_folder_relists_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut explorer = explorer_in(&root);
+    explorer.tree_expand(root.clone());
+    settle(&mut explorer);
+    explorer.tree_toggle(root.clone());
+    fs::create_dir(root.join("while_collapsed")).unwrap();
+    explorer.tree_toggle(root.clone());
+    wait_for(&mut explorer, "re-listed tree folder", |e| {
+        child_names(e, &root) == ["while_collapsed"]
+    });
+}
