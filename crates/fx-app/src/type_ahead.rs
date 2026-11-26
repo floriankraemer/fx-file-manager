@@ -45,7 +45,7 @@ impl TypeAhead {
 }
 
 /// First row, starting at `current` (inclusive) and wrapping, whose name starts with `query` ignoring case.
-/// A query of one repeated character (`aa`) cycles: the search starts after `current` and looks for that character.
+/// A query of one repeated character (`a`, `aa`) cycles: the search starts after `current` and looks for that character.
 pub(crate) fn best_match<'a>(
     len: usize,
     name_at: impl Fn(usize) -> Option<Cow<'a, str>>,
@@ -54,7 +54,7 @@ pub(crate) fn best_match<'a>(
 ) -> Option<usize> {
     let query: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
     let first = *query.first()?;
-    let cycling = query.len() > 1 && query.iter().all(|&c| c == first);
+    let cycling = query.iter().all(|&c| c == first);
     let (needle, start) = match (cycling, current) {
         (true, Some(row)) => (&query[..1], row + 1),
         (_, row) => (&query[..], row.unwrap_or(0)),
@@ -99,6 +99,8 @@ mod tests {
 
     #[test]
     fn repeated_character_cycles() {
+        assert_eq!(find(&NAMES, "a", Some(0)), Some(1));
+        assert_eq!(find(&NAMES, "a", None), Some(0));
         assert_eq!(find(&NAMES, "aa", Some(0)), Some(1));
         assert_eq!(find(&NAMES, "aaa", Some(1)), Some(4));
         assert_eq!(find(&NAMES, "aaaa", Some(4)), Some(0));
