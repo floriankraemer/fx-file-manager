@@ -58,7 +58,7 @@ fn names(explorer: &Explorer) -> Vec<String> {
         .collect()
 }
 
-fn row_of(explorer: &Explorer, name: &str) -> usize {
+pub(super) fn row_of(explorer: &Explorer, name: &str) -> usize {
     names(explorer)
         .iter()
         .position(|n| n == name)

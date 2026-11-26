@@ -62,6 +62,7 @@ impl Explorer {
             absolute(path),
             self.settings.show_hidden,
             self.settings.folder_order,
+            self.settings.default_view,
         );
         let window = &mut self.windows[w];
         window.tabs.push(tab);

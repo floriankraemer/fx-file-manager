@@ -1647,6 +1647,8 @@ name = "fx-app"
 version = "0.9.1"
 dependencies = [
  "fx-core",
+ "fx-thumbs",
+ "image",
  "log",
  "serde",
  "sys-locale",

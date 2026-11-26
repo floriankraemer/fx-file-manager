@@ -11,6 +11,7 @@ mod open;
 mod opener;
 mod places;
 mod preload;
+mod previews;
 mod restore;
 mod revalidate;
 mod search;
@@ -37,6 +38,7 @@ use crate::places::Place;
 use crate::search::SearchRunner;
 use crate::settings::Settings;
 use crate::state::State;
+use crate::thumbnails::Thumbnails;
 use crate::transfers::Transfers;
 use bookmarks::BookmarkChecked;
 use details::DetailsLoaded;
@@ -129,6 +131,7 @@ pub struct Explorer {
     places_tx: Sender<Vec<Place>>,
     places_rx: Receiver<Vec<Place>>,
     watches: Watches,
+    thumbnails: Thumbnails,
 }
 
 impl Explorer {
@@ -251,6 +254,7 @@ impl Explorer {
             fresh_places: None,
             places_tx,
             places_rx,
+            thumbnails: Thumbnails::new(Arc::clone(&wake)),
             watches: Watches::new(wake),
         }
     }
