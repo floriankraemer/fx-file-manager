@@ -5,7 +5,7 @@ use super::menu;
 use crate::command::{Command, tip};
 use crate::{action::Action, theme};
 use eframe::egui::{Popup, Response, Sense, TextStyle, Ui, vec2};
-use fx_app::{Explorer, SortColumn, SortSpec, t};
+use fx_app::{Explorer, SortColumn, SortSpec, ViewMode, t};
 
 const HEIGHT: f32 = 28.0;
 
@@ -39,7 +39,26 @@ pub fn show(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
 
         let resp = command(ui, Glyph::Sort, t("cmd.sort"), true, true);
         Popup::menu(&resp).show(|ui| sort_menu(ui, explorer.active().sort(), actions));
+        let mode = explorer.active().view_mode();
+        let glyph = match mode {
+            ViewMode::Details => Glyph::List,
+            ViewMode::Icons => Glyph::Grid,
+        };
+        let resp = command(ui, glyph, t("cmd.view"), true, true).on_hover_text(t("tip.view"));
+        Popup::menu(&resp).show(|ui| view_menu(ui, mode, actions));
     });
+}
+
+/// The Details and Icons choice, also in the View menu.
+pub fn view_menu(ui: &mut Ui, mode: ViewMode, actions: &mut Vec<Action>) {
+    for (choice, label) in [
+        (ViewMode::Details, t("view.details")),
+        (ViewMode::Icons, t("view.icons")),
+    ] {
+        if menu::radio(ui, label, mode == choice) {
+            actions.push(Action::SetViewMode(choice));
+        }
+    }
 }
 
 fn sort_menu(ui: &mut Ui, sort: SortSpec, actions: &mut Vec<Action>) {

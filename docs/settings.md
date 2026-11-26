@@ -61,6 +61,15 @@ Values outside that range are clamped on load.
 Sizes, numbers and timings follow the UI language too (decimal separator, digit groups, unit names such as `Ko` in French).
 Sizes always use 1024-based steps, and sorting uses raw bytes.
 
+### Icons view
+
+- `default_view` (default `"details"`): the view a new tab starts in, `"details"` or `"icons"`.
+  Each tab keeps its own view; Ctrl+1 and Ctrl+2 switch the active one.
+- `icon_size` (default `96`): tile edge of the Icons view in points, 48 to 256, clamped on load.
+  Ctrl+wheel over the grid changes it in steps of 16.
+- `thumbnails` (default `true`): show previews in the Icons view.
+- `thumbnails_on_network` (default `false`): also on network storage, where a preview reads the whole file over the network.
+
 ## Copy and move
 
 - `conflict_policy` (default `"ask"`): what a paste does when an item with the same name exists.
@@ -133,6 +142,8 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `toggle_bookmark` | `ctrl+d` |
 | `move_down` | `down` |
 | `move_up` | `up` |
+| `move_left` | `left` (Icons view) |
+| `move_right` | `right` (Icons view) |
 | `open_selected` | `enter` |
 | `rename` | `f2` |
 | `delete` | `delete` |
@@ -143,6 +154,8 @@ Plain keys (no Ctrl or Alt) do not fire while a text field has focus.
 | `paste` | `ctrl+v` |
 | `new_folder` | `ctrl+shift+n` |
 | `properties` | `alt+enter` |
+| `view_details` | `ctrl+1` |
+| `view_icons` | `ctrl+2` |
 | `new_window` | `ctrl+n` |
 | `open_settings` | `ctrl+comma` |
 | `about` | `f1` |

@@ -1,6 +1,6 @@
 //! User intents raised by views (command bar, context menus, shortcuts) and executed by `App`.
 
-use fx_app::{Density, SortSpec};
+use fx_app::{Density, SortSpec, ViewMode};
 
 /// The pane that receives typed characters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,4 +48,6 @@ pub enum Action {
     SetSort(SortSpec),
     SetShowHidden(bool),
     SetDensity(Density),
+    SetIconSize(u32),
+    SetViewMode(ViewMode),
 }

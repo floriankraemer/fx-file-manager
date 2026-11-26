@@ -9,6 +9,15 @@ pub enum Density {
     Comfortable,
 }
 
+/// How a tab shows its folder: the Details table or a grid of icons and thumbnails.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewMode {
+    #[default]
+    Details,
+    Icons,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FolderOrder {

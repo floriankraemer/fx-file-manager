@@ -10,7 +10,8 @@ use eframe::egui::{
     self, Context, DragAndDrop, Pos2, ViewportBuilder, ViewportCommand, ViewportId,
 };
 use fx_app::{
-    Explorer, Language, Notice, NoticeKind, Place, Settings, State, WindowId, i18n, relabel_places,
+    Explorer, Language, Notice, NoticeKind, Place, Settings, State, ViewMode, WindowId, i18n,
+    relabel_places,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,6 +33,8 @@ struct WindowUi {
     search: views::search::State,
     /// The pane the user clicked last; it receives typed characters.
     pane: Pane,
+    /// Tiles per row of the Icons view last frame; Up and Down move by this many.
+    grid_columns: usize,
 }
 
 impl WindowUi {
@@ -47,6 +50,7 @@ impl WindowUi {
             path_edit: None,
             search: views::search::State::default(),
             pane: Pane::default(),
+            grid_columns: 1,
         }
     }
 }
@@ -183,6 +187,7 @@ impl App {
             }
             Action::SetShowHidden(show) => self.update_settings(|s| s.show_hidden = show),
             Action::SetDensity(density) => self.update_settings(|s| s.density = density),
+            Action::SetIconSize(size) => self.update_settings(|s| s.icon_size = size),
             action => dispatch_explorer(ctx, &mut self.explorer, action),
         }
     }
@@ -224,7 +229,7 @@ impl App {
             }
             views::palette::Outcome::Run(command) => {
                 self.windows[index].palette = None;
-                self.run(command, actions)
+                self.run(index, command, actions)
             }
         }
     }
@@ -267,8 +272,8 @@ impl App {
         }
     }
 
-    /// Runs `command`. Returns true if the selection moved.
-    fn run(&mut self, command: Command, actions: &mut Vec<Action>) -> bool {
+    /// Runs `command` in window `index`. Returns true if the selection moved.
+    fn run(&mut self, index: usize, command: Command, actions: &mut Vec<Action>) -> bool {
         let ex = &mut self.explorer;
         if ex.search().is_some() && command::needs_folder_listing(command) {
             return false;
@@ -281,7 +286,8 @@ impl App {
             actions.push(action);
             return false;
         }
-        run_on_explorer(ex, command)
+        let row = self.windows[index].grid_columns;
+        run_on_explorer(ex, command, row)
     }
 
     /// Consumes the bound shortcuts and runs their commands. Returns true if the selection moved.
@@ -298,7 +304,7 @@ impl App {
         });
         let mut moved = false;
         for command in fired {
-            moved |= self.run(command, actions);
+            moved |= self.run(index, command, actions);
         }
         if !typing && self.explorer.search().is_none() {
             moved |= self.type_ahead(ctx, index);
@@ -360,8 +366,11 @@ fn command_action(command: Command) -> Option<Action> {
     })
 }
 
-/// Runs the commands that act on the explorer directly. Returns true if the selection moved.
-fn run_on_explorer(ex: &mut Explorer, command: Command) -> bool {
+/// Runs the commands that act on the explorer directly; `row` is how many entries a grid row holds.
+/// Returns true if the selection moved.
+fn run_on_explorer(ex: &mut Explorer, command: Command, row: usize) -> bool {
+    let icons = ex.active().view_mode() == ViewMode::Icons;
+    let step = if icons { row.max(1) as isize } else { 1 };
     match command {
         Command::NewTab => ex.new_tab(ex.active().path().to_path_buf()),
         Command::CloseTab => ex.close_tab(ex.active_index()),
@@ -372,8 +381,12 @@ fn run_on_explorer(ex: &mut Explorer, command: Command) -> bool {
         Command::Forward => ex.forward(),
         Command::Up => ex.up(),
         Command::ToggleBookmark => ex.toggle_bookmark_active(),
-        Command::MoveDown => return move_selection(ex, 1),
-        Command::MoveUp => return move_selection(ex, -1),
+        Command::MoveDown => return move_selection(ex, step),
+        Command::MoveUp => return move_selection(ex, -step),
+        Command::MoveRight if icons => return move_selection(ex, 1),
+        Command::MoveLeft if icons => return move_selection(ex, -1),
+        Command::ViewDetails => ex.active_mut().set_view_mode(ViewMode::Details),
+        Command::ViewIcons => ex.active_mut().set_view_mode(ViewMode::Icons),
         Command::OpenSelected => open_selected(ex),
         _ => {}
     }
@@ -406,6 +419,7 @@ fn dispatch_explorer(ctx: &Context, ex: &mut Explorer, action: Action) {
             ex.paste(folder);
         }
         Action::SetSort(sort) => ex.active_mut().set_sort(sort),
+        Action::SetViewMode(mode) => ex.active_mut().set_view_mode(mode),
         _ => {}
     }
 }
@@ -734,6 +748,10 @@ impl App {
                 if self.explorer.search().is_some() {
                     let state = &mut self.windows[index].search;
                     views::search::results(ui, &mut self.explorer, state, actions);
+                } else if self.explorer.active().view_mode() == ViewMode::Icons {
+                    let columns =
+                        views::grid::show(ui, &mut self.explorer, scroll_to_selection, actions);
+                    self.windows[index].grid_columns = columns;
                 } else {
                     views::table::show(ui, &mut self.explorer, scroll_to_selection, actions);
                 }

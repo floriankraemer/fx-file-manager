@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 log = { version = "0.4", features = ["std"] }
 fx-core = { path = "../fx-core" }
+fx-thumbs = { path = "../fx-thumbs" }
 serde = { version = "1.0.229", features = ["derive"] }
 sys-locale = "0.3"
 toml = "1.1.8"
@@ -20,6 +21,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 zbus = "5"
 
 [dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 
 [lints]

@@ -13,6 +13,7 @@ mod search;
 mod settings;
 mod state;
 mod tab;
+mod thumbnails;
 mod transfers;
 mod tree;
 mod type_ahead;
@@ -28,6 +29,7 @@ pub use format::{
     AgeBucket, age, extension, format_elapsed, format_millis, format_number, format_size,
     format_time, set_date_format, stem_chars,
 };
+pub use fx_thumbs::Thumb;
 pub use i18n::{Language, t, tn, tr};
 pub use ops::{EntryDetails, NameError, Notice, NoticeKind, validate_name};
 pub use place_group::PlaceGroup;
@@ -35,10 +37,12 @@ pub use places::{Place, bookmark_places, breadcrumbs, relabel_places};
 pub use search::{SearchStatus, SearchView};
 pub use settings::{
     ConflictChoice, DEFAULT_THEME, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
-    MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_RESULT_CAP, SearchSettings, Settings, start_dir,
+    MAX_FONT_SIZE, MAX_ICON_SIZE, MIN_FONT_SIZE, MIN_ICON_SIZE, MIN_RESULT_CAP, SearchSettings,
+    Settings, ViewMode, start_dir,
 };
 pub use state::{Bookmark, State, WindowState};
 pub use tab::{LoadState, Tab};
+pub use thumbnails::ThumbKey;
 pub use transfers::{TransferInfo, TransferState};
 pub use tree::{Children, FolderTree, TreeNode};
 pub use view::{DirView, SortColumn, SortSpec};

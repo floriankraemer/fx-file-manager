@@ -1,7 +1,7 @@
 //! One explorer tab: location, history, load state, the visible row order, and the selection.
 
 use crate::search::{SearchSlot, SearchView};
-use crate::settings::FolderOrder;
+use crate::settings::{FolderOrder, ViewMode};
 use crate::type_ahead::TypeAhead;
 use crate::view::{DirView, SortColumn, SortSpec, build_order};
 use std::collections::BTreeSet;
@@ -38,6 +38,7 @@ pub struct Tab {
     sort: SortSpec,
     show_hidden: bool,
     folder_order: FolderOrder,
+    view_mode: ViewMode,
     filter: String,
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
@@ -51,6 +52,7 @@ impl Tab {
         path: PathBuf,
         show_hidden: bool,
         folder_order: FolderOrder,
+        view_mode: ViewMode,
     ) -> Self {
         Self {
             id,
@@ -65,6 +67,7 @@ impl Tab {
             sort: SortSpec::default(),
             show_hidden,
             folder_order,
+            view_mode,
             filter: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
@@ -232,6 +235,14 @@ impl Tab {
     pub fn set_folder_order(&mut self, order: FolderOrder) {
         self.folder_order = order;
         self.rebuild_order();
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.view_mode = mode;
     }
 
     pub fn filter(&self) -> &str {

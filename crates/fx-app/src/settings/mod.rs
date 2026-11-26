@@ -17,7 +17,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub use choices::{
-    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice,
+    ConflictChoice, DateFormat, Density, DragModifier, FolderOrder, GlobScopeChoice, ViewMode,
 };
 pub use paths::start_dir;
 pub(crate) use paths::{
@@ -27,6 +27,10 @@ pub use search::SearchSettings;
 
 pub const MIN_FONT_SIZE: f32 = 8.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
+/// Tile edge of the Icons view in points.
+pub const MIN_ICON_SIZE: u32 = 48;
+pub const MAX_ICON_SIZE: u32 = 256;
+
 /// Smallest accepted `search.result_cap`.
 pub const MIN_RESULT_CAP: usize = 100;
 
@@ -43,6 +47,14 @@ pub struct Settings {
     #[serde(deserialize_with = "theme_id")]
     pub theme: String,
     pub density: Density,
+    /// The view new tabs start in.
+    pub default_view: ViewMode,
+    /// Tile edge of the Icons view in points, clamped to `MIN_ICON_SIZE..=MAX_ICON_SIZE` on load.
+    pub icon_size: u32,
+    /// Show previews of images and, where the OS provides them, other files in the Icons view.
+    pub thumbnails: bool,
+    /// Also on network storage, where reading every file for its preview can be slow.
+    pub thumbnails_on_network: bool,
     /// Shown columns of the file list, left to right. Always contains `Name`.
     pub list_columns: Vec<ListColumn>,
     /// Open folders in the tree with a single click instead of a double click.
@@ -98,6 +110,10 @@ impl Default for Settings {
             start_folder: None,
             theme: DEFAULT_THEME.to_owned(),
             density: Density::default(),
+            default_view: ViewMode::default(),
+            icon_size: 96,
+            thumbnails: true,
+            thumbnails_on_network: false,
             list_columns: ListColumn::ALL.to_vec(),
             tree_single_click: true,
             list_single_click: false,
@@ -173,6 +189,7 @@ impl Settings {
         let defaults = Self::default();
         self.list_font_size = clamp_font_size(self.list_font_size, defaults.list_font_size);
         self.tree_font_size = clamp_font_size(self.tree_font_size, defaults.tree_font_size);
+        self.icon_size = self.icon_size.clamp(MIN_ICON_SIZE, MAX_ICON_SIZE);
     }
 
     /// Saves to [`Settings::path`]. Fails if there is no config directory.
@@ -284,6 +301,10 @@ mod tests {
             start_folder: Some(dir.path().to_path_buf()),
             theme: "solarized-dark".to_owned(),
             density: Density::Comfortable,
+            default_view: ViewMode::Icons,
+            icon_size: 160,
+            thumbnails: false,
+            thumbnails_on_network: true,
             list_columns: vec![ListColumn::Size, ListColumn::Name, ListColumn::Age],
             tree_single_click: false,
             list_single_click: true,
@@ -481,6 +502,16 @@ mod tests {
         let loaded = Settings::load_from(&path);
         assert_eq!(loaded.list_font_size, Settings::default().list_font_size);
         assert_eq!(loaded.tree_font_size, 20.0);
+    }
+
+    #[test]
+    fn icon_size_is_clamped_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write(&path, "icon_size = 4\n");
+        assert_eq!(Settings::load_from(&path).icon_size, MIN_ICON_SIZE);
+        write(&path, "icon_size = 9000\n");
+        assert_eq!(Settings::load_from(&path).icon_size, MAX_ICON_SIZE);
     }
 
     #[test]

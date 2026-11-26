@@ -53,6 +53,8 @@ fn view_menu(ui: &mut Ui, explorer: &Explorer, actions: &mut Vec<Action>) {
         actions.push(Action::SetShowHidden(!settings.show_hidden));
     }
     ui.separator();
+    super::commandbar::view_menu(ui, explorer.active().view_mode(), actions);
+    ui.separator();
     for (density, label) in [
         (Density::Compact, t("density.compact")),
         (Density::Comfortable, t("density.comfortable")),

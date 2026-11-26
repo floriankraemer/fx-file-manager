@@ -1,16 +1,14 @@
-use super::dnd;
+use super::entries::{self, EntryContext, EntryInput};
 use super::menu;
-use crate::command::{Command, hint};
 use crate::{action::Action, theme};
-use eframe::egui::scroll_area::ScrollAreaOutput;
-use eframe::egui::{Align, CursorIcon, Layout, Modifiers, RichText, Sense, Stroke, Ui};
+use eframe::egui::{Align, CursorIcon, Layout, RichText, Sense, Stroke, Ui};
 use egui_extras::{Column, TableBuilder, TableRow};
 use fx_app::{
     Density, DirView, Explorer, ListColumn, LoadState, Settings, SortColumn, SortSpec, age,
-    extension, format_size, format_time, t, tr,
+    extension, format_size, format_time, tr,
 };
 use fx_core::{Entry, EntryKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 pub(super) fn row_height(density: Density) -> f32 {
@@ -22,24 +20,16 @@ pub(super) fn row_height(density: Density) -> f32 {
 
 /// Read-only state every row needs, snapshotted before the table borrows the UI.
 struct RowContext<'a> {
-    view: &'a DirView,
-    tab: &'a fx_app::Tab,
-    folder: &'a Path,
+    entries: EntryContext<'a>,
     settings: &'a Settings,
     now: SystemTime,
-    can_paste: bool,
 }
 
 /// What the user did in the table this frame; applied once rendering is done.
 #[derive(Default)]
 struct Interaction {
+    entries: EntryInput,
     sort: Option<SortColumn>,
-    select: Option<usize>,
-    activate: Option<usize>,
-    right_clicked: Option<usize>,
-    drag_started: Option<usize>,
-    /// Dragged paths released on a folder row, with that folder.
-    drop: Option<(Vec<PathBuf>, PathBuf)>,
     /// The header being dragged this frame.
     column_drag: Option<ColumnDrag>,
     show_column: Option<(ListColumn, bool)>,
@@ -128,12 +118,16 @@ pub fn show(
     let density = settings.density;
     let modifiers = ui.input(|input| input.modifiers);
     let rows = RowContext {
-        view: &view,
-        tab,
-        folder: tab.path(),
+        entries: EntryContext {
+            explorer,
+            view: &view,
+            tab,
+            folder: tab.path(),
+            single_click: settings.list_single_click,
+            can_paste,
+        },
         settings,
         now: SystemTime::now(),
-        can_paste,
     };
     let mut out = Interaction::default();
     let layout_key = ui.scope_id().with("header-layout");
@@ -151,19 +145,24 @@ pub fn show(
             body.rows(
                 theme::row_height(row_height(density), list_font_size),
                 order_len,
-                |mut row| entry_row(&mut row, &rows, explorer, &mut out, actions),
+                |mut row| entry_row(&mut row, &rows, &mut out.entries, actions),
             );
         });
     if let Some(drag) = &out.column_drag {
         paint_column_drag(ui, drag, &spans, &settings.list_columns);
     }
     out.column_widths = store_header_layout(ui, layout_key, &last, settings, spans);
-    background_area(ui, &scroll, settings.show_hidden, can_paste, actions);
-    apply(ui, explorer, out, modifiers);
+    let empty = entries::below_content(&scroll);
+    entries::background(ui, empty, settings.show_hidden, can_paste, actions);
+    apply_columns(explorer, &out);
+    entries::apply(ui, explorer, out.entries, modifiers);
+    if let Some(column) = out.sort {
+        explorer.active_mut().set_sort_column(column);
+    }
 }
 
 /// The loaded listing; while loading or after a failure it draws that state and returns `None`.
-fn loaded_view(ui: &mut Ui, tab: &fx_app::Tab) -> Option<std::sync::Arc<DirView>> {
+pub(super) fn loaded_view(ui: &mut Ui, tab: &fx_app::Tab) -> Option<std::sync::Arc<DirView>> {
     match tab.state() {
         LoadState::Loading => {
             ui.centered_and_justified(|ui| {
@@ -381,66 +380,16 @@ fn column_menu(ui: &mut Ui, settings: &Settings, out: &mut Interaction) {
 fn entry_row(
     row: &mut TableRow,
     ctx: &RowContext,
-    explorer: &Explorer,
-    out: &mut Interaction,
+    out: &mut EntryInput,
     actions: &mut Vec<Action>,
 ) {
     let i = row.index();
-    let entry = &ctx.view.listing.entries[ctx.tab.order()[i] as usize];
-    let name = ctx.view.listing.name(entry).to_string_lossy();
-    let is_selected = ctx.tab.is_selected(i);
-    row.set_selected(is_selected);
+    let e = &ctx.entries;
+    let entry = &e.view.listing.entries[e.tab.order()[i] as usize];
+    let name = e.view.listing.name(entry).to_string_lossy();
+    row.set_selected(e.tab.is_selected(i));
     entry_cells(row, entry, &name, ctx);
-
-    let resp = row.response();
-    if resp.secondary_clicked() && !is_selected {
-        out.right_clicked = Some(i);
-    }
-    let is_dir = entry.kind == EntryKind::Dir;
-    resp.context_menu(|ui| {
-        let menu = RowMenu {
-            row: i,
-            is_dir,
-            bookmarked: is_dir && explorer.is_bookmarked(&ctx.folder.join(name.as_ref())),
-            selected: if is_selected {
-                ctx.tab.selection_len()
-            } else {
-                1
-            },
-            can_paste: ctx.can_paste,
-        };
-        row_menu(ui, &menu, actions);
-    });
-    if is_dir
-        && dnd::recording(&resp.ctx)
-        && let Some(drop) = drop_on_folder(&resp, ctx.folder.join(name.as_ref()))
-    {
-        out.drop = Some(drop);
-    }
-    record_clicks(&resp, i, is_dir && ctx.settings.list_single_click, out);
-}
-
-fn record_clicks(resp: &egui::Response, row: usize, single_click: bool, out: &mut Interaction) {
-    if resp.clicked() {
-        out.select = Some(row);
-    }
-    if resp.drag_started() {
-        out.drag_started = Some(row);
-    }
-    let activated = if single_click {
-        resp.clicked()
-    } else {
-        resp.double_clicked()
-    };
-    if activated {
-        out.activate = Some(row);
-    }
-}
-
-/// Highlights a folder row while entries hover it; returns them with the folder once released there.
-fn drop_on_folder(resp: &egui::Response, folder: PathBuf) -> Option<(Vec<PathBuf>, PathBuf)> {
-    let dragged = dnd::target(resp, &folder)?;
-    Some((dragged.paths.clone(), folder))
+    entries::respond(&row.response(), i, &name, entry.kind, e, out, actions);
 }
 
 fn entry_cells(row: &mut TableRow, entry: &Entry, name: &str, ctx: &RowContext) {
@@ -498,62 +447,6 @@ fn size_cell(ui: &mut Ui, entry: &Entry) {
     });
 }
 
-/// The space below the last row; `body` reports the scroll area, so rows keep their own clicks.
-fn background_area(
-    ui: &mut Ui,
-    scroll: &ScrollAreaOutput<()>,
-    show_hidden: bool,
-    can_paste: bool,
-    actions: &mut Vec<Action>,
-) {
-    let rows_bottom =
-        scroll.inner_rect.top() + scroll.content_size.y - scroll.state.unclamped_offset().y;
-    let empty = egui::Rect::from_min_max(
-        egui::pos2(
-            scroll.inner_rect.left(),
-            rows_bottom.max(scroll.inner_rect.top()),
-        ),
-        scroll.inner_rect.max,
-    );
-    if empty.height() > 1.0 {
-        let background = ui.interact(
-            empty,
-            ui.scope_id().with("table-background"),
-            Sense::click(),
-        );
-        background.context_menu(|ui| background_menu(ui, show_hidden, can_paste, actions));
-    }
-}
-
-/// Applies the frame's interactions in a fixed order: selection first, then activation and drag and drop.
-fn apply(ui: &Ui, explorer: &mut Explorer, out: Interaction, modifiers: Modifiers) {
-    apply_columns(explorer, &out);
-    apply_selection(explorer, &out, modifiers);
-    if let Some(i) = out.activate {
-        explorer.activate(i);
-    }
-    if let Some(i) = out.drag_started {
-        start_drag(ui, explorer, i);
-    }
-    if let Some((paths, folder)) = out.drop {
-        let copy = dnd::copying(ui.ctx(), explorer.settings().drag_copy_modifier);
-        explorer.drop_into(paths, &folder, copy);
-    }
-}
-
-fn apply_selection(explorer: &mut Explorer, out: &Interaction, modifiers: Modifiers) {
-    let tab = explorer.active_mut();
-    if let Some(i) = out.right_clicked {
-        tab.click(i, false, false);
-    }
-    if let Some(column) = out.sort {
-        tab.set_sort_column(column);
-    }
-    if let Some(i) = out.select {
-        tab.click(i, modifiers.command, modifiers.shift);
-    }
-}
-
 /// Persists the column changes of this frame in one settings update.
 fn apply_columns(explorer: &mut Explorer, out: &Interaction) {
     if out.show_column.is_none() && out.move_column.is_none() && out.column_widths.is_none() {
@@ -572,19 +465,6 @@ fn apply_columns(explorer: &mut Explorer, out: &Interaction) {
     explorer.set_settings(settings);
 }
 
-fn start_drag(ui: &Ui, explorer: &mut Explorer, row: usize) {
-    // Dragging an unselected row drags just that row, as in other file managers.
-    if !explorer.active().is_selected(row) {
-        explorer.active_mut().click(row, false, false);
-    }
-    let rows = explorer.active().selection();
-    let paths = rows
-        .iter()
-        .filter_map(|&r| explorer.entry_path(r))
-        .collect();
-    dnd::start(ui.ctx(), explorer.window(), paths);
-}
-
 fn age_badge(ui: &mut Ui, text: &str, color: egui::Color32) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.25))
@@ -594,97 +474,4 @@ fn age_badge(ui: &mut Ui, text: &str, color: egui::Color32) {
         .show(ui, |ui| {
             ui.label(RichText::new(text).small().color(color));
         });
-}
-
-/// What the row context menu offers.
-struct RowMenu {
-    row: usize,
-    is_dir: bool,
-    bookmarked: bool,
-    selected: usize,
-    can_paste: bool,
-}
-
-fn row_menu(ui: &mut Ui, menu: &RowMenu, actions: &mut Vec<Action>) {
-    open_items(ui, menu, actions);
-    ui.separator();
-    clipboard_items(ui, menu, actions);
-    ui.separator();
-    if menu::item(
-        ui,
-        t("cmd.rename"),
-        &hint(Command::Rename),
-        menu.selected == 1,
-    ) {
-        actions.push(Action::Rename);
-    }
-    if menu::item(ui, t("cmd.delete"), &hint(Command::Delete), true) {
-        actions.push(Action::Delete { permanent: false });
-    }
-    ui.separator();
-    if menu::item(ui, t("cmd.copy_path"), "", true) {
-        actions.push(Action::CopyPath);
-    }
-    let properties = hint(Command::Properties);
-    if menu::item(ui, t("cmd.properties"), &properties, menu.selected == 1) {
-        actions.push(Action::Properties);
-    }
-}
-
-fn open_items(ui: &mut Ui, menu: &RowMenu, actions: &mut Vec<Action>) {
-    if menu::item(ui, t("cmd.open"), "Enter", true) {
-        actions.push(Action::Open(menu.row));
-    }
-    if menu.is_dir && menu::item(ui, t("cmd.open_new_tab"), "", true) {
-        actions.push(Action::OpenInNewTab(menu.row));
-    }
-    if !menu.is_dir && menu::item(ui, t("cmd.open_with"), "", true) {
-        actions.push(Action::OpenWith(menu.row));
-    }
-}
-
-fn clipboard_items(ui: &mut Ui, menu: &RowMenu, actions: &mut Vec<Action>) {
-    if menu::item(ui, t("cmd.cut"), &hint(Command::Cut), true) {
-        actions.push(Action::Cut);
-    }
-    if menu::item(ui, t("cmd.copy"), &hint(Command::Copy), true) {
-        actions.push(Action::Copy);
-    }
-    if !menu.is_dir {
-        return;
-    }
-    if menu::item(ui, t("cmd.paste_into"), "", menu.can_paste) {
-        actions.push(Action::PasteInto(menu.row));
-    }
-    let bookmark = if menu.bookmarked {
-        "cmd.remove_bookmark"
-    } else {
-        "cmd.add_bookmark"
-    };
-    if menu::item(ui, t(bookmark), "", true) {
-        actions.push(Action::ToggleBookmark(menu.row));
-    }
-}
-
-fn background_menu(ui: &mut Ui, show_hidden: bool, can_paste: bool, actions: &mut Vec<Action>) {
-    if menu::item(ui, t("cmd.new_folder"), &hint(Command::NewFolder), true) {
-        actions.push(Action::NewFolder);
-    }
-    if menu::item(ui, t("cmd.paste"), &hint(Command::Paste), can_paste) {
-        actions.push(Action::Paste);
-    }
-    if menu::item(ui, t("cmd.refresh"), &hint(Command::Refresh), true) {
-        actions.push(Action::Refresh);
-    }
-    if menu::item(ui, t("cmd.select_all"), &hint(Command::SelectAll), true) {
-        actions.push(Action::SelectAll);
-    }
-    ui.separator();
-    if menu::check(ui, t("settings.show_hidden"), show_hidden) {
-        actions.push(Action::SetShowHidden(!show_hidden));
-    }
-    ui.separator();
-    if menu::item(ui, t("cmd.settings"), &hint(Command::OpenSettings), true) {
-        actions.push(Action::OpenSettings);
-    }
 }

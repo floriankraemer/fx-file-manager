@@ -22,6 +22,8 @@ pub enum Command {
     ToggleBookmark,
     MoveDown,
     MoveUp,
+    MoveLeft,
+    MoveRight,
     OpenSelected,
     Search,
     CloseSearch,
@@ -35,6 +37,8 @@ pub enum Command {
     Paste,
     NewFolder,
     Properties,
+    ViewDetails,
+    ViewIcons,
     NewWindow,
     OpenSettings,
     Palette,
@@ -196,6 +200,22 @@ pub const COMMANDS: &[Def] = &[
         false,
     ),
     def(
+        Command::MoveLeft,
+        "move_left",
+        "command.move_left",
+        "command_group.selection",
+        &["left"],
+        false,
+    ),
+    def(
+        Command::MoveRight,
+        "move_right",
+        "command.move_right",
+        "command_group.selection",
+        &["right"],
+        false,
+    ),
+    def(
         Command::SelectAll,
         "select_all",
         "command.select_all",
@@ -266,6 +286,22 @@ pub const COMMANDS: &[Def] = &[
         "command_group.clipboard",
         &["ctrl+v"],
         false,
+    ),
+    def(
+        Command::ViewDetails,
+        "view_details",
+        "command.view_details",
+        "command_group.view",
+        &["ctrl+1"],
+        true,
+    ),
+    def(
+        Command::ViewIcons,
+        "view_icons",
+        "command.view_icons",
+        "command_group.view",
+        &["ctrl+2"],
+        true,
     ),
     def(
         Command::NewWindow,
@@ -490,6 +526,7 @@ pub fn enabled(command: Command, explorer: &Explorer) -> bool {
         | Command::Cut
         | Command::Properties => selected > 0,
         Command::Paste => explorer.can_paste(),
+        Command::MoveLeft | Command::MoveRight => tab.view_mode() == fx_app::ViewMode::Icons,
         _ => true,
     }
 }
@@ -591,6 +628,10 @@ mod tests {
             ("alt+up", Command::Up),
             ("down", Command::MoveDown),
             ("up", Command::MoveUp),
+            ("left", Command::MoveLeft),
+            ("right", Command::MoveRight),
+            ("ctrl+1", Command::ViewDetails),
+            ("ctrl+2", Command::ViewIcons),
             ("enter", Command::OpenSelected),
             ("f2", Command::Rename),
             ("delete", Command::Delete),
@@ -620,7 +661,7 @@ mod tests {
                 "{text} -> {command:?}"
             );
         }
-        assert_eq!(keymap.bindings.len(), 30);
+        assert_eq!(keymap.bindings.len(), 34);
     }
 
     #[test]

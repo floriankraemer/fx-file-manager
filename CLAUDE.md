@@ -24,7 +24,7 @@ Linux and Windows release artifacts are built in Docker (`make build-linux`, `ma
 
 ## Architecture
 
-Five-crate workspace with strict layering; dependencies point downward only.
+Six-crate workspace with strict layering; dependencies point downward only.
 
 - `fx-core`: listing domain, storage detection, copy/move engine. No UI.
   - `src/sys/{linux,windows,macos}.rs` are per-OS fast listing backends (`getdents64`+`statx`, `FileIdBothDirectoryInfo`, `getattrlistbulk`).
@@ -32,8 +32,10 @@ Five-crate workspace with strict layering; dependencies point downward only.
   - `storage.rs`/`volume.rs` classify a path (SSD, HDD, network, USB) and that picks the concurrency strategy.
   - `copy/`: `plan.rs` is a pure planner that picks workers, schedule and an ordered method chain per source/destination volume pair; `pipeline/` executes it (one submodule per concern: preflight, conflicts, entry, streaming, two_phase, moves, links); `progress.rs` is atomic counters sampled by the UI. Methods unsupported for a pair are disabled on first failure. `tests/copy.rs` runs every schedule and method.
   - Names live in one byte arena, entries refer by offset; sorting/filtering work on `u32` index vectors. Keep these invariants when touching `list.rs`/`listing.rs`/`sort.rs`.
+- `fx-thumbs`: thumbnails, no UI. Per-OS backends: `freedesktop.rs` + `tumbler.rs` (Linux, reads and writes `~/.cache/thumbnails`), `windows.rs` (`IShellItemImageFactory`), `macos.rs` (QuickLook); `decode.rs` is the in-process fallback (scaled-IDCT JPEG, `image`, SIMD resize, size limits).
 - `fx-app`: UI-agnostic view-model (`Explorer` owns tabs, history, `DirView` sort/filter, file ops, transfers, settings, i18n). Background loads carry a generation counter so stale results are dropped. No egui dependency.
 - `fx-gui`: egui/eframe presentation only; "renders state and forwards input; holds no logic".
+  - Details (`views/table.rs`) and Icons (`views/grid.rs`) views share entry clicks, drag and drop and menus through `views/entries.rs`; `views/thumbs.rs` is the texture LRU fed by `fx-app`'s thumbnail scheduler (`thumbnails.rs`).
   - Views (`views/*`) raise `Action`s (`action.rs`); `App` (`app.rs`) executes them against `Explorer`.
   - `command.rs` maps named `Command`s to default shortcuts plus the user `[keymap]` from `settings.toml`; resolved keymap is rebuilt on settings change, not per frame.
   - Themes are TOML files in `crates/fx-gui/themes/`. `build.rs` embeds version, git hash (`FX_GIT_HASH`) and build date (`FX_BUILD_DATE`/`SOURCE_DATE_EPOCH`).

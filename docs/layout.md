@@ -1,6 +1,7 @@
 # Layout
 
 - `crates/fx-core`: library with the listing domain, storage detection and strategy, the `list_dir` and `walk` use cases, and per-OS backends in `src/sys`.
+- `crates/fx-thumbs`: thumbnails from the OS cache (freedesktop cache and tumbler on Linux, the Windows shell, QuickLook on macOS) with in-process image decoding as fallback.
 - `crates/fx-app`: UI-agnostic explorer logic (tabs, history, sorting, filtering, file operations).
 - `crates/fx-gui`: egui/eframe desktop app, binary `fx-gui`.
 - `crates/fx-cli`: console app, binary `fx`.
