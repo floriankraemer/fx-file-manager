@@ -3,7 +3,7 @@
 //! A thumbnail is `<size dir>/<md5 of the file URI>.png` and is valid while its `Thumb::MTime` (and
 //! `Thumb::Size`, when written) match the file. Misses for images are decoded here and written back.
 
-use crate::{Request, Thumb, ThumbError, decode};
+use crate::{Request, Thumb, ThumbError, decode, tumbler};
 use md5::{Digest, Md5};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter};
@@ -58,12 +58,34 @@ impl Cache {
         if let Some(thumb) = self.lookup(&name, &stamp, px) {
             return Ok(thumb);
         }
+        if !decode::supports(request.path) {
+            return self.render_by_service(request.path, &uri, &name, &stamp, px);
+        }
         let thumb = decode::thumbnail(request.path, px)?;
         let path = self.root.join(dir_name(px)).join(&name);
         if let Err(e) = write(&path, &uri, &stamp, &thumb) {
             log::debug!("cannot write thumbnail {}: {e}", path.display());
         }
         Ok(thumb)
+    }
+
+    /// Has the thumbnailer service render a non-image into the cache, then reads it from there.
+    fn render_by_service(
+        &self,
+        path: &Path,
+        uri: &str,
+        name: &str,
+        stamp: &Stamp,
+        px: u32,
+    ) -> Result<Thumb, ThumbError> {
+        let tumbler = tumbler::shared().ok_or(ThumbError::Unsupported)?;
+        let mime = tumbler.mime_type(path).ok_or(ThumbError::Unsupported)?;
+        match tumbler.generate(uri, mime, dir_name(px)) {
+            Ok(true) => {}
+            Ok(false) => return Err(ThumbError::Unsupported),
+            Err(e) => return Err(ThumbError::Decode(e.to_string())),
+        }
+        self.lookup(name, stamp, px).ok_or(ThumbError::Unsupported)
     }
 
     /// The first valid thumbnail at `px` or a larger size, fitted to `px`.
