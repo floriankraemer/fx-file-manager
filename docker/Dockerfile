@@ -84,6 +84,21 @@ FROM scratch AS linux-artifact
 COPY --from=linux-build /out/ /linux/
 
 # ---------------------------------------------------------------------------
+# screenshots: the documentation pictures, taken from the release GUI in a
+# container whose filesystem is entirely made up, exported by `make screenshots`.
+# ---------------------------------------------------------------------------
+FROM linux-builder AS screenshots-run
+
+COPY --from=linux-build /out/fx-gui /usr/local/bin/
+COPY scripts/screenshots /shots
+RUN useradd -m demo && mkdir -p /mnt/backup /mnt/media /out && chown demo /out
+USER demo
+RUN HOME=/home/demo /shots/capture.sh /out
+
+FROM scratch AS screenshots
+COPY --from=screenshots-run /out/ /
+
+# ---------------------------------------------------------------------------
 # windows-builder: mingw-w64 cross toolchain for the windows-gnu target.
 # ---------------------------------------------------------------------------
 FROM base AS windows-builder
