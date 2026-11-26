@@ -4,7 +4,7 @@ use super::*;
 use crate::ops::{EntryDetails, NoticeKind};
 use crate::state::{Bookmark, WindowState};
 use crate::tab::{LoadState, Tab};
-use crate::tree::Children;
+use crate::tree::{Children, TreeNode};
 use crate::view::SortColumn;
 use fx_core::{EntryKind, Resolution};
 use std::fs;
@@ -1622,4 +1622,44 @@ fn a_symlink_to_a_folder_is_entered_once_the_background_check_answers() {
     wait_for(&mut explorer, "symlink entered", |e| {
         e.active().path() == root.join("link")
     });
+}
+
+#[test]
+fn tab_type_ahead_selects_matching_row_and_keeps_selection_without_match() {
+    let (_dir, _root, mut explorer) = sample_tree();
+    let now = Instant::now();
+    assert!(explorer.active_mut().type_ahead("S", now));
+    assert_eq!(explorer.active().selected(), Some(3));
+    assert!(!explorer.active_mut().type_ahead("q", now));
+    assert_eq!(explorer.active().selected(), Some(3));
+    assert_eq!(explorer.active().selection(), [3]);
+    let later = now + Duration::from_secs(2);
+    assert!(explorer.active_mut().type_ahead("z", later));
+    assert_eq!(explorer.active().selected(), Some(1));
+}
+
+#[test]
+fn tree_type_ahead_navigates_to_visible_nodes_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    for name in ["alpha", "beta", "alpha/inner", "beta/hidden-child"] {
+        fs::create_dir(root.join(name)).unwrap();
+    }
+    let mut explorer = explorer_in(&root);
+    let roots = [TreeNode {
+        name: "Root".into(),
+        path: root.clone(),
+    }];
+    explorer.tree_expand(root.clone());
+    explorer.tree_expand(root.join("alpha"));
+    settle(&mut explorer);
+    let now = Instant::now();
+
+    assert!(explorer.tree_type_ahead("i", &roots, now));
+    assert_eq!(explorer.active().path(), root.join("alpha/inner"));
+    let later = now + Duration::from_secs(2);
+    assert!(!explorer.tree_type_ahead("h", &roots, later));
+    assert_eq!(explorer.active().path(), root.join("alpha/inner"));
+    assert!(explorer.tree_type_ahead("b", &roots, later + Duration::from_secs(2)));
+    assert_eq!(explorer.active().path(), root.join("beta"));
 }

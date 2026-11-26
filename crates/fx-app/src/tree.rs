@@ -1,5 +1,6 @@
 //! Folder-tree state for the sidebar: which folders are expanded and their cached subfolders.
 
+use crate::type_ahead::TypeAhead;
 use fx_core::{EntryKind, ListOptions, list_dir, natural_cmp};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ pub enum Children {
 pub struct FolderTree {
     pub(crate) expanded: HashSet<PathBuf>,
     pub(crate) children: HashMap<PathBuf, Children>,
+    pub(crate) type_ahead: TypeAhead,
 }
 
 impl FolderTree {
@@ -31,6 +33,28 @@ impl FolderTree {
     /// `None` until a load for `path` was requested.
     pub fn children(&self, path: &Path) -> Option<&Children> {
         self.children.get(path)
+    }
+
+    /// The nodes in display order: each root followed by its expanded, loaded descendants.
+    pub fn visible(&self, roots: &[TreeNode]) -> Vec<TreeNode> {
+        let mut out = Vec::new();
+        for root in roots {
+            self.push_visible(root, &mut out);
+        }
+        out
+    }
+
+    fn push_visible(&self, node: &TreeNode, out: &mut Vec<TreeNode>) {
+        out.push(node.clone());
+        let Some(Children::Loaded(children)) = self.children.get(&node.path) else {
+            return;
+        };
+        if !self.is_expanded(&node.path) {
+            return;
+        }
+        for child in children {
+            self.push_visible(child, out);
+        }
     }
 }
 

@@ -2,9 +2,11 @@
 
 use super::Explorer;
 use crate::tree::{Children, FolderTree, TreeNode, list_children};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 pub(super) struct TreeLoaded {
     generation: u64,
@@ -65,6 +67,24 @@ impl Explorer {
             }
             self.tree_expand(dir.to_path_buf());
         }
+    }
+
+    /// Navigates to the visible tree node (under `roots`) whose name best matches the typed `text`. Returns true on a match.
+    pub fn tree_type_ahead(&mut self, text: &str, roots: &[TreeNode], now: Instant) -> bool {
+        let visible = self.win().tree.visible(roots);
+        let active = self.active().path();
+        let current = visible.iter().position(|node| node.path == active);
+        let names = |i: usize| Some(Cow::Borrowed(visible.get(i)?.name.as_str()));
+        let found = self
+            .win_mut()
+            .tree
+            .type_ahead
+            .find(text, now, current, visible.len(), names);
+        let Some(node) = found.and_then(|i| visible.get(i)) else {
+            return false;
+        };
+        self.navigate(node.path.clone());
+        true
     }
 
     /// Invalidates every cached tree listing in all windows and reloads it.

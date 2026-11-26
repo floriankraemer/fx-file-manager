@@ -1,6 +1,6 @@
 //! eframe::App: polls the explorer, maps input to its methods, lays out the views.
 
-use crate::action::Action;
+use crate::action::{Action, Pane};
 use crate::command::{self, Command};
 use crate::views::dialogs::{self, Dialog};
 use crate::views::search::{self, Follow};
@@ -30,6 +30,8 @@ struct WindowUi {
     title: String,
     path_edit: Option<views::toolbar::PathEdit>,
     search: views::search::State,
+    /// The pane the user clicked last; it receives typed characters.
+    pane: Pane,
 }
 
 impl WindowUi {
@@ -44,6 +46,7 @@ impl WindowUi {
             title: String::new(),
             path_edit: None,
             search: views::search::State::default(),
+            pane: Pane::default(),
         }
     }
 }
@@ -171,6 +174,7 @@ impl App {
             }
             Action::OpenAbout => self.open_about(ctx),
             Action::Exit => self.exit(ctx),
+            Action::FocusPane(pane) => self.windows[index].pane = pane,
             Action::Search(action) => {
                 let state = &mut self.windows[index].search;
                 if search::execute(ctx, &mut self.explorer, state, action) == Follow::RootNotice {
@@ -281,7 +285,7 @@ impl App {
     }
 
     /// Consumes the bound shortcuts and runs their commands. Returns true if the selection moved.
-    fn handle_keys(&mut self, ctx: &Context, actions: &mut Vec<Action>) -> bool {
+    fn handle_keys(&mut self, ctx: &Context, index: usize, actions: &mut Vec<Action>) -> bool {
         let typing = ctx.egui_wants_keyboard_input();
         let fired: Vec<Command> = ctx.input_mut(|i| {
             self.keymap
@@ -295,6 +299,35 @@ impl App {
         let mut moved = false;
         for command in fired {
             moved |= self.run(command, actions);
+        }
+        if !typing && self.explorer.search().is_none() {
+            moved |= self.type_ahead(ctx, index);
+        }
+        moved
+    }
+
+    /// Forwards typed characters to the focused pane. Returns true if the listing selection moved.
+    fn type_ahead(&mut self, ctx: &Context, index: usize) -> bool {
+        let typed: Vec<String> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        let now = std::time::Instant::now();
+        let mut moved = false;
+        for text in typed {
+            moved |= match self.windows[index].pane {
+                Pane::Listing => self.explorer.active_mut().type_ahead(&text, now),
+                Pane::Tree => {
+                    let roots = views::sidebar::roots(&self.explorer, &self.places);
+                    self.explorer.tree_type_ahead(&text, &roots, now);
+                    false
+                }
+            };
         }
         moved
     }
@@ -413,6 +446,13 @@ fn copy_paths(ctx: &Context, ex: &Explorer) {
     }
 }
 
+/// Raises a focus change to `pane` when the user presses the primary button over its panel.
+fn focus_on_press(ui: &egui::Ui, panel: &egui::Response, pane: Pane, actions: &mut Vec<Action>) {
+    if ui.input(|i| i.pointer.primary_pressed()) && panel.contains_pointer() {
+        actions.push(Action::FocusPane(pane));
+    }
+}
+
 /// Covers the main window while settings is open; true when the user clicked it.
 fn block_input(ctx: &Context) -> bool {
     let rect = ctx.content_rect();
@@ -490,7 +530,7 @@ impl App {
     fn handle_input(&mut self, ctx: &Context, index: usize) {
         let mut actions = Vec::new();
         let palette_moved = self.palette_frame(ctx, index, &mut actions);
-        let keys_moved = self.is_idle(index) && self.handle_keys(ctx, &mut actions);
+        let keys_moved = self.is_idle(index) && self.handle_keys(ctx, index, &mut actions);
         self.windows[index].scroll_to_selection = palette_moved || keys_moved;
         self.dispatch_all(ctx, index, actions);
         let state = &mut self.windows[index].search;
@@ -682,12 +722,13 @@ impl App {
                 views::transfers::show(ui, &mut self.explorer, state);
             });
         }
-        egui::Panel::left("places")
+        let tree = egui::Panel::left("places")
             .default_size(240.0)
             .show(ui, |ui| {
                 views::sidebar::show(ui, &mut self.explorer, &self.places, actions);
             });
-        egui::CentralPanel::default()
+        focus_on_press(ui, &tree.response, Pane::Tree, actions);
+        let listing = egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::bg()).inner_margin(4))
             .show(ui, |ui| {
                 if self.explorer.search().is_some() {
@@ -697,6 +738,7 @@ impl App {
                     views::table::show(ui, &mut self.explorer, scroll_to_selection, actions);
                 }
             });
+        focus_on_press(ui, &listing.response, Pane::Listing, actions);
     }
 
     /// What floats over window `index`: drag feedback, its dialog, the settings blocker and the toast.
