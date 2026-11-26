@@ -512,7 +512,12 @@ fn property_grid(ui: &mut Ui, details: &EntryDetails) {
             property_row(ui, "prop.name", &details.name);
             dim_label(ui, t("prop.path"));
             // A `&str` buffer is read-only but still selectable and copyable.
-            ui.add(TextEdit::singleline(&mut path.as_str()).desired_width(260.0));
+            // Without a margin the field lines up with the other values.
+            ui.add(
+                TextEdit::singleline(&mut path.as_str())
+                    .desired_width(260.0)
+                    .margin(egui::Margin::ZERO),
+            );
             ui.end_row();
             property_row(ui, "prop.type", kind_label(details.kind));
             property_row(ui, "prop.size", &size);
