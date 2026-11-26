@@ -7,6 +7,8 @@ use std::{fmt, io};
 mod decode;
 #[cfg(target_os = "linux")]
 mod freedesktop;
+#[cfg(windows)]
+mod windows;
 
 /// The edge lengths thumbnails are produced at: the freedesktop `normal`, `large` and `x-large` sizes,
 /// so a cache another application filled is hit without rescaling.
@@ -69,6 +71,8 @@ impl From<io::Error> for ThumbError {
 pub struct Thumbnailer {
     #[cfg(target_os = "linux")]
     cache: Option<freedesktop::Cache>,
+    #[cfg(windows)]
+    shell: windows::Shell,
 }
 
 impl Default for Thumbnailer {
@@ -82,16 +86,34 @@ impl Thumbnailer {
         Self {
             #[cfg(target_os = "linux")]
             cache: freedesktop::Cache::user(),
+            #[cfg(windows)]
+            shell: windows::Shell::new(),
         }
     }
 
     pub fn thumbnail(&mut self, request: &Request) -> Result<Thumb, ThumbError> {
         let px = bucket(request.px);
-        #[cfg(target_os = "linux")]
-        if let Some(cache) = &self.cache {
-            return cache.thumbnail(request, px);
+        // The OS may have thumbnails switched off; images still get a preview then.
+        match self.native(request, px) {
+            Err(ThumbError::Unsupported) => decode::thumbnail(request.path, px),
+            other => other,
         }
-        decode::thumbnail(request.path, px)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn native(&self, request: &Request, px: u32) -> Result<Thumb, ThumbError> {
+        let cache = self.cache.as_ref().ok_or(ThumbError::Unsupported)?;
+        cache.thumbnail(request, px)
+    }
+
+    #[cfg(windows)]
+    fn native(&self, request: &Request, px: u32) -> Result<Thumb, ThumbError> {
+        self.shell.thumbnail(request, px)
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
+    fn native(&self, _request: &Request, _px: u32) -> Result<Thumb, ThumbError> {
+        Err(ThumbError::Unsupported)
     }
 }
 

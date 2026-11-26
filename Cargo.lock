@@ -1715,6 +1715,7 @@ dependencies = [
  "md-5",
  "png 0.18.1",
  "tempfile",
+ "windows 0.62.2",
 ]
 
 [[package]]
