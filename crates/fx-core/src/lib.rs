@@ -10,6 +10,7 @@ mod storage;
 mod sys;
 mod volume;
 mod walk;
+mod watch;
 
 pub use copy::{
     Conflict, ConflictPolicy, CopyError, CopyPlan, Durability, ErrorOp, Item, Method, Op, Order,
@@ -28,3 +29,4 @@ pub use sys::network_share;
 pub use sys::volume_info;
 pub use volume::{FAT32_MAX_FILE_SIZE, FsCaps, FsKind, VolumeId, VolumeInfo};
 pub use walk::{WalkControl, WalkOptions, WalkStats, WalkVisitor, Walked, walk, walk_cancellable};
+pub use watch::DirWatcher;

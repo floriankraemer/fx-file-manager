@@ -14,6 +14,8 @@ log = "0.4"
 rayon = "1"
 # Content hash for verified copies: streaming XXH3 only, no further dependencies.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# Native folder change notifications: inotify, ReadDirectoryChangesW, FSEvents.
+notify = "9"
 
 [dev-dependencies]
 tempfile = "3"
