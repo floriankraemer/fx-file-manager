@@ -5,6 +5,8 @@ use std::time::SystemTime;
 use std::{fmt, io};
 
 mod decode;
+#[cfg(target_os = "linux")]
+mod freedesktop;
 
 /// The edge lengths thumbnails are produced at: the freedesktop `normal`, `large` and `x-large` sizes,
 /// so a cache another application filled is hit without rescaling.
@@ -64,7 +66,10 @@ impl From<io::Error> for ThumbError {
 }
 
 /// Produces thumbnails on the calling thread. Holds per-thread OS state, so each worker creates its own.
-pub struct Thumbnailer {}
+pub struct Thumbnailer {
+    #[cfg(target_os = "linux")]
+    cache: Option<freedesktop::Cache>,
+}
 
 impl Default for Thumbnailer {
     fn default() -> Self {
@@ -74,11 +79,18 @@ impl Default for Thumbnailer {
 
 impl Thumbnailer {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            #[cfg(target_os = "linux")]
+            cache: freedesktop::Cache::user(),
+        }
     }
 
     pub fn thumbnail(&mut self, request: &Request) -> Result<Thumb, ThumbError> {
         let px = bucket(request.px);
+        #[cfg(target_os = "linux")]
+        if let Some(cache) = &self.cache {
+            return cache.thumbnail(request, px);
+        }
         decode::thumbnail(request.path, px)
     }
 }
