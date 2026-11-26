@@ -39,6 +39,21 @@ Storage kind is detected per path and picks the concurrency strategy.
 - On Windows, removable drives are not watched, since an open directory handle blocks ejecting them.
 - File systems that deliver no notifications (many network mounts, Windows drives seen from WSL) fall back to a 2 s mtime check of the active folder and a re-list on window focus.
 
+## Thumbnails
+
+- The Icons view lays out only the visible rows.
+  Each frame it asks for the thumbnails it lacks, visible ones first, then one screen ahead.
+  That list replaces the queue, so entries scrolled out of view are never produced.
+- OS caches come first: a hit is one small PNG (Linux) or a shell or QuickLook lookup.
+  Thumbnails come in 128, 256 and 512 px buckets, the freedesktop sizes, so other applications' cache entries are hit directly and a larger entry serves a smaller request.
+- JPEGs decode through the scaled IDCT at up to 1/8 size, so a 24 MP photo never builds its full image.
+  Resizing uses SIMD (`fast_image_resize`).
+  Files over 256 MiB or 100 megapixels are not decoded.
+- Workers: one on HDD, USB and network storage, up to four on SSDs.
+  Network storage gets no previews unless `thumbnails_on_network` is set.
+- Files that yield no thumbnail are not retried until their mtime or size changes.
+- Textures live in an LRU cache of about 256 MiB shared by all windows, and at most a dozen are uploaded per frame.
+
 ## Copy and move strategies
 
 A pure planner picks workers, schedule and an ordered method chain for each pair of source and destination volume.

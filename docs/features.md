@@ -75,6 +75,14 @@ Compact (default, seen above) or comfortable rows.
 
 ![Comfortable row height](images/features/density-comfortable.png)
 
+### Icons view
+
+Each tab shows its folder as Details or as Icons: a grid of tiles with a preview or the file type icon, and the name below.
+Switch with the View button in the command bar, the View menu, Ctrl+1 and Ctrl+2.
+Ctrl+wheel changes the tile size; the arrow keys move through the grid.
+Previews come from the operating system where it has them, so videos, PDFs and documents get one too: the shell thumbnail cache on Windows, QuickLook on macOS, and the shared `~/.cache/thumbnails` on Linux (with the tumbler service for non-images).
+Images without a cached thumbnail are decoded by fx; on Linux the result is written back to the shared cache.
+
 ## Menus and commands
 
 
