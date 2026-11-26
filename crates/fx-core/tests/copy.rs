@@ -169,6 +169,30 @@ fn many_small_files_streaming() {
     assert_same_tree(&src, &t.path().join("dst"));
 }
 
+/// Every counted file must be settled, or the byte total would never count as final.
+#[cfg(unix)]
+#[test]
+fn byte_total_is_final_after_streaming_files_links_and_skips() {
+    let t = tempfile::tempdir().unwrap();
+    let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+    small_tree(&src, 3, 4);
+    std::os::unix::fs::symlink("top.txt", src.join("link")).unwrap();
+    for _ in 0..2 {
+        let handle = TransferHandle::new(|| {});
+        let req = request(
+            vec![item(&src, &dst)],
+            Op::Copy,
+            ConflictPolicy::Skip,
+            Overrides {
+                schedule: Some(Schedule::Streaming),
+                ..Overrides::default()
+            },
+        );
+        assert_clean(&handle.run(&req));
+        assert!(handle.snapshot().bytes_complete);
+    }
+}
+
 #[test]
 fn many_small_files_two_phase() {
     for order in [Order::Extent, Order::Inode] {

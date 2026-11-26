@@ -70,7 +70,7 @@ impl Rate {
         if !s.walk_complete {
             return None;
         }
-        let by_bytes = (self.bytes > 0.0)
+        let by_bytes = (s.bytes_complete && self.bytes > 0.0)
             .then(|| s.bytes_total.saturating_sub(s.bytes_done) as f64 / self.bytes);
         let by_files = (self.files > 0.0)
             .then(|| s.files_total.saturating_sub(s.files_done) as f64 / self.files);
@@ -424,6 +424,7 @@ mod tests {
             skipped: 0,
             cloned: 0,
             walk_complete,
+            bytes_complete: walk_complete,
             state: RunState::Running,
             disk_full: false,
             pending_conflicts: 0,
@@ -434,6 +435,13 @@ mod tests {
         let eta = r.eta(&snap(true)).unwrap().as_secs_f64();
         // 10 s by bytes, 30 s by files.
         assert!((eta - 30.0).abs() < 1.0, "{eta}");
+        let unsized_bytes = Snapshot {
+            files_done: 600,
+            bytes_complete: false,
+            ..snap(true)
+        };
+        let eta = r.eta(&unsized_bytes).unwrap().as_secs_f64();
+        assert!(eta < 1.0, "a partial byte total gives no estimate: {eta}");
     }
 
     fn summary(op: Op) -> Summary {

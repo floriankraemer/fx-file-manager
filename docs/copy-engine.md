@@ -100,6 +100,9 @@ Workers update atomic counters; the GUI samples them ten times a second.
 Totals grow while the walk is running ("at least"), so the ETA appears once the walk is complete.
 It takes the slower of the byte-rate and the file-rate estimate, because small-file jobs are bound by files per second.
 
+Streaming counts a file when its folder is listed but learns its size only when it opens it, which avoids an extra `stat` per file.
+Until every counted file is sized, the byte total stays "at least", and the progress bar and the ETA go by files.
+
 ## Verification
 
 `fx cp --verify`, `fx mv --verify` and the "Verify copies" setting re-read every copied file once it is complete and compare a 128-bit xxh3 hash (and the length) of the source and the destination.
