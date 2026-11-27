@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "fx-app"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "fx-core",
  "fx-thumbs",
@@ -1661,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "fx-cli"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "clap",
  "fx-core",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "fx-core"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "io-uring",
  "libc",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "fx-gui"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "drag",
  "eframe",
@@ -1709,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "fx-thumbs"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "block2 0.6.2",
  "fast_image_resize",
