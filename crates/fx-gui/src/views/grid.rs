@@ -250,7 +250,7 @@ fn paint_thumbnail(
 /// The name centered below the preview, wrapped onto at most two lines and elided after that.
 fn paint_label(ui: &Ui, rect: Rect, top: f32, name: &str, selected: bool) {
     let color = if selected {
-        theme::selected()
+        theme::selection_text()
     } else {
         theme::text()
     };
