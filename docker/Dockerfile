@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 
-ARG RUST_VERSION=1.97.1
+ARG RUST_VERSION=1.100.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl build-essential pkg-config git \
