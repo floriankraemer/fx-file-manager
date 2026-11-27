@@ -77,7 +77,7 @@ fn appearance() -> Appearance {
 
 /// Paints the icon chosen by `pick`, `pt` points wide, centered in `rect`.
 fn paint_themed(ui: &Ui, rect: Rect, pt: f32, pick: impl FnOnce(&IconPack, Appearance) -> String) {
-    let px = (pt * ui.pixels_per_point()).round() as u32;
+    let px = raster_px(pt * ui.pixels_per_point());
     let shared = shared(ui.ctx());
     let mut t = shared.lock().unwrap_or_else(|e| e.into_inner());
     let t = &mut *t;
@@ -106,6 +106,17 @@ fn paint_themed(ui: &Ui, rect: Rect, pt: f32, pick: impl FnOnce(&IconPack, Appea
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     ui.painter()
         .image(t.textures[&key].id(), r, uv, Color32::WHITE);
+}
+
+/// Pixel size to rasterise an icon at. Small icons stay exact for crisp edges; large ones round up
+/// to 32 px steps and are scaled down when painted, so zooming the Icons view reuses a few textures
+/// instead of rendering new ones every frame.
+fn raster_px(px: f32) -> u32 {
+    let px = px.round().max(1.0) as u32;
+    if px <= 64 {
+        return px;
+    }
+    px.div_ceil(32) * 32
 }
 
 pub fn paint_file(ui: &Ui, rect: Rect, name: &str) {
@@ -343,6 +354,15 @@ pub fn paint_path_step(ui: &Ui, origin: Pos2, scale: f32, stroke: Stroke) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_icons_rasterise_in_steps_and_small_ones_exactly() {
+        assert_eq!(raster_px(16.0), 16);
+        assert_eq!(raster_px(64.0), 64);
+        assert_eq!(raster_px(65.0), 96);
+        assert_eq!(raster_px(96.4), 96);
+        assert_eq!(raster_px(97.0), 128);
+    }
 
     #[test]
     fn lucide_glyphs_rasterise_with_ink() {
