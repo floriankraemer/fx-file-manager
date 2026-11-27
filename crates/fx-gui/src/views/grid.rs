@@ -423,7 +423,10 @@ mod tests {
         harness.step();
         harness.event(egui::Event::Zoom(1.5));
         harness.step();
-        assert!(harness.state().1.is_empty(), "nothing is saved mid-animation");
+        assert!(
+            harness.state().1.is_empty(),
+            "nothing is saved mid-animation"
+        );
         for _ in 0..30 {
             harness.step();
         }
