@@ -9,7 +9,7 @@ use eframe::egui::{self, Align, Rect, ScrollArea, Sense, Ui, Vec2, pos2, vec2};
 use fx_app::{Explorer, MAX_ICON_SIZE, MIN_ICON_SIZE, ThumbKey};
 use std::ops::Range;
 
-const PAD: f32 = 6.0;
+const PAD: f32 = 4.0;
 const LABEL_ROWS: usize = 2;
 /// Points added to or taken from the tile size per Ctrl+wheel notch.
 const ZOOM_STEP: u32 = 16;
@@ -26,14 +26,20 @@ struct Layout {
 
 impl Layout {
     fn new(ui: &Ui, icon_size: u32, entries: usize) -> Self {
-        let icon = icon_size as f32;
-        let width = ui.available_width().max(1.0);
-        let columns = ((width / (icon + 4.0 * PAD)).floor() as usize).max(1);
         let label = ui.text_style_height(&theme::list_style()) * LABEL_ROWS as f32;
+        Self::sized(ui.available_width(), label, icon_size, entries)
+    }
+
+    /// Tiles have a fixed size; a wider window only fits more of them. Stretching them to the row
+    /// width would move every tile and rewrap every name on each pixel of a resize.
+    fn sized(width: f32, label: f32, icon_size: u32, entries: usize) -> Self {
+        let icon = icon_size as f32;
+        let tile = vec2(icon + 4.0 * PAD, icon + label + 3.0 * PAD);
+        let columns = ((width.max(1.0) / tile.x).floor() as usize).max(1);
         Self {
             columns,
             rows: entries.div_ceil(columns),
-            tile: vec2(width / columns as f32, icon + label + 3.0 * PAD),
+            tile,
             icon,
         }
     }
@@ -297,7 +303,7 @@ fn zoom(ui: &Ui, area: Rect, icon_size: u32, actions: &mut Vec<Action>) {
 
 #[cfg(test)]
 mod tests {
-    use super::show;
+    use super::{Layout, show};
     use crate::action::Action;
     use egui::{PointerButton, Pos2};
     use egui_kittest::Harness;
@@ -366,6 +372,16 @@ mod tests {
         }
         // A folder that opens shows a spinner, so the UI never settles; one more frame applies the input.
         harness.step();
+    }
+
+    #[test]
+    fn resizing_the_window_does_not_resize_tiles() {
+        let narrow = Layout::sized(500.0, 30.0, 96, 40);
+        let wide = Layout::sized(537.0, 30.0, 96, 40);
+        assert_eq!(narrow.tile, wide.tile);
+        assert_eq!(narrow.columns, 4);
+        let wider = Layout::sized(700.0, 30.0, 96, 40);
+        assert_eq!((wider.tile, wider.columns), (narrow.tile, 6));
     }
 
     #[test]
