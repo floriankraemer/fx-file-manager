@@ -9,10 +9,10 @@ use eframe::egui::{self, Align, Rect, ScrollArea, Sense, Ui, Vec2, pos2, vec2};
 use fx_app::{Explorer, MAX_ICON_SIZE, MIN_ICON_SIZE, ThumbKey};
 use std::ops::Range;
 
-const PAD: f32 = 6.0;
+const PAD: f32 = 4.0;
 const LABEL_ROWS: usize = 2;
-/// Points added to or taken from the tile size per Ctrl+wheel notch.
-const ZOOM_STEP: u32 = 16;
+/// Seconds the shown tile size takes to catch up with the wheel.
+const ZOOM_EASE: f32 = 0.12;
 const SCROLL_ID: &str = "icon-grid";
 
 /// Tile geometry of one frame.
@@ -25,15 +25,20 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(ui: &Ui, icon_size: u32, entries: usize) -> Self {
-        let icon = icon_size as f32;
-        let width = ui.available_width().max(1.0);
-        let columns = ((width / (icon + 4.0 * PAD)).floor() as usize).max(1);
+    fn new(ui: &Ui, icon: f32, entries: usize) -> Self {
         let label = ui.text_style_height(&theme::list_style()) * LABEL_ROWS as f32;
+        Self::sized(ui.available_width(), label, icon, entries)
+    }
+
+    /// Tiles have a fixed size; a wider window only fits more of them. Stretching them to the row
+    /// width would move every tile and rewrap every name on each pixel of a resize.
+    fn sized(width: f32, label: f32, icon: f32, entries: usize) -> Self {
+        let tile = vec2(icon + 4.0 * PAD, icon + label + 3.0 * PAD);
+        let columns = ((width.max(1.0) / tile.x).floor() as usize).max(1);
         Self {
             columns,
             rows: entries.div_ceil(columns),
-            tile: vec2(width / columns as f32, icon + label + 3.0 * PAD),
+            tile,
             icon,
         }
     }
@@ -74,7 +79,7 @@ pub fn show(
     let settings = explorer.settings();
     let (icon_size, show_hidden) = (settings.icon_size, settings.show_hidden);
     let total = explorer.active().order().len();
-    let layout = Layout::new(ui, icon_size, total);
+    let layout = Layout::new(ui, shown_size(ui, icon_size), total);
     let modifiers = ui.input(|i| i.modifiers);
     let can_paste = explorer.can_paste();
     let mut out = Output::default();
@@ -102,7 +107,7 @@ pub fn show(
         can_paste,
         actions,
     );
-    zoom(ui, scroll.inner_rect, icon_size, actions);
+    zoom(ui, scroll.inner_rect, icon_size, layout.icon, actions);
     explorer.want_thumbnails(out.wanted);
     entries::apply(ui, explorer, out.input, modifiers);
     layout.columns
@@ -245,7 +250,7 @@ fn paint_thumbnail(
 /// The name centered below the preview, wrapped onto at most two lines and elided after that.
 fn paint_label(ui: &Ui, rect: Rect, top: f32, name: &str, selected: bool) {
     let color = if selected {
-        theme::selected()
+        theme::selection_text()
     } else {
         theme::text()
     };
@@ -277,27 +282,59 @@ fn prefetch(tiles: &Tiles, rows: &Range<usize>, out: &mut Output) {
     }
 }
 
-/// Ctrl+wheel over the grid resizes its tiles.
-fn zoom(ui: &Ui, area: Rect, icon_size: u32, actions: &mut Vec<Action>) {
-    let hovered = ui.rect_contains_pointer(area);
-    let delta = ui.input(|i| i.zoom_delta());
-    if !hovered || (delta - 1.0).abs() < f32::EPSILON {
-        return;
-    }
-    let size = if delta > 1.0 {
-        icon_size.saturating_add(ZOOM_STEP)
-    } else {
-        icon_size.saturating_sub(ZOOM_STEP)
+/// Ctrl+wheel zoom in progress. The target follows the wheel continuously; the setting is saved
+/// once the shown size has caught up, so a gesture writes `settings.toml` once instead of every frame.
+#[derive(Clone, Copy)]
+struct Zoom {
+    target: f32,
+    /// The saved size `target` started from; a different one means the settings changed elsewhere.
+    saved: u32,
+}
+
+fn zoom_id() -> egui::Id {
+    egui::Id::unique("icon-grid-zoom")
+}
+
+/// The tile size to lay out this frame, easing toward the zoom target.
+fn shown_size(ui: &Ui, saved: u32) -> f32 {
+    let target = current_zoom(ui, saved).target;
+    ui.ctx()
+        .animate_value_with_time(zoom_id().with("shown"), target, ZOOM_EASE)
+}
+
+fn current_zoom(ui: &Ui, saved: u32) -> Zoom {
+    let fresh = Zoom {
+        target: saved as f32,
+        saved,
     };
-    let size = size.clamp(MIN_ICON_SIZE, MAX_ICON_SIZE);
-    if size != icon_size {
-        actions.push(Action::SetIconSize(size));
+    let zoom: Option<Zoom> = ui.data(|d| d.get_temp(zoom_id()));
+    zoom.filter(|z| z.saved == saved).unwrap_or(fresh)
+}
+
+/// Ctrl+wheel over the grid scales the target size by the wheel's zoom factor; the size is saved
+/// once the animation toward it has finished.
+fn zoom(ui: &Ui, area: Rect, saved: u32, shown: f32, actions: &mut Vec<Action>) {
+    let mut zoom = current_zoom(ui, saved);
+    let delta = ui.input(|i| i.zoom_delta());
+    let zooming = ui.rect_contains_pointer(area) && (delta - 1.0).abs() > f32::EPSILON;
+    if zooming {
+        let (min, max) = (MIN_ICON_SIZE as f32, MAX_ICON_SIZE as f32);
+        zoom.target = (zoom.target * delta).clamp(min, max);
     }
+    let rounded = zoom.target.round() as u32;
+    if !zooming && (shown - zoom.target).abs() < 0.5 && rounded != saved {
+        zoom = Zoom {
+            target: rounded as f32,
+            saved: rounded,
+        };
+        actions.push(Action::SetIconSize(rounded));
+    }
+    ui.data_mut(|d| d.insert_temp(zoom_id(), zoom));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::show;
+    use super::{Layout, show};
     use crate::action::Action;
     use egui::{PointerButton, Pos2};
     use egui_kittest::Harness;
@@ -366,6 +403,43 @@ mod tests {
         }
         // A folder that opens shows a spinner, so the UI never settles; one more frame applies the input.
         harness.step();
+    }
+
+    #[test]
+    fn resizing_the_window_does_not_resize_tiles() {
+        let narrow = Layout::sized(500.0, 30.0, 96.0, 40);
+        let wide = Layout::sized(537.0, 30.0, 96.0, 40);
+        assert_eq!(narrow.tile, wide.tile);
+        assert_eq!(narrow.columns, 4);
+        let wider = Layout::sized(700.0, 30.0, 96.0, 40);
+        assert_eq!((wider.tile, wider.columns), (narrow.tile, 6));
+    }
+
+    #[test]
+    fn a_zoom_gesture_eases_and_saves_the_size_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = harness(explorer(dir.path()));
+        harness.hover_at(egui::pos2(400.0, 300.0));
+        harness.step();
+        harness.event(egui::Event::Zoom(1.5));
+        harness.step();
+        assert!(
+            harness.state().1.is_empty(),
+            "nothing is saved mid-animation"
+        );
+        for _ in 0..30 {
+            harness.step();
+        }
+        let saved: Vec<u32> = harness
+            .state()
+            .1
+            .iter()
+            .filter_map(|a| match a {
+                Action::SetIconSize(size) => Some(*size),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(saved, vec![144]);
     }
 
     #[test]

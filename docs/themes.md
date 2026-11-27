@@ -34,8 +34,11 @@ Settings has the buttons "Open themes folder" and "Reload themes".
 - Colors (all optional, `"#RRGGBB"`): a missing color is taken from Nord Dark or Nord Light, matching `base`.
 
 Color keys:
-`bg`, `panel`, `panel_hi`, `border`, `text`, `dim`, `accent`, `header_text`, `selected`, `error`, `faint`, `separator`, `selection_bg`,
+`bg`, `panel`, `panel_hi`, `border`, `text`, `dim`, `accent`, `header_text`, `selected`, `error`, `faint`, `separator`, `selection_bg`, `selection_text`,
 `age_minutes`, `age_hours`, `age_days`, `age_weeks`, `age_months`, `age_years`.
+
+`selection_text` is the color of names on selected tiles in the Icons view.
+Built-in themes keep it at least 4.5:1 against `selection_bg`.
 
 A file that fails to parse, has an invalid color, or uses the id of a built-in theme is reported on stderr and skipped.
 User themes are not contrast-checked.

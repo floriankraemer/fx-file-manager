@@ -50,6 +50,7 @@ palette!(
     faint,
     separator,
     selection_bg,
+    selection_text,
     age_minutes,
     age_hours,
     age_days,
@@ -244,6 +245,7 @@ colors!(
     bg,
     panel_hi,
     selection_bg,
+    selection_text,
     border,
     text,
     dim,
@@ -521,6 +523,9 @@ mod tests {
             assert!(contrast(p.text, p.bg) >= 4.5, "{} text/bg", t.id);
             assert!(contrast(p.text, p.panel) >= 4.5, "{} text/panel", t.id);
             assert!(contrast(p.dim, p.bg) >= 3.0, "{} dim/bg", t.id);
+            // Names on selected icon tiles.
+            let selection = contrast(p.selection_text, p.selection_bg);
+            assert!(selection >= 4.5, "{} text/selection", t.id);
             let ink = ink_on(p.accent, p.bg, p.text);
             assert!(contrast(ink, p.accent) >= 4.5, "{} primary button", t.id);
         }
